@@ -29,7 +29,13 @@ mullion_shaders = [
   'mullion_command.metal'
 ]
 
-mullion_shaders_ir = metalir_generator.process(mullion_shaders)
+# Metal 3.2, macOS 15's, and the oldest macOS the driver runs on (meson.build), not whatever the Xcode that builds it
+# defaults to: the driver aborts when Metal refuses this library. 3.1, the converter's helper shaders' language,
+# rejects this file's lambdas
+mullion_shaders_ir = metalir_generator.process(
+  mullion_shaders,
+  extra_args: ['-std=metal3.2', '--target=air64-apple-macos15.0'],
+)
 
 mullion_shaders_lib = metallib_generator.process(mullion_shaders_ir)
 

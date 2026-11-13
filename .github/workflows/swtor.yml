@@ -1,6 +1,8 @@
 # the fork's CI, for SWTOR on Mac's DirectX 12 client: the one build the app installs (x86_64
-# Windows DLLs and the x86_64 winemetal.so, release, NVAPI and NGX off) and the host tests.
-# docs/swtor/README.md § CI says what it leaves out and why. Shaped after jdrly/dxmt's gw2.yml.
+# Windows DLLs and the x86_64 winemetal.so, release, NVAPI and NGX off), its checks and the host
+# tests, and for a push to swtor-on-mac the archive of that build on the pre-release swtor-builds.
+# docs/swtor/README.md § CI and § Releases say what it leaves out and why. Shaped after jdrly/dxmt's
+# gw2.yml.
 #
 # runner time: GitHub has blocked two of my forks for wasted compute, so: one run at a time, queued
 # and never cancelled in progress; no schedule; nothing but this one build; caches saved only on a
@@ -35,6 +37,9 @@ env:
   NINJA_VERSION: 1.13.0
   LLVM_VERSION: 15.0.7
   LLVM_SHA256: 8b5fcb24b4128cf04df1b0b9410ce8b1a729cb3c544e6da885d234280dedeac6
+  # llvm/LICENSE.TXT at llvmorg-$LLVM_VERSION: airconv links LLVM into winemetal.so. llvm-mingw's LICENSE.TXT, for the
+  # libc++ linked into the DLLs, is the same file
+  LLVM_LICENSE_SHA256: 8d85c1057d742e597985c7d4e6320b015a9139385cff4cbae06ffc0ebe89afee
   # raise it when toolchain.zsh builds LLVM differently, so the cache doesn't keep the old build
   LLVM_BUILD: 1
   LLVM_MINGW_VERSION: "20260908"
@@ -72,10 +77,14 @@ jobs:
     name: Build x86_64
     runs-on: xcode-27
     timeout-minutes: 120
+    outputs:
+      date: ${{ steps.stage.outputs.date }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: ${{ env.COMMIT }}
+          # the history and upstream's tags, for git describe (VERSION, and the version meson builds in)
+          fetch-depth: 0
           submodules: true
           persist-credentials: false
       - name: Select Xcode
@@ -166,25 +175,50 @@ jobs:
           meson compile -C build 2>&1 | tee build.log
 
       - name: Stage
+        id: stage
         run: |
           # --strip runs x86_64-w64-mingw32-strip on the DLLs
           export PATH="$PATH:$PWD/toolchains/llvm-mingw/bin"
           meson install -C build --no-rebuild --quiet
           rm -f install/*/*.dll.a
+          # Apple's linker signs only arm64 binaries by itself
+          codesign --force --sign - install/x86_64-unix/winemetal.so
           {
+            # v0.5-alpha.3-<n>-g<hash>: upstream's last v tag. swtor-builds is a lightweight tag, which it skips
             git -c diff.ignoreSubmodules=all describe --always --dirty
             echo "commit: $COMMIT"
+            echo "codegen: airconv $(sed -n 's/^#define AIRCONV_VERSION //p' src/airconv/airconv_public.h)"
+            echo "toolchain: $(xcodebuild -version | paste -sd ' ' -), macOS SDK $(xcrun -sdk macosx --show-sdk-version)," \
+              "$(xcrun -sdk macosx metal --version | sed -n 1p), LLVM $LLVM_VERSION without assertions," \
+              "llvm-mingw $LLVM_MINGW_VERSION ($(x86_64-w64-mingw32-gcc --version | sed -n 1p))"
+            echo "built: $GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID"
           } >install/VERSION
+          # LGPL 2.1: where the source of what ships is
+          {
+            echo "The source of these files, under the GNU Lesser General Public License 2.1 (LICENSE):"
+            echo "$GITHUB_SERVER_URL/$GITHUB_REPOSITORY at commit $COMMIT, with its submodules"
+          } >install/SOURCE
+          cp LICENSE install/
+          cp -R docs/licenses install/licenses
+          # the DLLs link the MinGW-w64 runtime statically (meson.build's -static); its notices travel with it
+          cp -R toolchains/llvm-mingw/x86_64-w64-mingw32/share/mingw32 install/licenses/mingw-w64
+          curl -fsSL --retry 3 -o install/LICENSE-LLVM.txt \
+            "https://raw.githubusercontent.com/llvm/llvm-project/llvmorg-$LLVM_VERSION/llvm/LICENSE.TXT"
+          echo "$LLVM_LICENSE_SHA256  install/LICENSE-LLVM.txt" | shasum -a 256 -c
+          cat install/VERSION
           find install -type f | sort
-          # what the app installs
-          for f in x86_64-unix/winemetal.so x86_64-windows/{d3d10core,d3d11,d3d12,d3d12core,dxgi,winemetal}.dll; do
-            [[ -f install/$f ]] || { echo "::error::install/$f is missing"; exit 1; }
-          done
-          # LLVM's assert() and llvm_unreachable() write their source file's path into the binary only
-          # when LLVM is built with assertions
-          n=$(strings -a install/x86_64-unix/winemetal.so | grep -cE '/llvm/(lib|include/llvm)/' || true)
-          echo "LLVM source paths (assertion text) in winemetal.so: $n" | tee -a "$GITHUB_STEP_SUMMARY"
-          [[ $n == 0 ]]
+          # the archive's files carry the commit's time
+          echo "date=$(git log -1 --format=%cI)" >>"$GITHUB_OUTPUT"
+
+      # .github/swtor/check-build.py: the file list, winemetal.so (no LLVM assertion text, minos 15.0, an ad hoc
+      # signature) and the internal Metal library's versions. a push run checks its own build: that is what ships
+      - name: Check the build
+        run: |
+          status=0
+          python3 -I .github/swtor/check-build.py install >"$RUNNER_TEMP/check.txt" || status=$?
+          cat "$RUNNER_TEMP/check.txt"
+          { echo '### The build'; echo '```'; cat "$RUNNER_TEMP/check.txt"; echo '```'; } >>"$GITHUB_STEP_SUMMARY"
+          exit "$status"
 
       # tests/host/meson.build: twelve tests, each with meson's 30 s timeout but host_tessellator's
       # 300 s; none builds the tree or waits on a GPU
@@ -204,7 +238,7 @@ jobs:
           # host_tessellator takes about 200 s here (x86_64 under Rosetta), the other nine about 18 s: it runs
           # when the pull request changes what it compiles or how, or when that can't be told. all of
           # src/airconv, so that a header it comes to include there can't slip past
-          if git fetch -q --depth=1 origin "$BASE" && git diff --quiet "$BASE" HEAD -- \
+          if git fetch -q origin "$BASE" && git diff --quiet "$BASE" HEAD -- \
             src/airconv libs/DXBCParser tests/tessellator.hpp tests/reference tests/host tests/meson.build \
             meson.build meson.options build-win64.txt .github/workflows/swtor.yml; then
             skip+=(--exclude host_tessellator)
@@ -255,7 +289,31 @@ jobs:
           [[ $status == 1 ]]
           grep -qxF "::error::New warning: $wm: warning: 'supportsPlacementSparse' is only available on macOS 26.4 or newer [-Wunguarded-availability-new]" "$RUNNER_TEMP/unguarded.txt"
           grep -qxF "::error::New warning: $wm: warning: 'MTL4CopySparseTextureMappingOperation' is only available on macOS 26.0 or newer [-Wunguarded-availability-new]" "$RUNNER_TEMP/unguarded.txt"
-          echo "all three checks failed on their break"
+          # the build checks, given a copy of the build with a file it doesn't ship and without SOURCE, its
+          # winemetal.so unsigned, with an LLVM source path appended and minos 26.0 (LC_BUILD_VERSION), and
+          # d3d12core.dll's internal Metal library tagged 2.9 with its first function AIR 2.9
+          b=$RUNNER_TEMP/broken
+          cp -R install "$b"
+          cp "$b/x86_64-windows/dxgi.dll" "$b/x86_64-windows/d3d9.dll"
+          rm "$b/SOURCE"
+          so=$b/x86_64-unix/winemetal.so
+          codesign --remove-signature "$so"
+          printf '/llvm/lib/Support/APInt.cpp\0' >>"$so"
+          perl -0777 -pi -e 's/(\x32\0\0\0.{4}\x01\0\0\0)\0\0\x0f\0/$1\0\0\x1a\0/s' "$so"
+          perl -0777 -pi -e 's/(MTLB\x01\x80)\x02\0.\0/$1\x02\0\x09\0/s; s/(MTLB\x01\x80.*?VERS\x08\0)..../$1\x02\0\x09\0/s' \
+            "$b/x86_64-windows/d3d12core.dll"
+          status=0
+          python3 -I .github/swtor/check-build.py "$b" >"$RUNNER_TEMP/broken.txt" || status=$?
+          cat "$RUNNER_TEMP/broken.txt"
+          [[ $status == 1 ]] && [[ $(grep -c '^FAIL' "$RUNNER_TEMP/broken.txt") == 7 ]]
+          grep -qxF 'FAIL  missing file: SOURCE' "$RUNNER_TEMP/broken.txt"
+          grep -qxF 'FAIL  unexpected file: x86_64-windows/d3d9.dll' "$RUNNER_TEMP/broken.txt"
+          grep -qxF 'FAIL  x86_64-unix/winemetal.so: 1 LLVM source paths (assertion text)' "$RUNNER_TEMP/broken.txt"
+          grep -qxF 'FAIL  x86_64-unix/winemetal.so: platform 1, minos 26.0 (macOS 15.0 expected)' "$RUNNER_TEMP/broken.txt"
+          grep -q '^FAIL  x86_64-unix/winemetal\.so: no ad hoc signature that verifies' "$RUNNER_TEMP/broken.txt"
+          grep -qE '^FAIL  x86_64-windows/d3d12core\.dll: internal metallib at 0x[0-9a-f]+: container 2\.9 ' "$RUNNER_TEMP/broken.txt"
+          grep -qE '^FAIL  x86_64-windows/d3d12core\.dll: internal metallib at 0x[0-9a-f]+: [0-9]+ of [0-9]+ functions AIR 2\.7 Metal 3\.2, 1 AIR 2\.9 Metal 3\.2$' "$RUNNER_TEMP/broken.txt"
+          echo "all four checks failed on their break"
 
       # last, so that a run that only adds a warning still shows everything above
       - name: No new warnings
@@ -268,3 +326,114 @@ jobs:
           path: install
           retention-days: 7
           if-no-files-found: error
+
+  # packs the build into mullion-swtor-<commit>.tar.xz for every run, and for a push to swtor-on-mac adds it to the
+  # pre-release swtor-builds: one asset per commit, never replaced, the 30 newest kept, never releases/latest.
+  # the only job that may write to the repository. two pushes never upload at once: the workflow's concurrency
+  # group runs one run at a time and never cancels one in progress
+  publish:
+    name: Publish
+    needs: [lint, build]
+    # Lint runs for pull requests only
+    if: ${{ !cancelled() && needs.build.result == 'success' && needs.lint.result != 'failure' }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    permissions:
+      contents: write
+    env:
+      GH_TOKEN: ${{ github.token }}
+      GH_REPO: ${{ github.repository }}
+      RELEASE: swtor-builds
+      NAME: mullion-swtor-${{ github.event.pull_request.head.sha || github.sha }}.tar.xz
+      DATE: ${{ needs.build.outputs.date }}
+      # one thread: xz's output then doesn't depend on the runner's cores
+      XZ_OPT: -T1
+    steps:
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: mullion-swtor-${{ env.COMMIT }}
+          path: dist
+      - name: Pack
+        run: |
+          # VERSION as Stage wrote it: git describe of this commit, then commit:, codegen:, toolchain:, built:
+          describe=$(sed -n 1p dist/VERSION)
+          [[ $describe =~ ^v[0-9][^[:space:]]*-[0-9]+-g([0-9a-f]{7,})$ ]]
+          [[ $COMMIT == "${BASH_REMATCH[1]}"* ]]
+          [[ $(sed -n 2p dist/VERSION) == "commit: $COMMIT" ]]
+          [[ $(cut -d: -f1 dist/VERSION | sed -n '3,$p' | paste -sd ' ' -) == 'codegen toolchain built' ]]
+          # the artifact keeps no modes: directories and .so 755, the rest 644
+          find dist -type d -exec chmod 755 {} +
+          find dist -type f -exec chmod 644 {} +
+          find dist -name '*.so' -exec chmod 755 {} +
+          (cd dist && find . -type f | sort | xargs sha256sum) >"$RUNNER_TEMP/files.sha256"
+          # the same files give the same archive: sorted names, one owner, the commit's time
+          tar --sort=name --format=gnu --owner=0 --group=0 --numeric-owner --mtime="$DATE" -C dist -cJf "$NAME" \
+            x86_64-windows x86_64-unix licenses LICENSE LICENSE-LLVM.txt SOURCE VERSION
+          tar -tvJf "$NAME"
+          # the archive unpacks to the artifact's files, sha256 for sha256, and nothing else
+          mkdir "$RUNNER_TEMP/unpacked"
+          tar -xJf "$NAME" -C "$RUNNER_TEMP/unpacked"
+          (cd "$RUNNER_TEMP/unpacked" && find . -type f | sort | xargs sha256sum) | diff "$RUNNER_TEMP/files.sha256" -
+          cat "$RUNNER_TEMP/files.sha256"
+          { echo '### Archive'; echo '```'; cat dist/VERSION; echo; sha256sum "$NAME"; echo '```'; } >>"$GITHUB_STEP_SUMMARY"
+      - name: Upload to the pre-release ${{ env.RELEASE }}
+        if: github.event_name == 'push' && github.ref == 'refs/heads/swtor-on-mac'
+        run: |
+          if ! gh release view "$RELEASE" >/dev/null 2>&1; then
+            gh release create "$RELEASE" --prerelease --latest=false --target "$COMMIT" \
+              --title "SWTOR builds of my Mullion fork" --notes-file - <<'EOF'
+          CI output for SWTOR on Mac's DirectX 12 client, not a release of Mullion: my fork's x86_64 build (the Windows
+          DLLs and winemetal.so), built and checked by .github/workflows/swtor.yml for each push to swtor-on-mac. One
+          asset per commit, mullion-swtor-<full sha>.tar.xz; the 30 newest stay. Its VERSION names the commit, the
+          converter's codegen and the toolchain.
+
+          The DLLs are built with llvm-mingw (clang), not with the gcc mingw-w64 that upstream's releases ship. Not for
+          players: the app installs only a build it pins by SHA-256, and a pin reaches players only after the fork's GPU
+          gate has passed on that commit (docs/swtor/README.md, Releases).
+          EOF
+          fi
+          # a lightweight tag, which git describe (VERSION's first line) skips
+          [[ $(gh api "repos/$GH_REPO/git/ref/tags/$RELEASE" -q .object.type) == commit ]]
+          [[ $(gh release view "$RELEASE" --json isPrerelease,isDraft -q '[.isPrerelease, .isDraft] | @tsv') == $'true\tfalse' ]]
+          uploaded=0
+          if gh release view "$RELEASE" --json assets -q '.assets[].name' | grep -qxF "$NAME"; then
+            echo "$NAME is there already, and a published file is never replaced"
+          else
+            gh release upload "$RELEASE" "$NAME"
+            uploaded=1
+          fi
+          # the 30 newest assets stay
+          id=$(gh api "repos/$GH_REPO/releases/tags/$RELEASE" -q .id)
+          gh api --paginate "repos/$GH_REPO/releases/$id/assets?per_page=100" -q '.[] | [.created_at, .id, .name] | @tsv' |
+            grep -P '\tmullion-swtor-[0-9a-f]{40}\.tar\.xz$' | sort -r | tail -n +31 | while IFS=$'\t' read -r _ asset old; do
+              echo "deleting $old"
+              gh api -X DELETE "repos/$GH_REPO/releases/assets/$asset"
+            done
+          read -r asset size digest < <(gh api "repos/$GH_REPO/releases/tags/$RELEASE" \
+            -q ".assets[] | select(.name == \"$NAME\") | [.id, .size, .digest] | @tsv")
+          [[ $digest == sha256:* ]]
+          # what anyone downloads by URL is what GitHub reports, and, when this run uploaded it, this archive
+          url="https://github.com/$GH_REPO/releases/download/$RELEASE/$NAME"
+          # --retry-all-errors: a 404 too, in case the URL lags behind the upload
+          curl -fsSL --retry 5 --retry-all-errors -o "$RUNNER_TEMP/download.tar.xz" "$url"
+          [[ $digest == "sha256:$(sha256sum "$RUNNER_TEMP/download.tar.xz" | cut -d' ' -f1)" ]]
+          [[ $size == "$(stat -c %s "$RUNNER_TEMP/download.tar.xz")" ]]
+          (( !uploaded )) || cmp "$RUNNER_TEMP/download.tar.xz" "$NAME"
+          # 404 while no release but this pre-release exists; any other error fails the step
+          if ! latest=$(gh api "repos/$GH_REPO/releases/latest" -q .tag_name 2>"$RUNNER_TEMP/latest.txt"); then
+            grep -qF '(HTTP 404)' "$RUNNER_TEMP/latest.txt"
+            latest=none
+          fi
+          echo "releases/latest: $latest"
+          [[ $latest != "$RELEASE" ]]
+          # the app's pin (src/som.sh)
+          {
+            echo '### Pin'
+            echo '```'
+            echo "MULLION_URL=$url"
+            echo "MULLION_API_URL=https://api.github.com/repos/$GH_REPO/releases/assets/$asset"
+            echo "MULLION_SIZE=$size"
+            echo "MULLION_SHA256=${digest#sha256:}"
+            echo "MULLION_COMMIT=$COMMIT"
+            echo '```'
+          } | tee -a "$GITHUB_STEP_SUMMARY"
