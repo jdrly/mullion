@@ -196,14 +196,18 @@ jobs:
         run: |
           export PATH="$PATH:$PWD/toolchains/llvm-mingw/bin"
           meson configure build -Denable_tests=true
-          # host_tessellator takes about 200 s here (x86_64 under Rosetta), the other ten about 28 s: it runs
+          # host_mutate is left out: it tests upstream's mutation and test-runner tools, not the driver, and
+          # its test_runner_schedule needs two 0.5 s processes to overlap under tests/run.py's admission, which
+          # reads the machine's real memory pressure; on this runner they ran one after the other (run
+          # 43498464580)
+          skip=(--exclude host_mutate)
+          # host_tessellator takes about 200 s here (x86_64 under Rosetta), the other nine about 18 s: it runs
           # when the pull request changes what it compiles or how, or when that can't be told. all of
           # src/airconv, so that a header it comes to include there can't slip past
-          skip=()
           if git fetch -q --depth=1 origin "$BASE" && git diff --quiet "$BASE" HEAD -- \
             src/airconv libs/DXBCParser tests/tessellator.hpp tests/reference tests/host tests/meson.build \
             meson.build meson.options build-win64.txt .github/workflows/swtor.yml; then
-            skip=(--exclude host_tessellator)
+            skip+=(--exclude host_tessellator)
             echo "host_tessellator left out: nothing it compiles changed since $BASE" | tee -a "$GITHUB_STEP_SUMMARY"
           fi
           # builds only what the host tests need, not the Windows test programs

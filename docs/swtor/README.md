@@ -29,16 +29,19 @@ How a switch is declared: [ADR 0001](adr/0001-switches.md).
   llvm-mingw for the DLLs, 3Shain's Wine `v8.16-3shain` for Wine's files and LLVM 15.0.7 built without assertions. It
   checks that the seven files the app installs are there and that `winemetal.so` holds no LLVM assertion text, then
   uploads `mullion-swtor-<commit>` (7 days): `x86_64-windows/{d3d10core,d3d11,d3d12,d3d12core,dxgi,winemetal}.dll`,
-  `x86_64-unix/winemetal.so` and `VERSION`. For a pull request it also runs the host tests (`meson test 'host_*'`, all
-  of `tests/host`), breaks two checks on purpose and requires both to fail, and fails on a compiler warning that
-  `.github/swtor/warnings-x86_64.txt` doesn't list. A push run builds and uploads only: the pull request's run of the
-  same tree has already passed the rest.
+  `x86_64-unix/winemetal.so` and `VERSION`. For a pull request it also runs the host tests in `tests/host` (`meson test
+  'host_*'`; `host_tessellator` and `host_mutate` below), breaks two checks on purpose and requires both to fail, and
+  fails on a compiler warning that `.github/swtor/warnings-x86_64.txt` doesn't list. A push run builds and uploads only:
+  the pull request's run of the same tree has already passed the rest.
 
   `host_tessellator` takes about 200 s on the runner, which is arm64 and runs the x86_64 host tests under Rosetta; the
-  others take about 28 s together. It runs only when the pull request changes what it compiles or how (`src/airconv`,
+  others take about 18 s together. It runs only when the pull request changes what it compiles or how (`src/airconv`,
   `libs/DXBCParser`, `tests/tessellator.hpp`, `tests/reference`, `tests/host`, `tests/meson.build`, `meson.build`,
   `meson.options`, `build-win64.txt`) or the workflow, or when the step can't tell. `host_dxbc_hash` skips itself there:
-  it needs directories of real shaders (`MULLION_HASHED`).
+  it needs directories of real shaders (`MULLION_HASHED`). `host_mutate` never runs there: it tests upstream's mutation
+  and test-runner tools, not the driver, and its `test_runner_schedule` needs two short processes to overlap under
+  `tests/run.py`'s admission, which reads the machine's real memory pressure; on the runner they once ran one after the
+  other.
 
 **Runner time.** One run at a time for the whole repository: a run in progress is never cancelled, and GitHub keeps one
 more waiting. No schedule, no manual trigger. Toolchain caches are saved only on a miss. On a miss LLVM takes about 25
