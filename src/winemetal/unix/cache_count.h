@@ -4,7 +4,8 @@
 // without that table, -1 when they can't be counted without writing. A read-only connection to a WAL database (the
 // writer's mode) makes its -wal and -shm files when they aren't there (https://sqlite.org/wal.html, "Read-Only
 // Databases"), so the file is opened immutable, which makes and locks nothing, and only while it has no -wal file: a
-// writer that has it open keeps one, and the rows it holds aren't in the file yet.
+// writer that has it open keeps one, and the rows it holds aren't in the file yet. A -wal that appears while it counts
+// (a writer that opened meanwhile, which may checkpoint into the file) makes the count unknown too.
 //
 // Plain C and SQLite: tests/host/cache_count.c builds it natively.
 
@@ -43,5 +44,7 @@ cache_count(const char *file, uint64_t version) {
   }
   sqlite3_finalize(stmt);
   sqlite3_close(db);
+  if (!access(path, F_OK) || errno != ENOENT)
+    return -1;
   return count;
 }

@@ -22,13 +22,13 @@ are set.
 
 | Variable | Default | What it does | Off restores |
 |---|---|---|---|
-| `MULLION_SESSION_HEADER` | on | Writes the session header (below) when the first Direct3D 12 device is created, with one read-only bridge call for what the Windows side can't read | No header and no bridge call for it |
+| `MULLION_SESSION_HEADER` | off (`1` turns it on) | Writes the session header (below) when the first Direct3D 12 device is created, with one read-only bridge call for what the Windows side can't read. Off until the Mac run shows the header right on an M1 and an M5 Max; SWTOR on Mac's DX12 dev build turns it on | No header and no bridge call for it |
 
 ## Log lines
 
 | Line | When | Where it lands | Who reads it |
 |---|---|---|---|
-| `Mullion: session <version> (jdrly/mullion swtor-on-mac) d3d12 fl= metal4= shaderMetal= airconv= codegen=` | Once per process, when the first Direct3D 12 device is created, before its feature level is checked | `d3d12.log` (Wine's output, `wine.log` in the app), at `info` | The app's session report; me, first in every log |
+| `Mullion: session <version> (jdrly/mullion swtor-on-mac) d3d12 fl= metal4= shaderMetal= airconv= codegen=` | With `MULLION_SESSION_HEADER=1`, once per process, when the first Direct3D 12 device is created, before its feature level is checked | `d3d12.log` (Wine's output, `wine.log` in the app), at `info` | The app's session report; me, first in every log |
 | `Mullion: mac macOS= build= gpu="" family= masked= ram= workingSet= arch= supportsPlacementSparse=` | With the session line | The same | The same |
 | `Mullion: switches <NAME=value …>` or `none` | With the session line | The same | The same |
 | `Mullion: env <NAME=value …>` or `none` | With the session line | The same | The same |
@@ -36,8 +36,9 @@ are set.
 
 ### The session header
 
-What a session ran with, in five lines written together, at `info`: `MULLION_SESSION_HEADER=0`, or
-`MULLION_LOG_LEVEL=warn` or above, leaves them out and reads nothing for them. [`tests/swtor/fixtures/session.log`](../../tests/swtor/fixtures/session.log) is a sample;
+What a session ran with, in five lines written together, at `info`, with `MULLION_SESSION_HEADER=1`. Without it (the
+default), or with `MULLION_LOG_LEVEL=warn` or above, nothing is written or read for them.
+[`tests/swtor/fixtures/session.log`](../../tests/swtor/fixtures/session.log) is a sample;
 `host_session` fails when the formatter stops writing it, and the app's session report tests copy it. The field names
 and their order are the contract: a field is added at the end of its line, and a renamed or moved field changes the
 fixture in the same pull request.
@@ -55,7 +56,7 @@ fixture in the same pull request.
   its digits.
 - `env`: every `MULLION_*`, `DXMT_*` and `MTL_*` variable set (names of letters, digits and `_`), by name.
 - `cache`: the shader cache's file below the user's cache directory (`off` with `MULLION_SHADER_CACHE=0`), its rows
-  for this `AIRCONV_VERSION` (0 without the file or the table, `n/a` while a writer has it open) and the file's size
+  for this `AIRCONV_VERSION` (0 without the file or the table, `n/a` while a writer has it open or opens it) and the file's size
   in MiB. The rows are counted with the file opened immutable, so nothing is written beside it.
 
 `build`, `family`, `masked`, `ram`, `arch`'s `-rosetta` and the cache's counts come from the bridge
@@ -71,8 +72,8 @@ Rules every fork log line keeps, this header first:
   and as `(a path)` when `MULLION_SHADER_CACHE_PATH` makes it absolute.
 - No user's or computer's name. A value with one in it, in any case, prints as `(a name)`, and a variable whose name
   has one isn't listed. The names are the environment's `USER`, `LOGNAME`, `USERNAME`, `COMPUTERNAME` and `HOSTNAME`
-  and the last folder of `HOME` and `USERPROFILE`; one of 2 or 3 characters counts only as a whole word, as in the
-  app's leak check. The Mac's full name and other names the app redacts aren't known here: the app's log bundle
+  and the last folder of `HOME` and `USERPROFILE`, their names in any case as Windows reads them; one of 2 or 3
+  characters counts only as a whole word, as in the app's leak check. The Mac's full name and other names the app redacts aren't known here: the app's log bundle
   still redacts them.
 - No field named `session`, `token`, `account`, `user`, `user_name` or `email`: the app's log bundle blanks such a
   value and drops a file that still names the user. The header's first word is `session` and a space, never

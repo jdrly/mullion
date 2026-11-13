@@ -165,6 +165,13 @@ main(int argc, char **argv) {
       check(text.find(field) != std::string::npos, std::string("has ") + field + ":\n" + text);
     check(text.find("MULLION_JANDOE_X") == std::string::npos, "a variable whose name names the user isn't shown");
   }
+  // Windows' variable names in any case: UserName and UserProfile are USERNAME and USERPROFILE
+  {
+    auto header = Sample(registry);
+    header.env = {{"UserName", "JanDoe"}, {"UserProfile", "C:\\users\\JanDoe"}, {"MULLION_PROFILE", "JanDoe"}};
+    auto text = Joined(session::Format(header));
+    check(text.find("MULLION_PROFILE=(a name)") != std::string::npos, "UserName in any case:\n" + text);
+  }
 
   // wrapping: no line reaches 900 bytes, and every field is whole on one line, in its order
   {

@@ -135,11 +135,15 @@ Shown(std::string_view name) {
 }
 
 // the names that mustn't print, from the process's environment: the login (USER, LOGNAME, Wine's USERNAME), the
-// computer's (COMPUTERNAME, HOSTNAME), and the last folder of HOME and USERPROFILE
+// computer's (COMPUTERNAME, HOSTNAME), and the last folder of HOME and USERPROFILE. Windows' variable names are in
+// any case (UserName is USERNAME)
 inline std::vector<std::string>
 UserNames(const std::vector<std::pair<std::string, std::string>> &env) {
   std::vector<std::string> names;
-  for (auto &[name, value] : env) {
+  for (auto &[key, value] : env) {
+    std::string name = key;
+    for (auto &c : name)
+      c = c >= 'a' && c <= 'z' ? char(c - 'a' + 'A') : c;
     if (name == "USER" || name == "LOGNAME" || name == "USERNAME" || name == "COMPUTERNAME" || name == "HOSTNAME")
       names.push_back(value);
     if (name == "HOME" || name == "USERPROFILE") {
