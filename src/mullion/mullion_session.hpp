@@ -38,17 +38,42 @@ Kept(char c) {
          std::string_view(",.;:_+=-").find(c) != std::string_view::npos;
 }
 
+// whether `text` has one of `names` (the user's login, the computer's name) in it, in any case: one of 4 characters or
+// more anywhere, a shorter one as a whole word, as SWTOR on Mac's leak check finds them (collect-logs.sh)
+inline bool
+Names(std::string_view text, const std::vector<std::string> &names) {
+  auto lower = [](std::string_view from) {
+    std::string to(from);
+    for (auto &c : to)
+      c = c >= 'A' && c <= 'Z' ? char(c - 'A' + 'a') : c;
+    return to;
+  };
+  auto word = [](char c) { return Kept(c) && std::string_view(",.;:+=-").find(c) == std::string_view::npos; };
+  std::string haystack = lower(text);
+  for (auto &name : names) {
+    std::string needle = lower(name);
+    if (needle.size() < 2)
+      continue;
+    for (size_t at = haystack.find(needle); at != std::string::npos; at = haystack.find(needle, at + 1))
+      if (needle.size() >= 4 || ((!at || !word(haystack[at - 1])) &&
+                                 (at + needle.size() == haystack.size() || !word(haystack[at + needle.size()]))))
+        return true;
+  }
+  return false;
+}
+
 // a value from outside Mullion, by SWTOR on Mac's rule for its own header (wine-wrapper.sh, session_settings): one
-// with / or \ is "(a path)"; the rest keeps only its letters, digits and , . ; : _ + = -, cut to 80 bytes
+// with / or \ is "(a path)"; the rest keeps only its letters, digits and , . ; : _ + = -, cut to 80 bytes. One that
+// has one of `names` in it, before or after, is "(a name)"
 inline std::string
-Value(std::string_view raw) {
+Value(std::string_view raw, const std::vector<std::string> &names = {}) {
   if (raw.find_first_of("/\\") != std::string_view::npos)
     return "(a path)";
   std::string kept;
   for (char c : raw)
     if (Kept(c) && kept.size() < kValueLimit)
       kept += c;
-  return kept;
+  return Names(raw, names) || Names(kept, names) ? "(a name)" : kept;
 }
 
 // a line's text after "Mullion: <head> ": `name=value`, or the value alone when it has no name
@@ -57,7 +82,8 @@ struct Field {
 };
 
 // `Mullion: <head>` and its fields, or `empty` when there are none, as lines shorter than kLineLimit: a field that
-// would reach it starts a `Mullion: <head>+` line. A field longer than a line can hold is cut
+// would reach it starts a `Mullion: <head>+` line. A field longer than a line can hold is cut. `head` and `empty` are
+// the header's own words, a few bytes each (the bound holds while they are under kLineLimit - 12 bytes together)
 inline std::vector<std::string>
 Lines(std::string_view head, const std::vector<Field> &fields, std::string_view empty = {}) {
   std::string first = "Mullion: " + std::string(head), next = first + "+";
@@ -108,8 +134,28 @@ Shown(std::string_view name) {
   return false;
 }
 
+// the names that mustn't print, from the process's environment: the login (USER, LOGNAME, Wine's USERNAME), the
+// computer's (COMPUTERNAME, HOSTNAME), and the last folder of HOME and USERPROFILE
+inline std::vector<std::string>
+UserNames(const std::vector<std::pair<std::string, std::string>> &env) {
+  std::vector<std::string> names;
+  for (auto &[name, value] : env) {
+    if (name == "USER" || name == "LOGNAME" || name == "USERNAME" || name == "COMPUTERNAME" || name == "HOSTNAME")
+      names.push_back(value);
+    if (name == "HOME" || name == "USERPROFILE") {
+      std::string_view folder = value;
+      while (!folder.empty() && (folder.back() == '/' || folder.back() == '\\'))
+        folder.remove_suffix(1);
+      names.emplace_back(folder.substr(folder.find_last_of("/\\") + 1));
+    }
+  }
+  return names;
+}
+
 inline std::vector<std::string>
 Format(const Header &header) {
+  auto names = UserNames(header.env);
+  auto text = [&](const std::string &raw) { return Value(raw, names); };
   auto number = [](auto value) { return std::to_string(value); };
   auto known = [](const auto &value, auto text) { return value ? text(*value) : std::string("n/a"); };
   auto mib = [](uint64_t bytes) { return std::to_string(bytes >> 20); };
@@ -119,15 +165,17 @@ Format(const Header &header) {
       number(header.macos[0]) + "." + number(header.macos[1]) + (header.macos[2] ? "." + number(header.macos[2]) : "");
   std::string gpu;
   for (char c : header.gpu)
-    if (c != '"' && c != '\\' && c >= ' ' && c <= '~' && gpu.size() < kValueLimit)
+    if ((Kept(c) || c == ' ') && gpu.size() < kValueLimit)
       gpu += c;
+  if (Names(gpu, names))
+    gpu = "(a name)";
 
   std::vector<Field> switches, env;
   for (auto &[name, value] : header.switches)
-    switches.push_back({name, Value(value)});
+    switches.push_back({name, text(value)});
   for (auto &[name, value] : header.env)
-    if (Shown(name))
-      env.push_back({name.substr(0, kValueLimit), Value(value)});
+    if (Shown(name) && !Names(name, names))
+      env.push_back({name.substr(0, kValueLimit), text(value)});
   std::sort(env.begin(), env.end(), [](auto &a, auto &b) { return a.name < b.name; });
 
   // a relative directory is below the user's cache directory, which names the user, and prints without it; an
@@ -139,7 +187,9 @@ Format(const Header &header) {
       for (char c : *directory)
         if (c == '/' || Kept(c))
           shaders += c;
-    shaders += Value(header.cache_file);
+    shaders += text(header.cache_file);
+    if (Names(shaders, names))
+      shaders = "(a name)";
   }
 
   std::vector<std::string> lines;
@@ -147,16 +197,16 @@ Format(const Header &header) {
     auto more = Lines(head, fields, empty);
     lines.insert(lines.end(), more.begin(), more.end());
   };
-  add("session", {{"", Value(header.version)},
+  add("session", {{"", text(header.version)},
                   {"", "(jdrly/mullion swtor-on-mac)"},
                   {"", header.api},
                   {"fl", number((header.feature_level >> 12) & 0xf) + "_" + number((header.feature_level >> 8) & 0xf)},
                   {"metal4", header.metal4},
                   {"shaderMetal", number(header.shader_metal)},
                   {"airconv", number(header.airconv)},
-                  {"codegen", known(header.codegen, Value)}});
+                  {"codegen", known(header.codegen, text)}});
   add("mac", {{"macOS", macos},
-              {"build", known(header.build, Value)},
+              {"build", known(header.build, text)},
               {"gpu", "\"" + gpu + "\""},
               {"family", known(header.family, family)},
               {"masked", header.masked ? family(header.masked) : "no"},

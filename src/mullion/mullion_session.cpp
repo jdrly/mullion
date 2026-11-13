@@ -10,11 +10,14 @@
 
 namespace mullion {
 
+// MULLION_SESSION_HEADER=0: no header, and no bridge call for it
+static sw::Switch<bool> kSessionHeader{"MULLION_SESSION_HEADER", true, sw::notZero};
+
 void
 WriteSessionHeader(uint64_t handle, const char *api, uint32_t feature_level, bool metal4, uint32_t shader_metal) {
   static std::atomic_flag written;
-  // MULLION_LOG_LEVEL above info: nothing written, nothing read
-  if (Logger::logLevel() > LogLevel::Info || written.test_and_set())
+  // MULLION_LOG_LEVEL above info or MULLION_SESSION_HEADER=0: nothing written, nothing read
+  if (Logger::logLevel() > LogLevel::Info || !kSessionHeader() || written.test_and_set())
     return;
   WMT::Device device;
   device.handle = handle;

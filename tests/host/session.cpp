@@ -126,7 +126,7 @@ main(int argc, char **argv) {
   {
     auto header = Sample(registry);
     header.version = "v1-dirty /Users/someone";
-    header.gpu = "Apple \"M5\" Max\\";
+    header.gpu = "Apple \"M5\" Max\\/";
     header.cache_directory = "/Users/someone/caches/";
     header.env.push_back({"MULLION_SHADER_CACHE_PATH", "/Users/someone/caches"});
     header.env.push_back({"MULLION_LOG_FILE", "C:\\users\\someone\\log.txt"});
@@ -135,9 +135,35 @@ main(int argc, char **argv) {
     auto text = Joined(session::Format(header));
     check(text.find("/Users") == std::string::npos && text.find("someone") == std::string::npos, "no path:\n" + text);
     check(text.find("shaders=(a path)/shaders_400.db ") != std::string::npos, "an absolute cache directory");
-    check(text.find("gpu=\"Apple M5 Max\" ") != std::string::npos, "a GPU name keeps no quote or backslash");
+    check(text.find("gpu=\"Apple M5 Max\" ") != std::string::npos, "a GPU name keeps no quote, slash or backslash");
     check(text.find("BAD-NAME") == std::string::npos && text.find("mullion_lower") == std::string::npos,
           "only MULLION_, DXMT_ and MTL_ names of letters, digits and _");
+  }
+
+  // no value has the user's login or the computer's name in it, in any case: a short one as a whole word
+  {
+    auto header = Sample(registry);
+    header.env.push_back({"USER", "jandoe"});
+    header.env.push_back({"COMPUTERNAME", "JANS-MBP"});
+    header.env.push_back({"USERPROFILE", "C:\\users\\jd\\"});
+    header.env.push_back({"MULLION_PROFILE", "JanDoe"});
+    header.env.push_back({"MULLION_NOTE", "for-jans-mbp-tests"});
+    header.env.push_back({"MULLION_SHORT", "a,jd"});
+    header.env.push_back({"MULLION_HEX", "0xjd1"});
+    header.env.push_back({"MULLION_JANDOE_X", "1"});
+    header.switches.push_back({"MULLION_SAMPLE_TEXT", "by JanDoe"});
+    header.version = "v1-jandoe";
+    header.gpu = "Apple M5 Max / jandoe";
+    header.cache_file = "shaders_jandoe.db";
+    auto text = Joined(session::Format(header));
+    check(text.find("jandoe") == std::string::npos && text.find("JanDoe") == std::string::npos &&
+              text.find("jans-mbp") == std::string::npos,
+          "no name:\n" + text);
+    for (auto field : {"MULLION_PROFILE=(a name)", "MULLION_NOTE=(a name)", "MULLION_SHORT=(a name)",
+                       "MULLION_HEX=0xjd1", "MULLION_SAMPLE_TEXT=(a name)", "session (a name) ", "gpu=\"(a name)\"",
+                       "shaders=mullion/swtor_RC2.exe/(a name) "})
+      check(text.find(field) != std::string::npos, std::string("has ") + field + ":\n" + text);
+    check(text.find("MULLION_JANDOE_X") == std::string::npos, "a variable whose name names the user isn't shown");
   }
 
   // wrapping: no line reaches 900 bytes, and every field is whole on one line, in its order

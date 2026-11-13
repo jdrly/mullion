@@ -1,6 +1,7 @@
 #import <Foundation/Foundation.h>
 #include "sqlite3.h"
 #include <sys/stat.h>
+#include "cache_count.h"
 #define WINEMETAL_API
 #include "../winemetal_thunks.h"
 
@@ -258,8 +259,8 @@ _CacheWriter_set(void *obj) {
   return 0;
 }
 
-// the session header's count of a cache: the rows of its table cache_<version> and its file's size, 0 and 0 without
-// the file, -1 for what can't be read. it opens the file read-only, where resolve_cache_dir would make its directory
+// the session header's count of a cache: the rows of its table cache_<version> (cache_count.h) and its file's size, 0
+// and 0 without the file, -1 for what can't be read. it writes nothing, where resolve_cache_dir would make a directory
 void
 cache_stats(const char *path, uint64_t version, int64_t *entries, int64_t *bytes) {
   *entries = *bytes = -1;
@@ -279,21 +280,7 @@ cache_stats(const char *path, uint64_t version, int64_t *entries, int64_t *bytes
     return;
   }
   *bytes = st.st_size;
-  sqlite3 *db = NULL;
-  sqlite3_stmt *stmt = NULL;
-  NSString *count = [NSString stringWithFormat:@"SELECT COUNT(*) FROM cache_%llu;", version];
-  if (sqlite3_open_v2(file.fileSystemRepresentation, &db, SQLITE_OPEN_READONLY | SQLITE_OPEN_NOMUTEX, NULL) ==
-      SQLITE_OK) {
-    if (sqlite3_prepare_v2(db, count.UTF8String, -1, &stmt, NULL) == SQLITE_OK) {
-      if (sqlite3_step(stmt) == SQLITE_ROW)
-        *entries = sqlite3_column_int64(stmt, 0);
-    } else if (!strncmp(sqlite3_errmsg(db), "no such table", 13)) {
-      // a cache written for another AIRCONV_VERSION only
-      *entries = 0;
-    }
-  }
-  sqlite3_finalize(stmt);
-  sqlite3_close(db);
+  *entries = cache_count(file.fileSystemRepresentation, version);
 }
 
 #ifndef MULLION_NO_PRIVATE_API

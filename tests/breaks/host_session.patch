@@ -1,7 +1,7 @@
 # the mac line's workingSet field renamed: the header no longer matches the fixture
 --- a/src/mullion/mullion_session.hpp
 +++ b/src/mullion/mullion_session.hpp
-@@ -161,7 +161,7 @@
+@@ -211,7 +211,7 @@
                {"family", known(header.family, family)},
                {"masked", header.masked ? family(header.masked) : "no"},
                {"ram", known(header.ram, mib)},
