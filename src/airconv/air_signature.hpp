@@ -731,6 +731,8 @@ inline TextureKind to_air_resource_type(
     break;
   };
   assert(0 && "unreachable");
+  // NonApplicable: its callers bind a buffer instead. a stand-in, so a release build doesn't fall off the end
+  return TextureKind::texture_2d;
 };
 
 inline MSLScalerType
@@ -746,6 +748,8 @@ to_air_scaler_type(mullion::shader::common::ScalerDataType type) {
     assert(0 && "");
     break;
   }
+  // a double: both readers refuse the shader first (Refuse). a stand-in, so a release build doesn't fall off the end
+  return msl_float;
 }
 
 enum class MTLPixelFormat : uint32_t {
