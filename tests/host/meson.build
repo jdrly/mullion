@@ -7,8 +7,10 @@ test('host_format', executable('host_format', 'format.cpp', include_directories 
 # the session header's lines against the fixture SWTOR on Mac's report tests copy, and the switch registry
 test('host_session', executable('host_session', 'session.cpp', override_options : ['cpp_std=c++20'], native : true),
      args : files('../swtor/fixtures/session.log'))
-# the session header's count of a shader cache, which mustn't write beside it
-test('host_cache_count', executable('host_cache_count', 'cache_count.c', link_args : ['-lsqlite3'], native : true))
+# the session header's count of a shader cache, which mustn't write beside it. linked as C++: the root meson.build
+# gives native links their -arch for C++ only
+test('host_cache_count', executable('host_cache_count', 'cache_count.c', link_args : ['-lsqlite3'],
+                                    link_language : 'cpp', native : true))
 test('host_rc_self_move', executable('host_rc_self_move', 'rc.cpp',
                                     override_options : ['cpp_std=c++20'], native : true))
 test('host_denorm', executable('host_denorm', 'denorm.cpp', include_directories : include_directories('metal'),
