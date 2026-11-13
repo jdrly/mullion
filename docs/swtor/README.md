@@ -35,10 +35,10 @@ How a switch is declared: [ADR 0001](adr/0001-switches.md).
   same tree has already passed the rest.
 
   `host_tessellator` takes about 200 s on the runner, which is arm64 and runs the x86_64 host tests under Rosetta; the
-  others take about 28 s together. It runs only when the pull request changes what it compiles
-  (`src/airconv/shaders/air_tessellation.metal`, `src/airconv/tessellation_limits.hpp`, `src/airconv/airconv_public.h`,
-  `libs/DXBCParser`, `tests/tessellator.hpp`, `tests/reference`, `tests/host`) or the workflow, or when the step can't
-  tell. `host_dxbc_hash` skips itself there: it needs directories of real shaders (`MULLION_HASHED`).
+  others take about 28 s together. It runs only when the pull request changes what it compiles or how (`src/airconv`,
+  `libs/DXBCParser`, `tests/tessellator.hpp`, `tests/reference`, `tests/host`, `tests/meson.build`, `meson.build`,
+  `meson.options`, `build-win64.txt`) or the workflow, or when the step can't tell. `host_dxbc_hash` skips itself there:
+  it needs directories of real shaders (`MULLION_HASHED`).
 
 **Runner time.** One run at a time for the whole repository: a run in progress is never cancelled, and GitHub keeps one
 more waiting. No schedule, no manual trigger. Toolchain caches are saved only on a miss. On a miss LLVM takes about 25
