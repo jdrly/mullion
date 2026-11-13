@@ -19,6 +19,9 @@ test('host_layer_apply', executable('host_layer_apply', ['layer_apply.c', '../..
 # the STATS line's arithmetic and format, and the fixture's STATS lines
 test('host_stats', executable('host_stats', 'stats.cpp', override_options : ['cpp_std=c++20'], native : true),
      args : files('../swtor/fixtures/session.log'))
+# the line a command buffer the GPU failed writes, against the same fixture, and its limit of 30 lines in 10 s
+test('host_gpu_error', executable('host_gpu_error', 'gpu_error.cpp', override_options : ['cpp_std=c++20'], native : true),
+     args : files('../swtor/fixtures/session.log'))
 test('host_rc_self_move', executable('host_rc_self_move', 'rc.cpp',
                                     override_options : ['cpp_std=c++20'], native : true))
 test('host_denorm', executable('host_denorm', 'denorm.cpp', include_directories : include_directories('metal'),

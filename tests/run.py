@@ -132,10 +132,12 @@ def clone(wine, to):
 
 
 # what the library and Metal say when the GPU's work went wrong under a test: a command buffer that failed
-# (src/d3d12/d3d12_command_queue.cpp, src/mullion/mullion_command_queue.cpp), a rule of Metal's validation broken
-# (Metal's debug layer), a shader's access that Metal's shader validation refused, which it reports and fills with zeros
-# while the command buffer still completes (VALIDATION), a message to an Objective-C object that was freed (ZOMBIES)
-FAULTS = ("Device error", "failed assertion", "Invalid Metal usage", "message sent to deallocated instance")
+# (src/d3d12/d3d12_command_queue.cpp's MULLION-GPU-ERROR, src/mullion/mullion_command_queue.cpp's Device error), a rule
+# of Metal's validation broken (Metal's debug layer), a shader's access that Metal's shader validation refused, which it
+# reports and fills with zeros while the command buffer still completes (VALIDATION), a message to an Objective-C
+# object that was freed (ZOMBIES)
+FAULTS = ("Device error", "MULLION-GPU-ERROR", "failed assertion", "Invalid Metal usage",
+          "message sent to deallocated instance")
 # Metal's API and shader validation, with the shader's reports on stderr, in the test's log (metalvalidation(1))
 VALIDATION = {"MTL_DEBUG_LAYER": "1", "MTL_SHADER_VALIDATION": "1", "MTL_SHADER_VALIDATION_REPORT_TO_STDERR": "1"}
 

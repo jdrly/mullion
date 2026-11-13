@@ -510,6 +510,8 @@ MTLD3D12CommandAllocatorImpl::EncodeIndirectComputeCommand(MTLD3D12CommandSignat
   cmd_setpso.threadgroup_size = pPSO->threadgroup_size; // not really used
   if (device_->NamesPasses())
     device_->NamePass(encoder_current, pPSO->name, pPSO->pso);
+  if (GPUErrorDetail() && encoder_current->pipeline.empty())
+    encoder_current->pipeline = pPSO->name;
 
   auto &cmd = EncodeComputeCommand<wmtcmd_compute_executecommands_indirect>();
   cmd.type = WMTComputeCommandExecuteCommandsInBufferIndirect;

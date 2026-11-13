@@ -30,8 +30,59 @@
 #include "util_env.hpp"
 #include "d3d12_interfaces.hpp"
 #include "mullion_scaler.hpp"
+#include "d3d12_device_child.hpp"
 
 namespace mullion {
+
+// MULLION_GPU_ERROR_DETAIL: a render target in its pass's encoder's label, ` rt0=1920x1080 RGBA8 "SceneColor"`, with
+// the name the game gave its resource (SetName) when it gave one. Read once a pass, as the pass begins
+static std::string
+TargetLabel(const std::string &slot, const MTL_RENDER_TARGET_DESC &target) {
+  auto format = target.Texture->pixelFormat(target.View);
+  const char *name = nullptr;
+  switch (format) {
+  case WMTPixelFormatR8Unorm: name = "R8"; break;
+  case WMTPixelFormatRG8Unorm: name = "RG8"; break;
+  case WMTPixelFormatR16Float: name = "R16F"; break;
+  case WMTPixelFormatRG16Float: name = "RG16F"; break;
+  case WMTPixelFormatRG16Unorm: name = "RG16"; break;
+  case WMTPixelFormatR32Float: name = "R32F"; break;
+  case WMTPixelFormatR32Uint: name = "R32U"; break;
+  case WMTPixelFormatRG32Float: name = "RG32F"; break;
+  case WMTPixelFormatRGBA8Unorm: name = "RGBA8"; break;
+  case WMTPixelFormatRGBA8Unorm_sRGB: name = "RGBA8s"; break;
+  case WMTPixelFormatBGRA8Unorm: name = "BGRA8"; break;
+  case WMTPixelFormatBGRA8Unorm_sRGB: name = "BGRA8s"; break;
+  case WMTPixelFormatRGB10A2Unorm: name = "RGB10A2"; break;
+  case WMTPixelFormatRG11B10Float: name = "RG11B10F"; break;
+  case WMTPixelFormatRGBA16Float: name = "RGBA16F"; break;
+  case WMTPixelFormatRGBA16Unorm: name = "RGBA16"; break;
+  case WMTPixelFormatRGBA32Float: name = "RGBA32F"; break;
+  case WMTPixelFormatDepth16Unorm: name = "D16"; break;
+  case WMTPixelFormatDepth32Float: name = "D32F"; break;
+  case WMTPixelFormatDepth24Unorm_Stencil8: name = "D24S8"; break;
+  case WMTPixelFormatDepth32Float_Stencil8: name = "D32FS8"; break;
+  case WMTPixelFormatStencil8: name = "S8"; break;
+  default: break;
+  }
+  auto label = str::format(slot, target.Width, "x", target.Height, " ");
+  label += name ? std::string(name) : str::format("fmt", uint32_t(format));
+  UINT size = 0;
+  if (target.Resource && SUCCEEDED(target.Resource->GetPrivateData(kWKPDID_D3DDebugObjectNameW, &size, nullptr)) &&
+      size >= sizeof(WCHAR)) {
+    std::wstring wide(size / sizeof(WCHAR), L'\0');
+    if (SUCCEEDED(target.Resource->GetPrivateData(kWKPDID_D3DDebugObjectNameW, &size, wide.data()))) {
+      wide.resize(wcsnlen(wide.data(), wide.size()));
+      std::string shown;
+      for (char c : str::fromws(wide.c_str()))
+        if (c > ' ' && c <= '~' && c != '"' && c != '\'' && shown.size() < 24)
+          shown += c;
+      if (!shown.empty())
+        label += " \"" + shown + "\"";
+    }
+  }
+  return label;
+}
 
 enum class DirtyState {
   VertexBuffer,
@@ -1221,6 +1272,13 @@ public:
       render->render_target_width = render_target_width;
       render->render_target_height = render_target_height;
       render->render_target_array_length = render_target_array_length;
+      if (GPUErrorDetail()) {
+        for (unsigned i = 0; i < num_rtvs; i++)
+          if ((pso_graphics_->rtv_mask & (1u << i)) && rtvs[i].Texture)
+            render->targets += TargetLabel(str::format(" rt", i, "="), rtvs[i]);
+        if (dsv.Texture && pso_graphics_->dsv_mask)
+          render->targets += TargetLabel(" ds=", dsv);
+      }
       // SetSamplePositions' pattern is for targets of its sample count; with others what the draws sample is undefined.
       // paired samples lie where the even ones of their pairs do
       if (programmed_samples_ && programmed_samples_ == samples << paired) {
@@ -1264,6 +1322,8 @@ public:
         TRACE("pass ", allocator_->encoder_current->id, ": graphics pipeline ", pso_graphics_->name);
       if (device_->NamesPasses())
         device_->NamePass(allocator_->encoder_current, pso_graphics_->name, pipeline);
+      if (GPUErrorDetail() && allocator_->encoder_current->pipeline.empty())
+        allocator_->encoder_current->pipeline = pso_graphics_->name;
 
       auto &cmd_setdsso = allocator_->EncodeRenderCommand<wmtcmd_render_setdepthstencilstate>();
       cmd_setdsso.type = WMTRenderCommandSetDepthStencilState;
@@ -2021,6 +2081,8 @@ public:
         TRACE("pass ", allocator_->encoder_current->id, ": compute pipeline ", pso_compute_->name);
       if (device_->NamesPasses())
         device_->NamePass(allocator_->encoder_current, pso_compute_->name, pso_compute_->pso);
+      if (GPUErrorDetail() && allocator_->encoder_current->pipeline.empty())
+        allocator_->encoder_current->pipeline = pso_compute_->name;
     }
     BindComputeRootArguments(SkipResourceBinding);
     return true;

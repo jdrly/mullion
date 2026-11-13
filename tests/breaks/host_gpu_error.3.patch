@@ -1,0 +1,12 @@
+# an address printed as it is
+--- a/src/mullion/mullion_gpu_error.hpp
++++ b/src/mullion/mullion_gpu_error.hpp
+@@ -70,7 +70,7 @@
+       size_t end = at + 2;
+       while (end < raw.size() && Hex(raw[end]))
+         end++;
+-      if (end - at - 2 >= 6) {
++      if (false) {
+         text += "0x?";
+         at = end;
+         continue;

@@ -2623,7 +2623,7 @@ enum { WMTUnixSampledEncoder = 167, WMTUnixDiagWrite, WMTUnixDispatchDataBytes, 
        WMTUnixComputeStaticThreadgroupMemory, WMTUnixDeviceMaxThreadgroupMemory,
        WMTUnixDeviceMaxThreadsPerThreadgroup, WMTUnixDeviceReport, WMTUnixTextureSparseTailHolds,
        WMTUnixDeviceSparseResidencyInTiles, WMTUnixDeviceNewSpecializedRenderPipeline,
-       WMTUnixGetSessionFacts,
+       WMTUnixGetSessionFacts, WMTUnixGetGPUError,
        WMTUnixCallCount };
 WINEMETAL_API obj_handle_t MTLCommandBuffer_sampledCommandEncoder(obj_handle_t cmdbuf, enum WMTSampledEncoder type,
                                                                   const struct WMTSampleBufferAttachmentInfo *samples,
@@ -2664,6 +2664,26 @@ STATIC_ASSERT(sizeof(struct WMTSessionFacts) == 64);
 // `cache_path` is the shader cache's file as ShaderCache opens it (relative to the user's cache directory, or
 // absolute); NULL for none
 WINEMETAL_API void WMTGetSessionFacts(obj_handle_t device, const char *cache_path, struct WMTSessionFacts *facts);
+// a command buffer's error (MTLCommandBuffer_error, or Metal 4's feedback), as MULLION-GPU-ERROR has it
+// (src/mullion/mullion_gpu_error.hpp). it only reads. every string is cut to its array and ends with a 0
+struct WMTGPUErrorEncoder {
+  uint32_t index; // its place in the command buffer, from 0
+  char state[12]; // affected, pending, faulted, unknown
+  char label[48]; // the encoder's label, "" for none
+};
+struct WMTGPUError {
+  int64_t code;
+  uint32_t encoders; // how many encoders Metal's error lists; ~0u when it lists none
+  uint32_t listed;   // `encoder`'s entries: the first that didn't complete
+  uint32_t unlisted; // more that didn't complete
+  uint32_t padding;
+  char name[24];     // the code's name, "" when the bridge's table doesn't know it
+  char domain[48];   // "" for MTLCommandBufferErrorDomain and MTL4CommandQueueErrorDomain
+  char text[208];    // localizedDescription
+  struct WMTGPUErrorEncoder encoder[8];
+};
+STATIC_ASSERT(sizeof(struct WMTGPUError) == 816);
+WINEMETAL_API void WMTGetGPUError(obj_handle_t error, struct WMTGPUError *info);
 WINEMETAL_API void MTLCommandBuffer_pushDebugGroup(obj_handle_t cmdbuf, obj_handle_t name);
 WINEMETAL_API void MTLCommandBuffer_popDebugGroup(obj_handle_t cmdbuf);
 WINEMETAL_API uint64_t DispatchData_getBytes(obj_handle_t data, void *buffer, uint64_t size);

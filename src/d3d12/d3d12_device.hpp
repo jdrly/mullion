@@ -1202,6 +1202,9 @@ bool IsCpuVisibleHeap(const D3D12_HEAP_PROPERTIES *pHeapProps);
 bool ShaderContainerHolds(const void *container, size_t size);
 // the SHA1 of a shader's bytecode, which one that held (ShaderContainerHolds) does not compute again
 Sha1Digest ShaderDigest(const void *code, size_t size);
+// MULLION_GPU_ERROR_DETAIL=1, or MULLION_D3D12_GPU_ERRORS or MULLION_TRACE_GPU=heavy: passes record their first
+// pipeline and their targets for their encoders' labels (d3d12_command_queue.cpp)
+bool GPUErrorDetail();
 
 // whether `device` has the features a shader container requires: the low bits of its feature info part (SFI0,
 // DxilContainer.h), which DxilConstants.h calls feature requirements
