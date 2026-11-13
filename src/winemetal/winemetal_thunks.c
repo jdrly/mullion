@@ -2107,6 +2107,19 @@ WMTGetGPUError(obj_handle_t error, struct WMTGPUError *info) {
 }
 
 WINEMETAL_API void
+WMTCachePrepare(const char *path, uint64_t version, const char *shard_family, const char *shard_keep,
+                struct WMTCachePrepared *prepared) {
+  struct unixcall_cache_prepare params;
+  *prepared = (struct WMTCachePrepared){.entries = -1, .bytes = -1};
+  WMT_MEMPTR_SET(params.path, path);
+  WMT_MEMPTR_SET(params.shard_family, shard_family);
+  WMT_MEMPTR_SET(params.shard_keep, shard_keep);
+  params.version = version;
+  WMT_MEMPTR_SET(params.prepared, prepared);
+  UNIX_CALL(WMTUnixCachePrepare, &params);
+}
+
+WINEMETAL_API void
 MTLCommandBuffer_pushDebugGroup(obj_handle_t cmdbuf, obj_handle_t name) {
   struct unixcall_generic_obj_obj_noret params;
   params.handle = cmdbuf;

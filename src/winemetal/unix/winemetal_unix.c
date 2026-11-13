@@ -7209,6 +7209,8 @@ _MTL4CommandEncoder_encodeCommands(void *obj) {
 
 // cache.c: a cache file's size, as WMTSessionFacts has it
 int64_t cache_file_size(const char *path);
+// cache.c: WMTCachePrepare
+NTSTATUS _WMTCachePrepare(void *obj);
 
 static NTSTATUS
 _WMTGetSessionFacts(void *obj) {
@@ -7543,6 +7545,7 @@ const void *__wine_unix_call_funcs[] = {
     &_MTLDevice_newSpecializedRenderPipeline,
     &_WMTGetSessionFacts,
     &_WMTGetGPUError,
+    &_WMTCachePrepare,
 };
 
 #ifndef MULLION_NATIVE
@@ -7762,6 +7765,7 @@ const void *__wine_unix_call_wow64_funcs[] = {
     &_MTLDevice_newSpecializedRenderPipeline,
     &_WMTGetSessionFacts,
     &_WMTGetGPUError,
+    &_WMTCachePrepare,
 };
 _Static_assert(sizeof(__wine_unix_call_wow64_funcs) / sizeof(__wine_unix_call_wow64_funcs[0]) == WMTUnixCallCount,
                "32-bit bridge call count");

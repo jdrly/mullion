@@ -542,7 +542,9 @@ public:
       WMT::Reference<WMT::BinaryArchive> added;
       if (directory.empty() || !(added = GetMTLDevice().newBinaryArchive(nullptr, error)))
         return;
-      archive_path_ = str::format(directory, "pipelines_", uint32_t(metal_version_), "_");
+      // the cache has removed other identities' shards (WMTCachePrepare) before this reads its own
+      ShaderCache::getInstance(WMTMetalVersion(metal_version_));
+      archive_path_ = directory + ShaderCacheArchivePrefix(uint32_t(metal_version_));
       // shards are read in order up to the first one Metal cannot read (none yet, or a damaged one), where this
       // launch's shards start
       while (archives_.size() + 1 < kMaxArchives)

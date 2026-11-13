@@ -42,6 +42,7 @@ Sample(const sw::Registry &registry) {
   header.metal4 = "on";
   header.shader_metal = 400;
   header.airconv = 103;
+  header.codegen = "3f2a9c01d4e5b6a7c8d9e0f1a2b3c4d5e6f708192a3b4c5d6e7f8091a2b3c4d5";
   header.macos[0] = 26, header.macos[1] = 1;
   header.build = "25B78";
   header.gpu = "Apple M5 Max";
@@ -59,8 +60,25 @@ Sample(const sw::Registry &registry) {
                 {"WINEDEBUG", "-all"}};
   header.cache_directory = "mullion/swtor_RC2.exe/";
   header.cache_file = "shaders_400.db";
+  header.cache_entries = 48211;
   header.cache_bytes = (700ll << 20) + (512 << 10);
   return header;
+}
+
+// the cache that sample opened, after an update: one table and three archives of the build before dropped
+static session::CacheOpen
+SampleOpen() {
+  session::CacheOpen open;
+  open.directory = "mullion/swtor_RC2.exe/";
+  open.file = "shaders_400.db";
+  open.codegen = "3f2a9c01d4e5b6a7c8d9e0f1a2b3c4d5e6f708192a3b4c5d6e7f8091a2b3c4d5";
+  open.build = "25B78";
+  open.entries = 0;
+  open.bytes = (700ll << 20) + (512 << 10);
+  open.dropped_tables = 1, open.dropped_shards = 3;
+  open.dropped_bytes = (690ll << 20) + (40ll << 20);
+  open.env = {{"HOME", "/Users/someone"}};
+  return open;
 }
 
 static std::string
@@ -107,7 +125,7 @@ main(int argc, char **argv) {
     header.macos[2] = 2;
     header.switches.clear(), header.env.clear();
     header.cache_directory.reset();
-    header.cache_entries.reset(), header.cache_bytes.reset();
+    header.codegen.reset(), header.cache_entries.reset(), header.cache_bytes.reset();
     auto lines = session::Format(header);
     check(lines.size() == 5, "five lines");
     check(lines[0].ends_with(" metal4=unsupported shaderMetal=400 airconv=103 codegen=n/a"), lines[0]);
@@ -212,6 +230,26 @@ main(int argc, char **argv) {
           "a long name cut to 80");
     auto one = session::Lines("x", {{"", std::string(2000, 'a')}});
     check(one.size() == 1 && one[0].size() == session::kLineLimit - 1, "a field longer than a line is cut");
+  }
+
+  // the line a cache writes when it opens: its file, the first 12 digits of the codegen id, the macOS build, the rows of
+  // its table, its size, and what it dropped of other ids
+  {
+    auto lines = session::CacheOpenLines(SampleOpen());
+    check(lines == std::vector<std::string>{"Mullion: cacheOpen shaders=mullion/swtor_RC2.exe/shaders_400.db "
+                                            "codegen=3f2a9c01d4e5 build=25B78 entries=0 sizeMiB=700 droppedTables=1 "
+                                            "droppedShards=3 droppedMiB=730"},
+          "the cacheOpen line: " + Joined(lines));
+    auto open = SampleOpen();
+    open.directory = "/Users/someone/caches/";
+    open.build.clear();
+    open.entries.reset(), open.bytes.reset();
+    open.env.push_back({"USER", "jandoe"});
+    open.file = "shaders_jandoe.db";
+    auto text = Joined(session::CacheOpenLines(open));
+    check(text == "Mullion: cacheOpen shaders=(a path)/(a name) codegen=3f2a9c01d4e5 build=n/a entries=n/a sizeMiB=n/a "
+                  "droppedTables=1 droppedShards=3 droppedMiB=730\n",
+          "a name, an absolute directory, what couldn't be read: " + text);
   }
 
   // a declared switch is listed with its value now, by name; read anew each time by its grammar

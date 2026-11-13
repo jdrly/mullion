@@ -1,0 +1,12 @@
+# the files the converter includes from elsewhere in the tree are left out of the codegen id
+--- a/tools/codegen_id.py
++++ b/tools/codegen_id.py
+@@ -54,7 +54,7 @@
+             beside = os.path.normpath(os.path.join(os.path.dirname(path), name)).replace(os.sep, '/')
+             # beside the file that includes it, else every file of that name in the tree: LLVM's and the build's own
+             # headers (air_denorm.h, from shaders/air_denorm.metal) are found nowhere and are left to the versions
+-            found = [beside] if beside in known else [f for f in searched if f == name or f.endswith('/' + name)]
++            found = []
+             for f in found:
+                 if f not in files:
+                     files.add(f)

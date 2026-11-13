@@ -29,6 +29,7 @@ WriteSessionHeader(uint64_t handle, const char *api, uint32_t feature_level, boo
   header.metal4 = !device.supportsFamily(WMTGPUFamilyMetal4) ? "unsupported" : metal4 ? "on" : "off";
   header.shader_metal = shader_metal;
   header.airconv = AIRCONV_VERSION;
+  header.codegen = ShaderCacheIdentity().codegen;
 
   WMTGetOSVersion(&header.macos[0], &header.macos[1], &header.macos[2]);
   char name[256] = {};
@@ -39,8 +40,11 @@ WriteSessionHeader(uint64_t handle, const char *api, uint32_t feature_level, boo
 
   // the file ShaderCache opens for this Metal version
   header.cache_file = str::format("shaders_", shader_metal, ".db");
-  if (auto directory = ShaderCacheDirectory(); !directory.empty())
+  if (auto directory = ShaderCacheDirectory(); !directory.empty()) {
     header.cache_directory = directory;
+    // opens it (it writes its cacheOpen line) as the first pipeline would, for the rows it counted
+    header.cache_entries = ShaderCache::getInstance(WMTMetalVersion(shader_metal)).entries();
+  }
   auto cache_path = header.cache_directory ? *header.cache_directory + header.cache_file : std::string();
 
   WMTSessionFacts facts;
@@ -65,18 +69,25 @@ WriteSessionHeader(uint64_t handle, const char *api, uint32_t feature_level, boo
     header.cache_bytes = facts.cache_bytes;
 
   header.switches = sw::processRegistry().list();
+  header.env = ProcessEnvironment();
+
+  for (auto &line : session::Format(header))
+    Logger::info(line);
+}
+
+std::vector<std::pair<std::string, std::string>>
+ProcessEnvironment() {
+  std::vector<std::pair<std::string, std::string>> env;
   if (auto block = GetEnvironmentStringsW()) {
     for (auto entry = block; *entry; entry += wcslen(entry) + 1) {
       std::string text = str::fromws(entry);
       // "=C:=C:\..." and the like: a drive's directory, no variable
       if (auto equals = text.find('=', 1); equals != std::string::npos)
-        header.env.emplace_back(text.substr(0, equals), text.substr(equals + 1));
+        env.emplace_back(text.substr(0, equals), text.substr(equals + 1));
     }
     FreeEnvironmentStringsW(block);
   }
-
-  for (auto &line : session::Format(header))
-    Logger::info(line);
+  return env;
 }
 
 } // namespace mullion

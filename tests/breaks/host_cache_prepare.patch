@@ -1,0 +1,12 @@
+# the rows are counted without the writers' lock
+--- a/src/winemetal/unix/cache_prepare.h
++++ b/src/winemetal/unix/cache_prepare.h
+@@ -106,7 +106,7 @@
+   char *lock_path = sqlite3_mprintf("%s-lock", db_path);
+   int lock = lock_path ? open(lock_path, O_RDWR | O_CREAT, 0666) : -1;
+   sqlite3_free(lock_path);
+-  while (lock >= 0 && flock(lock, LOCK_EX))
++  while (lock >= 0 && 0)
+     if (errno != EINTR) {
+       close(lock);
+       lock = -1;

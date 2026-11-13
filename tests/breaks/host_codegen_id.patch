@@ -1,0 +1,12 @@
+# a file's bytes are left out of the codegen id: only its path and length
+--- a/tools/codegen_id.py
++++ b/tools/codegen_id.py
+@@ -70,7 +70,7 @@
+ 
+     for path in inputs(root):
+         with open(os.path.join(root, path), 'rb') as f:
+-            part('file ' + path, f.read())
++            part('file ' + path, b'.' * len(f.read()))
+     with open(os.path.join(root, 'src/airconv/airconv_public.h'), 'rb') as f:
+         airconv = re.search(rb'^#define AIRCONV_VERSION (\d+)', f.read(), re.M)
+     if not airconv:

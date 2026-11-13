@@ -1,6 +1,12 @@
 #include "mullion_shader_cache.hpp"
+#include "log/log.hpp"
+#include "mullion_session.hpp"
 #include "util_env.hpp"
 #include "util_string.hpp"
+#include <cstdio>
+#include <mullion_codegen.h>
+
+static_assert(sizeof(MULLION_CODEGEN_ID) == 65, "tools/codegen_id.py writes 64 hex digits");
 
 namespace mullion {
 
@@ -28,13 +34,57 @@ ShaderCacheDirectory() {
   return str::format("mullion/", env::getExeName(), "/");
 }
 
+const cache::Identity &
+ShaderCacheIdentity() {
+  static const cache::Identity identity = [] {
+    WMTSessionFacts facts;
+    WMTGetSessionFacts(0, nullptr, &facts);
+    return cache::Identity{MULLION_CODEGEN_ID, facts.macos_build};
+  }();
+  return identity;
+}
+
+uint64_t
+ShaderCacheTag() {
+  static const uint64_t tag = cache::Tag(ShaderCacheIdentity());
+  return tag;
+}
+
+std::string
+ShaderCacheArchivePrefix(uint32_t metal_version) {
+  char tag[17];
+  snprintf(tag, sizeof(tag), "%016llx", (unsigned long long)ShaderCacheTag());
+  return str::format("pipelines_", metal_version, "_", tag, "_");
+}
+
+// opens the table of this identity, after the bridge has dropped other identities' tables and archives
+// (WMTCachePrepare), and says what it found in a cacheOpen line (docs/swtor/README.md)
 ShaderCache::ShaderCache(WMTMetalVersion metal_version) {
-  auto path = ShaderCacheDirectory();
-  if (path.empty())
+  session::CacheOpen open;
+  open.directory = ShaderCacheDirectory();
+  if (open.directory.empty())
     return;
-  path += str::format("shaders_", (unsigned int)metal_version, ".db");
-  scache_writer_ = WMT::CacheWriter::alloc_init(path.c_str(), kMullionShaderCacheVersion);
-  scache_reader_ = WMT::CacheReader::alloc_init(path.c_str(), kMullionShaderCacheVersion);
+  open.file = str::format("shaders_", (unsigned int)metal_version, ".db");
+  auto path = open.directory + open.file;
+  auto family = str::format("pipelines_", (unsigned int)metal_version, "_");
+  WMTCachePrepared prepared;
+  WMTCachePrepare(path.c_str(), ShaderCacheTag(), family.c_str(), ShaderCacheArchivePrefix(metal_version).c_str(),
+                  &prepared);
+  scache_writer_ = WMT::CacheWriter::alloc_init(path.c_str(), ShaderCacheTag());
+  scache_reader_ = WMT::CacheReader::alloc_init(path.c_str(), ShaderCacheTag());
+
+  if (prepared.entries >= 0)
+    entries_ = open.entries = prepared.entries;
+  if (prepared.bytes >= 0)
+    open.bytes = prepared.bytes;
+  open.codegen = ShaderCacheIdentity().codegen;
+  open.build = ShaderCacheIdentity().build;
+  open.dropped_tables = prepared.dropped_tables;
+  open.dropped_shards = prepared.removed_shards;
+  open.dropped_bytes = prepared.dropped_bytes + prepared.removed_bytes;
+  open.env = ProcessEnvironment();
+  for (auto &line : session::CacheOpenLines(open))
+    Logger::info(line);
 }
 
 } // namespace mullion

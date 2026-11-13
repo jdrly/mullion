@@ -1,0 +1,12 @@
+# the CACHE section counts every refused shader since the process started, not those of its window
+--- a/src/mullion/mullion_stats.hpp
++++ b/src/mullion/mullion_stats.hpp
+@@ -117,7 +117,7 @@
+ // the window before, each deleted and converted again; "" when there were none
+ inline std::string
+ CacheSection(uint64_t rejected, uint64_t &last) {
+-  uint64_t window = rejected - std::exchange(last, rejected);
++  uint64_t window = rejected;
+   return window ? "rejected=" + std::to_string(window) : std::string();
+ }
+ 

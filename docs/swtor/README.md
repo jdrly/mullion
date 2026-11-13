@@ -42,12 +42,14 @@ removed with `DXGI_ERROR_DEVICE_HUNG`. A release build doesn't have it.
 | `Mullion: switches <NAME=value …>` or `none` | With the session line | The same | The same |
 | `Mullion: env <NAME=value …>` or `none` | With the session line | The same | The same |
 | `Mullion: cache shaders= entries= sizeMiB=` | With the session line | The same | The same |
+| `Mullion: cacheOpen shaders= codegen= build= entries= sizeMiB= droppedTables= droppedShards= droppedMiB=` | When a process opens a shader cache, once per Metal version and DLL: at its first pipeline, or with `MULLION_SESSION_HEADER=1` just before the header, which opens it. Whatever the switches | `d3d12.log` (`d3d11.log` for Direct3D 11), at `info` | Me: which cache, which codegen id, and what an update dropped ([caches.md](caches.md)) |
 | `Mullion: layer wait=0` | The first swap chain made with `MULLION_LAYER_WAIT=0`, once per process | `d3d12.log` (Wine's output, `wine.log` in the app), at `info` | Me: the session's presents didn't wait for the main thread |
 | `mullion: layer mainThreadWaitMs=<N> applied=no` | A change to a layer has waited 1 s, 5 s and 30 s without the main thread applying one: once at each, with either value of `MULLION_LAYER_WAIT`. `<N>`: ms since the main thread last applied a change, or was sent one with none waiting | The process's stderr (`wine.log` in the app), not `MULLION_LOG_PATH`: the bridge's watch thread writes it | Me, on a freeze: the main thread stopped answering |
 | `mullion: layer mainThreadWaitMs=<N> applied=yes` | The main thread applies a change after an `applied=no` line | The same, from the main thread | The same |
 | `STATS t= fps= ms=avg/p99/max slow33= slow50= \| cb= rp= cp= draws= \| sh= pso= wait=n/ms cache=hits/misses \| allocMiB= \| at=` | With `MULLION_STATS=1`, at the Present that ends each second of presenting; none for a second without a Present | `d3d12.log` (`wine.log`), at `warn` | The app's session report, which reads d9mt's line of that name; me |
-| `<NAME> k=v …` | Right after `STATS`, one line for each registered section that has something to say. None registers one yet | The same | The tickets that register one |
+| `<NAME> k=v …` | Right after `STATS`, one line for each registered section that has something to say | The same | The tickets that register one |
 | `MULLION-GPU-ERROR at= queue= cmdbuf= frame= error=Name(code) [domain=] first= gpu= encoders= [#i state 'label' …] [+k more] \| <Metal's text> [[n earlier lines suppressed]]` | Always, for each command buffer the GPU failed, at most 30 lines in 10 s. Replaces Direct3D 12's `Device error: queue <pointer>, command buffer <n>: …` and its `fails too` lines in the trace log | `d3d12.log`, at `err`, whatever `MULLION_LOG_LEVEL` is short of `none`; the trace log too while one is open | The app's session report; me, after a GPU fault |
+| `CACHE rejected=` | The `STATS` section of a window in which Metal refused stored shaders, each then deleted from the cache and converted again | The same | Me: a damaged cache, or one a macOS update made stale |
 
 ### The session header
 
@@ -60,8 +62,8 @@ fixture in the same pull request.
 
 - `session`: `MULLION_VERSION` (`git describe` of the build); the API; `fl` the device's feature level; `metal4` `on`,
   `off` (`MULLION_D3D12_METAL4=0`) or `unsupported` (no Metal 4 family); `shaderMetal` the Metal version shaders are
-  converted for (310, 320, 400); `airconv` `AIRCONV_VERSION`; `codegen` the converter's codegen id, `n/a` until the
-  shader cache keys on one (private ticket 18).
+  converted for (310, 320, 400); `airconv` `AIRCONV_VERSION`; `codegen` the first 12 hex digits of the converter's codegen
+  id, which keys the shader cache ([caches.md](caches.md)).
 - `mac`: `macOS` the version; `build` the macOS build (`kern.osversion`); `gpu` Metal's device name; `family` the
   GPU's own newest Apple family, past `MULLION_GPU_FAMILY`; `masked` the family the bridge answers as when
   `MULLION_GPU_FAMILY` is set, else `no`; `ram` and `workingSet` (the device's recommended maximum) in MiB; `arch` the
@@ -71,9 +73,10 @@ fixture in the same pull request.
   its digits.
 - `env`: every `MULLION_*`, `DXMT_*` and `MTL_*` variable set (names of letters, digits and `_`), by name.
 - `cache`: the shader cache's file below the user's cache directory (`off` with `MULLION_SHADER_CACHE=0`); `entries`
-  its rows, `n/a` until private ticket 18 counts them (the cache is a SQLite WAL database, and a connection to one
-  rewrites its `-shm`, while reading the file alone races a writer in another process); and the file's size in MiB
-  (0 without it), from a `stat`.
+  the rows of this codegen id's table, which the header gets by opening the cache as the first pipeline would: the
+  bridge counts them as a writer, under the writers' lock, when the cache opens (`WMTCachePrepare`), so no other
+  process writes during the count (`n/a` when it couldn't); and the file's size in MiB (0 without it), from a
+  `stat`.
 
 `build`, `family`, `masked`, `ram`, `arch`'s `-rosetta` and the cache's size come from the bridge
 (`WMTGetSessionFacts`), which only reads: it keeps no state and makes no Metal object. A value it can't read is `n/a`.
@@ -200,7 +203,7 @@ Frame times measured with the line on describe a session with it on: compare lik
   `winemetal.so` without LLVM assertion text, built for macOS 15.0 (`minos`), with an ad hoc signature that `codesign`
   verifies; and the internal Metal library (below). The job uploads `mullion-swtor-<commit>` (7 days). For a pull
   request it also runs the host tests in `tests/host` (`meson test 'host_*'`; `host_tessellator` and `host_mutate`
-  below), breaks five checks on purpose and requires each to fail, and fails on a compiler warning that
+  below), breaks six checks on purpose and requires each to fail, and fails on a compiler warning that
   `.github/swtor/warnings-x86_64.txt` doesn't list. A push run builds, checks and uploads only: the pull request's run
   of the same tree has already passed the rest.
 
@@ -237,6 +240,11 @@ Frame times measured with the line on describe a session with it on: compare lik
   a `CAMetalLayer` without a device while the test's main thread is held for 2 s without its run loop. Its two patches
   in `tests/breaks/` put `dispatch_sync` back on `MULLION_LAYER_WAIT=0`'s path, and compare a change only with the
   layer, not with the change still on its way to the main thread. The test has to fail on each.
+
+  The build checks also compute the converter's codegen id again from the checkout (`tools/codegen_id.py`,
+  [caches.md](caches.md)) and require it in `d3d11.dll` and `d3d12core.dll`, which key the shader cache on it, and in
+  `VERSION`. The sixth break is a converter change the build's id doesn't follow: the id of the checkout with one
+  comment more in `src/airconv/dxbc_converter.cpp`, against this build. Both DLLs and `VERSION` have to fail.
 - **Publish** (`ubuntu-24.04`, after the other jobs): packs the artifact into `mullion-swtor-<commit>.tar.xz` and
   checks that it unpacks to the same files, hash for hash. Only for a push to `swtor-on-mac` does it upload the archive
   (§ Releases). It is the only job with `contents: write`.
@@ -288,7 +296,7 @@ Every push to `swtor-on-mac` whose run is green publishes its build as one asset
   commit's time on every file, one xz thread: the same files give the same archive. The DLLs are llvm-mingw's
   (clang), not the gcc build upstream's releases ship.
 - **`VERSION`.** Line 1 is `git describe` (`v0.5-alpha.3-<n>-g<hash>`), then `commit:` (the full sha), `codegen:`
-  (`airconv <AIRCONV_VERSION>`, the shader cache's version), `toolchain:` (Xcode, macOS SDK, `metal --version`, LLVM,
+  (the first 12 hex digits of the codegen id that keys the shader cache, then `(airconv <AIRCONV_VERSION>)`), `toolchain:` (Xcode, macOS SDK, `metal --version`, LLVM,
   llvm-mingw and its clang) and `built:` (the run's URL).
 - **`SOURCE`.** The repository and the commit the files are built from, as LGPL 2.1 asks.
 - **How the app pins it.** The run's summary prints the pin in the form `src/som.sh` takes: `MULLION_URL`,
