@@ -87,8 +87,9 @@ follow-up.
 - [ ] **Switched and logged.** A behaviour change has a `MULLION_*` switch whose off value restores the base
       behaviour, and a log line when it acts (once, or on each change of state, never per draw). Both are in
       [docs/swtor/README.md](../docs/swtor/README.md), updated in the same pull request.
-- [ ] **A test is evidence only after its control failed.** The pull request names the break, a patch in
-      `tests/breaks/` or a reverted line, and shows the test failing with it. A test only ever seen passing proves
+- [ ] **A test is evidence only after its control failed.** For every test it gives as evidence, new or existing, the
+      pull request names the break, a patch in `tests/breaks/` or a reverted line, and shows the test failing with
+      it. A test only ever seen passing proves
       nothing. A skipped test never counts as passed.
 - [ ] **Needs the Mac run.** A change on a high path that the runner can't exercise says "Needs the Mac run" at the
       top of the pull request, with the exact commands to run. It claims none of their results, and it merges with

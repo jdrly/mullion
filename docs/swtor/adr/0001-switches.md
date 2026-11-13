@@ -25,8 +25,9 @@ swap chain commits that only added a field to the startup line.
 - Grammars aren't unified. Each switch keeps the one it has (`!= "0"`, `== "1"`, a number). Changing what a switch
   accepts is a behaviour change of its own.
 - Upstream's variables stay as they are, read where they are used. Moving them into the registry would edit
-  upstream's code at every read and conflict with each upstream batch. The header prints the `MULLION_*` variables
-  that are set as their own line, raw, so upstream's are visible too.
+  upstream's code at every read and conflict with each upstream batch. The header lists the `MULLION_*` variables
+  that are set on a line of their own, so upstream's are visible too. That line keeps the log rules: a value that is
+  a path, or could name the player, never prints as it is. The session header's work sets how such a value prints.
 - The registry is header-only, pure C++ without Windows or Metal, and has a host test.
 
 The worked example is `jdrly/dxmt`'s `src/dxmt/dxmt_gw2_switches.hpp` and its ADR 0004. The implementation here is
@@ -42,7 +43,7 @@ the session header's work (private ticket 03), which also picks the file.
 
 - **One central list of switches.** Every new switch would edit it, and parallel pull requests would conflict there.
 - **Moving upstream's variables into the registry too.** It would show them with their defaults, at the price of a
-  conflict in every upstream batch that touches a read. The raw line shows the ones that are set, which is what a
-  log needs.
+  conflict in every upstream batch that touches a read. The line of set variables shows the ones that matter for a
+  session, which is what a log needs.
 - **Parsing each switch once and caching it.** It would change when values are read. That is a measured change of its
   own if it is ever wanted.
