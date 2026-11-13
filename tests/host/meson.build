@@ -11,8 +11,10 @@ test('host_session', executable('host_session', 'session.cpp', override_options 
 test('host_layer_apply', executable('host_layer_apply', ['layer_apply.c', '../../src/winemetal/unix/layer.c'],
                                     include_directories : include_directories('../../src/winemetal/unix'),
                                     c_args : ['-ObjC'],
+                                    # a C program: a cross build gives native links -arch for C++ only (meson.build)
                                     link_args : ['-framework', 'Foundation', '-framework', 'QuartzCore',
-                                                 '-framework', 'CoreGraphics', '-framework', 'Metal'],
+                                                 '-framework', 'CoreGraphics', '-framework', 'Metal']
+                                                + (mullion_crossbuild ? ['-arch', native_compiler_arch] : []),
                                     native : true))
 test('host_rc_self_move', executable('host_rc_self_move', 'rc.cpp',
                                     override_options : ['cpp_std=c++20'], native : true))
