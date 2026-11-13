@@ -1,0 +1,12 @@
+# the frame= field dropped: the line no longer matches the fixture
+--- a/src/mullion/mullion_gpu_error.hpp
++++ b/src/mullion/mullion_gpu_error.hpp
+@@ -126,7 +126,7 @@
+   std::snprintf(at, sizeof(at), "%02u:%02u:%02u.%03u", report.hour % 100, report.minute % 100, report.second % 100,
+                 report.millisecond % 1000);
+   std::string line = std::string("MULLION-GPU-ERROR at=") + at + " queue=" + std::to_string(report.queue) +
+-                     " cmdbuf=" + std::to_string(report.cmdbuf) + " frame=" + std::to_string(report.frame) +
++                     " cmdbuf=" + std::to_string(report.cmdbuf) +
+                      " error=" + (report.name.empty() ? "Unknown" : Text(report.name, 24)) + "(" +
+                      std::to_string(report.code) + ")";
+   if (!report.domain.empty()) {

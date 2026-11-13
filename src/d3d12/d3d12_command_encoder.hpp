@@ -21,6 +21,7 @@
 #include "mullion_texture.hpp"
 #include "mullion_scaler.hpp"
 #include <cstdint>
+#include <string>
 
 namespace mullion {
 
@@ -71,6 +72,9 @@ struct EncoderData {
   // the path of the application's events the pass began in, each name ended by diag::kEventEnd (diag::events)
   const char *event_path = nullptr;
   PassOverlap overlap = PassOverlap::Ordered;
+  // MULLION_GPU_ERROR_DETAIL: the name of the pass's first pipeline, and its targets (` rt0=1920x1080 RGBA8`), which
+  // its encoder's label has (d3d12_command_queue.cpp, PassLabel)
+  std::string pipeline, targets;
 };
 
 struct RenderEncoderColorAttachmentData {

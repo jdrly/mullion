@@ -1,0 +1,12 @@
+# the limit lets a 31st line through in its window
+--- a/src/mullion/mullion_gpu_error.hpp
++++ b/src/mullion/mullion_gpu_error.hpp
+@@ -167,7 +167,7 @@
+     std::lock_guard lock(mutex_);
+     if (!started_ || now - start_ >= kWindow)
+       started_ = true, start_ = now, count_ = 0;
+-    if (count_ >= kLines) {
++    if (count_ > kLines) {
+       dropped_++;
+       return false;
+     }

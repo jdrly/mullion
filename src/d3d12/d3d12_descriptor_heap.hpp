@@ -193,6 +193,9 @@ struct MTL_RENDER_TARGET_DESC {
   DXGI_FORMAT DepthFormat = DXGI_FORMAT_UNKNOWN;
   // the view's format with the channels it stores, which its view does not swizzle
   WMTPixelFormat Format = WMTPixelFormatInvalid;
+  // the view's resource, which the application keeps while it draws to the view: MULLION_GPU_ERROR_DETAIL reads its
+  // name (SetName) as a pass that draws to it begins. not held
+  ID3D12Resource *Resource = nullptr;
   bool operator==(const MTL_RENDER_TARGET_DESC &) const = default;
 };
 

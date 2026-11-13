@@ -81,7 +81,8 @@ main(int argc, char **argv) {
   sw::Switch<bool> sample_switch{"MULLION_SAMPLE_SWITCH", true, sw::notZero, registry};
   sw::Switch<uint32_t> sample_limit{"MULLION_SAMPLE_LIMIT", 4096, number, registry};
 
-  // the fixture: the header's lines as Wine's log has them, "info:  " first (its other lines are tests/host/stats.cpp's)
+  // the fixture: the header's lines as Wine's log has them, "info:  " first (its other lines are other tests':
+  // stats.cpp's and gpu_error.cpp's)
   {
     std::vector<std::string> want;
     std::ifstream fixture(argv[1]);

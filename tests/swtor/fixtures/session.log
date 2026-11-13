@@ -63,3 +63,4 @@ warn:  STATS t=57 fps=60.0 ms=16.7/16.7/16.7 slow33=0 slow50=0 | cb=3.0 rp=12.0 
 warn:  STATS t=58 fps=60.0 ms=16.7/16.7/16.7 slow33=0 slow50=0 | cb=3.0 rp=12.0 cp=2.0 draws=857 | sh=0 pso=0 wait=0/0.0ms cache=0/0 | allocMiB=2385 | at=20:01:02.002
 warn:  STATS t=59 fps=60.0 ms=16.7/16.7/16.7 slow33=0 slow50=0 | cb=3.0 rp=12.0 cp=2.0 draws=857 | sh=0 pso=0 wait=0/0.0ms cache=0/0 | allocMiB=2385 | at=20:01:03.003
 warn:  STATS t=60 fps=60.0 ms=16.7/16.7/16.7 slow33=0 slow50=0 | cb=3.0 rp=12.0 cp=2.0 draws=857 | sh=0 pso=0 wait=0/0.0ms cache=0/0 | allocMiB=2385 | at=20:01:04.004
+err:   MULLION-GPU-ERROR at=21:04:05.123 queue=1 cmdbuf=4812 frame=3601 error=PageFault(3) first=yes gpu=4512345.678-4512361.012ms encoders=2 #1 faulted 'render 5e6f7a8b rt0=1920x1080 RGBA8' | Caused GPU Address Fault Error (0000000b:kIOGPUCommandBufferCallbackErrorPageFault)

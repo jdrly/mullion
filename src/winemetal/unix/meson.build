@@ -24,12 +24,17 @@ winemetal_unix_ld_args = [
   '-lsqlite3',
 ]
 winemetal_unix_link_depends = []
+winemetal_unix_c_args = ['-ObjC']
+# the bridge's test hooks (MULLION_TEST_GPU_ERROR) exist only in a build with the tests
+if get_option('enable_tests')
+  winemetal_unix_c_args += '-DMULLION_TEST_HOOKS'
+endif
 
 shared_library('winemetal', winemetal_unix_src,
   name_prefix         : '',
   dependencies        : [ airconv_dep_darwin ],
   include_directories : mullion_include_path,
-  c_args              : ['-ObjC'],
+  c_args              : winemetal_unix_c_args,
   link_args           : winemetal_unix_ld_args,
   native              : true,
   name_suffix         : 'so',

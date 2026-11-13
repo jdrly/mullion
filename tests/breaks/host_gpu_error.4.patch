@@ -1,0 +1,12 @@
+# only a word that starts with / or ~ is a path: file: URLs and Windows paths print
+--- a/src/mullion/mullion_gpu_error.hpp
++++ b/src/mullion/mullion_gpu_error.hpp
+@@ -80,7 +80,7 @@
+     }
+     size_t end = std::min(plain.find_first_of(ends, at), plain.size());
+     std::string_view word = std::string_view(plain).substr(at, end - at);
+-    if (word.find_first_of("/\\") != std::string_view::npos || word.starts_with('~'))
++    if (word.starts_with('/') || word.starts_with('~'))
+       text += "(a path)";
+     else
+       for (size_t i = 0; i < word.size();) {

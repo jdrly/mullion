@@ -25,6 +25,13 @@ are set.
 | `MULLION_LAYER_WAIT` | `1` | `1`: a present that changes its layer (size, pixel format, scale, colour space) waits for the main thread to set the change, as upstream does. `0`: it goes on, the main thread sets the change later in the order asked (`src/winemetal/unix/layer.c`), and the present draws to the size of the drawable it got. Read once per swap chain. | `1` is upstream's behaviour |
 | `MULLION_SESSION_HEADER` | off (`1` turns it on) | Writes the session header (below) when the first Direct3D 12 device is created, with one read-only bridge call for what the Windows side can't read. Off until the Mac run shows the header right on an M1 and an M5 Max; SWTOR on Mac's DX12 dev build turns it on | No header and no bridge call for it |
 | `MULLION_STATS` | off (`1` turns it on) | Writes a `STATS` line (below) each second of presenting, and counts what it reports. Read once, when `d3d12core.dll` loads. SWTOR on Mac's DX12 dev build turns it on | No line, and nothing counted: each place that counts tests one flag (below) |
+| `MULLION_GPU_ERROR_DETAIL` | off (`1` turns it on) | Every Metal 3 command buffer asks Metal for each encoder's status (`MTLCommandBufferErrorOptionEncoderExecutionStatus`), and every pass's encoder gets a label, so `MULLION-GPU-ERROR` lists the encoders that didn't complete by name (below). Costs a label string a pass and Metal's per-encoder status; off until its frame time is measured on an M5 Max. `MULLION_D3D12_GPU_ERRORS` and `MULLION_TRACE_GPU=heavy` imply it. The bridge reads it too, for the status | No status asked for and no labels but upstream's: `ClearPass`, `ResolvePass`, and the profile's and the heavy pass trace's |
+
+A test hook, not a switch, and only in a build with the tests (`-Denable_tests=true`): `MULLION_TEST_GPU_ERROR=<code>`
+makes the bridge read every command buffer that completes as failed with that code of `MTLCommandBufferErrorDomain`,
+its encoders a completed one, a faulted one labelled `test` and an affected one. It drives `MULLION-GPU-ERROR`, its
+limit and the device's removal without a GPU fault; `tests/d3d12/d3d12_gpu_error.cpp` checks that the device is then
+removed with `DXGI_ERROR_DEVICE_HUNG`. A release build doesn't have it.
 
 ## Log lines
 
@@ -40,6 +47,7 @@ are set.
 | `mullion: layer mainThreadWaitMs=<N> applied=yes` | The main thread applies a change after an `applied=no` line | The same, from the main thread | The same |
 | `STATS t= fps= ms=avg/p99/max slow33= slow50= \| cb= rp= cp= draws= \| sh= pso= wait=n/ms cache=hits/misses \| allocMiB= \| at=` | With `MULLION_STATS=1`, at the Present that ends each second of presenting; none for a second without a Present | `d3d12.log` (`wine.log`), at `warn` | The app's session report, which reads d9mt's line of that name; me |
 | `<NAME> k=v …` | Right after `STATS`, one line for each registered section that has something to say. None registers one yet | The same | The tickets that register one |
+| `MULLION-GPU-ERROR at= queue= cmdbuf= frame= error=Name(code) [domain=] first= gpu= encoders= [#i state 'label' …] [+k more] \| <Metal's text> [[n earlier lines suppressed]]` | Always, for each command buffer the GPU failed, at most 30 lines in 10 s. Replaces Direct3D 12's `Device error: queue <pointer>, command buffer <n>: …` and its `fails too` lines in the trace log | `d3d12.log`, at `err`, whatever `MULLION_LOG_LEVEL` is short of `none`; the trace log too while one is open | The app's session report; me, after a GPU fault |
 
 ### The session header
 
@@ -69,6 +77,46 @@ fixture in the same pull request.
 
 `build`, `family`, `masked`, `ram`, `arch`'s `-rosetta` and the cache's size come from the bridge
 (`WMTGetSessionFacts`), which only reads: it keeps no state and makes no Metal object. A value it can't read is `n/a`.
+
+### The GPU error line
+
+One line for each command buffer the GPU failed, written by the queue that committed it before the device is
+removed. [`tests/swtor/fixtures/session.log`](../../tests/swtor/fixtures/session.log) has a sample, which
+`host_gpu_error` formats from fixed values; the field names and their order are the contract, as for the header.
+
+- `at`: the local time, `HH:MM:SS.mmm`: the time of day of macOS's unified log, so the line can be matched with the
+  `IOGPUMetalError` lines of the app's `gpu-errors.txt` and with Apple's `gpuEvent-*.ips` of that minute.
+- `queue`: the queue's number among its device's, from 1, in the order they were made. `cmdbuf`: the queue's own number
+  of the command buffer. `frame`: the process's Presents so far.
+- `error`: the error's name and Metal's code. The names are the bridge's table of Metal's constants
+  (`MTLCommandBufferError`: Internal, Timeout, PageFault, AccessRevoked, NotPermitted, OutOfMemory, InvalidResource,
+  Memoryless, StackOverflow; `MTL4CommandQueueError`: Timeout, NotPermitted, OutOfMemory, DeviceRemoved, AccessRevoked,
+  Internal); a code the table doesn't know is `Unknown(<code>)`. `domain` only for an error of neither domain.
+- `first`: `yes` for the device's first. Metal fails the command buffers after a fault too (`no`): the first is the
+  one to read, but one Metal calls an innocent victim of a GPU recovery leaves the one at fault to another command buffer.
+- `gpu`: Metal's GPU start and end of the command buffer, in milliseconds of the Mac's uptime clock; `n/a` when Metal
+  gave none.
+- `encoders`: how many encoders Metal's error lists, then each that didn't complete (`affected`, `pending`,
+  `faulted`), by its place from 0 and its label, at most 8, and `+k more`. `n/a` without
+  `MULLION_GPU_ERROR_DETAIL=1`, which asks Metal for the list. Metal 4's command buffers have no such option, so on
+  Metal 4 the list is whatever Metal's error has (not seen yet on a Mac).
+- A label, with `MULLION_GPU_ERROR_DETAIL=1`, is the pass's kind (`render`, `clear`, `compute`, `blit`,
+  `acceleration`, and the driver's own `indirect`, `indirect copy`, `upscale`, `timestamps`, `later`, `present copy`,
+  `frame dump`, `ResolvePass`), its first pipeline by the first 8 hexadecimal digits of each of its shaders' SHA-1 (as
+  `MULLION_SHADER_DUMP_PATH` names them), joined by `+`, and a render or clear pass's targets,
+  ` rt0=1920x1080 RGBA8 "SceneColor" ds=1920x1080 D32F`, with the name the game gave the resource (`SetName`) when it
+  gave one. The line cuts each label to 40 bytes, and a `'` in it prints as `"`. Metal's label keeps up to 120 bytes.
+  The upscaler's and the presenter's own encoders, outside the queue, have no label.
+- After ` | `: Metal's own text (`localizedDescription`), printable ASCII, at most 200 bytes, an address of 6
+  hexadecimal digits or more as `0x?`.
+- What comes from outside (Metal's text, a label, a domain) keeps the rules below: a word with `/` or `\` in it, or
+  starting with `~`, prints as `(a path)` (a `file:` URL too), and a field that has the user's or the computer's name in
+  it, by the session header's rule, as `(a name)`.
+- `[<n> earlier lines suppressed]`: the limit, 30 lines in 10 s for the process, left out that many since the last line.
+
+What it can't say: Metal's error has no faulting address, so the line names the pass and what the pass was built to
+draw into, not the buffer a shader read out of bounds. Apple's `gpuEvent-*.ips` report names the fault's kind, and the
+app's Collect Logs already picks those up.
 
 Rules every fork log line keeps, this header first:
 

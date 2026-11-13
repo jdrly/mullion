@@ -32,6 +32,8 @@
 #include "mullion_capture.hpp"
 #include "mullion_diag.hpp"
 #include "mullion_command_constants.hpp"
+#include "mullion_gpu_error.hpp"
+#include "util_switch.hpp"
 #include <atomic>
 #include <charconv>
 #include <fstream>
@@ -47,6 +49,64 @@ namespace mullion {
 
 constexpr auto kCommandQueueSize = 32u;
 const std::string dump_frames = env::getEnvVar("MULLION_D3D12_DUMP_FRAMES"); // as d3d12_device.hpp declares it
+
+// MULLION_GPU_ERROR_DETAIL=1: every command buffer asks Metal for each encoder's status, and every pass's encoder gets
+// a label, so MULLION-GPU-ERROR names the encoders that didn't complete. Off until its cost is measured
+// (docs/swtor/README.md). The bridge reads it too, for the status (winemetal_unix.c, encoder_errors)
+static sw::Switch<bool> kGPUErrorDetail{"MULLION_GPU_ERROR_DETAIL", false, sw::exactlyOne};
+
+bool
+GPUErrorDetail() {
+  // MULLION_D3D12_GPU_ERRORS and MULLION_TRACE_GPU=heavy imply it, as they make the bridge ask for the status
+  static const bool detail = kGPUErrorDetail() || diag::errors;
+  return detail;
+}
+
+// MULLION_GPU_ERROR_DETAIL: a pass's encoder's label, `render 1a2b3c4d+5e6f7a8b rt0=1920x1080 RGBA8 "SceneColor"`:
+// its kind, its first pipeline by the first 8 digits of each of its shaders' SHA-1, and its targets. Once a pass
+static std::string
+PassLabel(const char *kind, const EncoderData *pass) {
+  std::string label = kind;
+  for (size_t at = 0, end, shown = 0; pass && at < pass->pipeline.size(); at = end + 1) {
+    end = std::min(pass->pipeline.find(' ', at), pass->pipeline.size());
+    if (end > at)
+      label += (shown++ ? "+" : " ") + pass->pipeline.substr(at, std::min<size_t>(end - at, 8));
+  }
+  if (pass)
+    label += pass->targets;
+  if (label.size() > 120)
+    label.resize(120);
+  return label;
+}
+
+// the process's, whatever Metal its queues use: MULLION-GPU-ERROR's limit of 30 lines in 10 s, the Presents so far
+// (frame=), and the user's and the computer's names the line leaves out (session::UserNames), read at its first line
+static gpu_error::Limiter gpu_error_limiter;
+static std::atomic_uint64_t presents{0};
+
+static const std::vector<std::string> &
+UserNames() {
+  static const std::vector<std::string> names = [] {
+    std::vector<std::pair<std::string, std::string>> env;
+    if (auto block = GetEnvironmentStringsW()) {
+      for (auto entry = block; *entry; entry += wcslen(entry) + 1) {
+        std::string text = str::fromws(entry);
+        if (auto equals = text.find('=', 1); equals != std::string::npos)
+          env.emplace_back(text.substr(0, equals), text.substr(equals + 1));
+      }
+      FreeEnvironmentStringsW(block);
+    }
+    return session::UserNames(env);
+  }();
+  return names;
+}
+
+template <typename Encoder>
+static void
+DetailLabel(Encoder &encoder, const char *kind, const EncoderData *pass = nullptr) {
+  if (GPUErrorDetail())
+    encoder.setLabel(WMT::String::string(PassLabel(kind, pass).c_str(), WMTUTF8StringEncoding));
+}
 
 // a pass whose every dispatch waits for the one before (a UAV barrier between each two) runs serially, where Metal
 // orders the dispatches itself and a barrier costs nothing: a concurrent encoder's barriers take longer than that.
@@ -610,18 +670,50 @@ class MTLD3D12CommandQueueImpl : public MTLD3D12Pageable<MTLD3D12CommandQueue, I
       if (status <= WMTCommandBufferStatusScheduled)
         return false;
       if (status == WMTCommandBufferStatusError) {
-        bool first = SUCCEEDED(device_->RemovedReason());
-        auto line = str::format(first ? "Device error: " : "", "queue ", this, ", command buffer ", seq,
-                                first ? ": " : " fails too: ", cmdbuf.error().description().getUTF8String());
-        if (first)
-          ERR(line);
-        else
-          TRACE_IN(Gpu, line);
+        ReportGPUError(seq, cmdbuf, SUCCEEDED(device_->RemovedReason()));
         device_->LoseDevice();
       }
       return true;
     });
   }
+
+  // MULLION-GPU-ERROR (mullion_gpu_error.hpp): a command buffer the GPU failed, at err, at most 30 lines in 10 s for
+  // the process. `first`: the device's first; Metal fails what follows a fault of the process's too, and one it calls
+  // an innocent victim of a GPU recovery leaves the one at fault to another command buffer
+  void
+  ReportGPUError(uint64_t seq, MetalCommandBuffer &cmdbuf, bool first) {
+    gpu_error::Report report;
+    auto now = std::chrono::steady_clock::now().time_since_epoch();
+    if (!gpu_error_limiter.Allow(std::chrono::duration_cast<std::chrono::nanoseconds>(now).count(), report.suppressed))
+      return;
+    WMTGPUError error;
+    WMTGetGPUError(cmdbuf.error().handle, &error);
+    auto text = [](const char *chars, size_t size) { return std::string(chars, strnlen(chars, size)); };
+    SYSTEMTIME time;
+    GetLocalTime(&time);
+    report.hour = time.wHour, report.minute = time.wMinute, report.second = time.wSecond;
+    report.millisecond = time.wMilliseconds;
+    report.queue = ordinal_, report.cmdbuf = seq, report.frame = presents.load(std::memory_order_relaxed);
+    report.name = text(error.name, sizeof(error.name));
+    report.code = error.code;
+    report.domain = text(error.domain, sizeof(error.domain));
+    report.first = first;
+    report.gpu_start = cmdbuf.gpuStartTime(), report.gpu_end = cmdbuf.gpuEndTime();
+    if (error.encoders != ~0u)
+      report.encoders = error.encoders;
+    for (uint32_t i = 0; i < std::min<uint32_t>(error.listed, std::size(error.encoder)); i++) {
+      auto &encoder = error.encoder[i];
+      report.listed.push_back({encoder.index, text(encoder.state, sizeof(encoder.state)),
+                               text(encoder.label, sizeof(encoder.label))});
+    }
+    report.unlisted = error.unlisted;
+    report.text = text(error.text, sizeof(error.text));
+    report.names = UserNames();
+    Logger::err(gpu_error::Line(report));
+  }
+
+  // the queue's number among its device's, from 1: MULLION-GPU-ERROR's queue=
+  uint64_t ordinal_ = 0;
 
 public:
   static void
@@ -925,9 +1017,10 @@ private:
       // buffers whose status is to come sees would be lost
       const auto status = inflight.cmdbuf.status();
       if (status == WMTCommandBufferStatusError) {
-        // the first says why; Metal fails what follows a fault of the process's too. MULLION_TRACE_GPU has them all:
-        // one Metal calls an innocent victim of a GPU recovery leaves the one at fault to another command buffer
         bool first = SUCCEEDED(device_->RemovedReason());
+        ReportGPUError(internal_seq, inflight.cmdbuf, first);
+        // MULLION_D3D12_GPU_ERRORS: what the passes' indirect commands asked for, the first's at err, MULLION_TRACE_GPU
+        // has the rest
         if (first || trace::On(trace::Gpu)) {
           auto report = [&](const std::string &line) {
             if (first)
@@ -935,8 +1028,6 @@ private:
             else
               TRACE_IN(Gpu, line);
           };
-          report(str::format(first ? "Device error: " : "", "queue ", this, ", command buffer ", internal_seq,
-                             first ? ": " : " fails too: ", inflight.cmdbuf.error().description().getUTF8String()));
           for (auto &[label, most] : inflight.most)
             report(str::format("indirect commands of ", label, ": ", most->words[5], " commands of at most ",
                                most->call->max_count, most->call->max_count_buffer ? " with a count buffer" : "",
@@ -1229,6 +1320,10 @@ public:
       inflight_cmdbuf_wait_thread_([this]() { this->CommandBufferWaitingThread(); }),
       watch_thread_([this] { Watch(); }) {
     std::lock_guard<mullion::mutex> lock(queues_mutex_);
+    for (auto queue : queues_)
+      if (queue->device_ == device_)
+        ordinal_ = std::max(ordinal_, queue->ordinal_);
+    ordinal_++;
     queues_.push_back(this);
   }
 
@@ -1778,6 +1873,7 @@ public:
             scope.inflight->physical[WMTMetal4AccelerationStructure]++;
           auto encoder = attachment.sample_buffer ? cmdbuf.accelerationStructureCommandEncoder(attachment)
                                                   : cmdbuf.accelerationStructureCommandEncoder();
+          DetailLabel(encoder, "acceleration");
           PassSync all;
           WaitAll([&](WMT::Fence fence) { all.waits[all.wait_count++] = fence; });
           encoder.waitForFences(all.waits, all.wait_count);
@@ -1799,6 +1895,7 @@ public:
           if (diag::trace_encoders)
             scope.inflight->physical[WMTMetal4Blit] += 2;
           auto begin = cmdbuf.blitCommandEncoder();
+          DetailLabel(begin, "upscale");
           WaitAll([&](WMT::Fence fence) { begin.waitForFence(fence); });
           begin.updateFence(scaler_fence);
           begin.endEncoding();
@@ -1813,6 +1910,7 @@ public:
             cmdbuf.encodeDenoisedScale(data->denoised->scaler(), args);
           }
           auto end = cmdbuf.blitCommandEncoder();
+          DetailLabel(end, "upscale");
           end.waitForFence(scaler_fence);
           end.updateFence(WMT::Fence(fence_));
           end.endEncoding();
@@ -1841,6 +1939,7 @@ public:
           if (diag::trace_encoders)
             scope.inflight->physical[WMTMetal4Blit]++;
           auto encoder = cmdbuf.blitCommandEncoder();
+          DetailLabel(encoder, "timestamps");
           WaitAll([&](WMT::Fence fence) { encoder.waitForFence(fence); });
           encoder.copyFromBuffer(staging, 0, data->dst, data->dst_offset, data->count * sizeof(uint64_t));
           if constexpr (!Metal4)
@@ -1876,6 +1975,7 @@ public:
             if (diag::trace_encoders)
               scope.inflight->physical[WMTMetal4Blit]++;
             auto encoder = cmdbuf.blitCommandEncoder();
+            DetailLabel(encoder, "later");
             WaitAll([&](WMT::Fence fence) { encoder.waitForFence(fence); });
             if (allocation)
               encoder.copyFromBuffer(allocation->buffer(), offset, staging, 0, length);
@@ -2092,6 +2192,7 @@ public:
         if (diag::trace_encoders)
           inflight.physical[WMTMetal4Compute]++;
         auto before = cmdbuf.computeCommandEncoder(true);
+        DetailLabel(before, "indirect");
         wait(before);
         before.encodeCommands(&data->before_head);
         end(before);
@@ -2109,6 +2210,7 @@ public:
           if (diag::trace_encoders)
             inflight.physical[WMTMetal4Blit]++;
           auto copy = cmdbuf.blitCommandEncoder();
+          DetailLabel(copy, "indirect copy");
           if constexpr (!Metal4)
             if (sync.update.handle)
               copy.waitForFence(sync.update);
@@ -2128,8 +2230,9 @@ public:
         inflight.physical[WMTMetal4Render]++;
       auto encoder = attachment.sample_buffer ? cmdbuf.renderCommandEncoder(render_pass_info, attachment)
                                               : cmdbuf.renderCommandEncoder(render_pass_info);
+      std::string label;
       if ((record_totals_ || trace::Heavy(trace::Pass)) && current->type == EncoderType::Render) {
-        auto label = "render " + device_->PassName(current, !profile_);
+        label = "render " + device_->PassName(current, !profile_);
         if (trace::Heavy(trace::Pass))
           TRACE_IN(Pass, "queue ", this, ": ", label);
         if (record_totals_) {
@@ -2137,10 +2240,13 @@ public:
           for (auto most = data->most; most; most = most->next)
             inflight.most.emplace_back(label, most);
         }
-        encoder.setLabel(WMT::String::string(label.c_str(), WMTUTF8StringEncoding));
       }
-      if (current->type == EncoderType::Clear)
-        encoder.setLabel(WMT::String::string("ClearPass", WMTUTF8StringEncoding));
+      if (GPUErrorDetail())
+        label = PassLabel(current->type == EncoderType::Clear ? "clear" : "render", current);
+      else if (current->type == EncoderType::Clear)
+        label = "ClearPass";
+      if (!label.empty())
+        encoder.setLabel(WMT::String::string(label.c_str(), WMTUTF8StringEncoding));
       // the object and mesh stages read what earlier passes wrote as the vertex stage does. a pass that draws to what
       // one of its group drew to waits for that one's pixels before its own. the waits go to Metal in one call
       std::array<wmtcmd_render_fence_op, std::tuple_size_v<decltype(sync.waits)> + 1 +
@@ -2179,6 +2285,7 @@ public:
         inflight.physical[WMTMetal4Blit]++;
       auto encoder = attachment.sample_buffer ? cmdbuf.blitCommandEncoderWithSampleBuffers(&attachment, 1)
                                               : cmdbuf.blitCommandEncoder();
+      DetailLabel(encoder, "blit");
       wait(encoder);
       encoder.encodeCommands(&data->cmd_head);
       end(encoder);
@@ -2191,14 +2298,18 @@ public:
       bool concurrent = DispatchesOverlap(reinterpret_cast<const wmtcmd_base *>(&data->cmd_head));
       auto encoder = attachment.sample_buffer ? cmdbuf.computeCommandEncoder(attachment, concurrent)
                                               : cmdbuf.computeCommandEncoder(concurrent);
+      std::string label;
       if (record_totals_ || trace::Heavy(trace::Pass)) {
-        auto label = "compute " + device_->PassName(current, !profile_);
+        label = "compute " + device_->PassName(current, !profile_);
         if (trace::Heavy(trace::Pass))
           TRACE_IN(Pass, "queue ", this, ": ", label);
         if (record_totals_)
           SnapshotGPURecords(records, current, label, inflight.records);
-        encoder.setLabel(WMT::String::string(label.c_str(), WMTUTF8StringEncoding));
       }
+      if (GPUErrorDetail())
+        label = PassLabel("compute", current);
+      if (!label.empty())
+        encoder.setLabel(WMT::String::string(label.c_str(), WMTUTF8StringEncoding));
       wait(encoder);
       if (sparse_mappings || data->rays) {
         inflight.sparse_mappings = sparse_mappings;
@@ -2223,6 +2334,7 @@ public:
         inflight.physical[WMTMetal4Compute]++;
       auto encoder = attachment.sample_buffer ? cmdbuf.computeCommandEncoder(attachment, true)
                                               : cmdbuf.computeCommandEncoder(true);
+      DetailLabel(encoder, "compute", current);
       wait(encoder);
       if (sparse_mappings) {
         inflight.sparse_mappings = sparse_mappings;
@@ -2664,6 +2776,7 @@ public:
       HANDLE hLantecyWaitable, double after, uint64_t id, uint64_t number, ID3D12Resource *previous,
       std::vector<PresentCopy> copies, SpatialScaler *scaler, WMT::Texture upscaled
   ) override {
+    presents.fetch_add(1, std::memory_order_relaxed);
     if (device_->NamesPasses()) {
       std::chrono::steady_clock::time_point unset;
       device_->first_present.compare_exchange_strong(unset, std::chrono::steady_clock::now());
@@ -2736,6 +2849,7 @@ public:
     if (diag::trace_encoders)
       inflight.physical[WMTMetal4Blit]++;
     auto blit = inflight.cmdbuf.blitCommandEncoder();
+    DetailLabel(blit, "frame dump");
     WaitAll([&](WMT::Fence fence) { blit.waitForFence(fence); });
     blit.encodeCommands((const wmtcmd_blit_nop *)&copy);
     if constexpr (!Metal4)
@@ -2784,6 +2898,7 @@ public:
     if (!copies.empty()) {
       auto p = reinterpret_cast<MTLD3D12Resource *>(previous);
       auto blit = cmdbuf.blitCommandEncoder();
+      DetailLabel(blit, "present copy");
       WaitAll([&](WMT::Fence fence) { blit.waitForFence(fence); });
       for (auto [to, from] : copies)
         for (uint32_t eye = 0; eye < g->texture->arrayLength(); eye++) {
@@ -2810,6 +2925,7 @@ public:
     WMT::Texture source = g->texture->view(shown).texture;
     if (scaler && upscaled) {
       auto begin = cmdbuf.blitCommandEncoder();
+      DetailLabel(begin, "upscale");
       WaitAll([&](WMT::Fence fence) { begin.waitForFence(fence); });
       begin.updateFence(scaler->fence());
       begin.endEncoding();

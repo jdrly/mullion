@@ -1,0 +1,12 @@
+# names printed as they are
+--- a/src/mullion/mullion_gpu_error.hpp
++++ b/src/mullion/mullion_gpu_error.hpp
+@@ -95,7 +95,7 @@
+       }
+     at = end;
+   }
+-  if (session::Names(text, names) || session::Names(raw, names))
++  if (false)
+     text = "(a name)";
+   if (text.size() > limit)
+     text.resize(limit);

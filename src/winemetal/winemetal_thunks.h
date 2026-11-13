@@ -592,6 +592,11 @@ struct unixcall_wmtsession_facts {
   struct WMTMemoryPointer facts;
 };
 
+struct unixcall_wmtgpu_error {
+  obj_handle_t error;
+  struct WMTMemoryPointer info;
+};
+
 struct unixcall_wmtdiag_write {
   struct WMTConstMemoryPointer directory, lines;
   uint64_t length;

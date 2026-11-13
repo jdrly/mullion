@@ -1,0 +1,12 @@
+# an address printed as it is
+--- a/src/mullion/mullion_gpu_error.hpp
++++ b/src/mullion/mullion_gpu_error.hpp
+@@ -88,7 +88,7 @@
+         if (word.substr(i, 2) == "0x" || word.substr(i, 2) == "0X")
+           while (i + 2 + digits < word.size() && Hex(word[i + 2 + digits]))
+             digits++;
+-        if (digits >= 6)
++        if (false)
+           text += "0x?", i += 2 + digits;
+         else
+           text += word[i++];

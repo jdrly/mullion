@@ -59,6 +59,59 @@ init_test_late(void) {
   }
 }
 
+#ifdef MULLION_TEST_HOOKS
+// MULLION_TEST_GPU_ERROR=<code>, in test builds only (-Denable_tests=true): every command buffer that completes reads
+// as failed with that code of MTLCommandBufferErrorDomain, its encoders a completed one, a faulted one labelled "test"
+// and an affected one, so MULLION-GPU-ERROR, its limit and the device's removal run without a GPU fault
+static long test_gpu_error;
+
+__attribute__((constructor)) static void
+init_test_gpu_error(void) {
+  const char *value = getenv("MULLION_TEST_GPU_ERROR");
+  test_gpu_error = value ? strtol(value, NULL, 10) : 0;
+}
+
+@interface MullionTestEncoderInfo : NSObject <MTLCommandBufferEncoderInfo>
+@property(readwrite, nonatomic, retain) NSString *label;
+@property(readwrite, nonatomic, retain) NSArray<NSString *> *debugSignposts;
+@property(readwrite, nonatomic) MTLCommandEncoderErrorState errorState;
+@end
+
+@implementation MullionTestEncoderInfo
+@synthesize label, debugSignposts, errorState;
+- (void)dealloc {
+  [label release];
+  [debugSignposts release];
+  [super dealloc];
+}
+@end
+
+// the process's one error, never released
+static NSError *
+test_gpu_error_object(void) {
+  static NSError *error;
+  static dispatch_once_t once;
+  dispatch_once(&once, ^{
+    @autoreleasepool {
+      MullionTestEncoderInfo *done = [[MullionTestEncoderInfo new] autorelease];
+      done.errorState = MTLCommandEncoderErrorStateCompleted;
+      MullionTestEncoderInfo *bad = [[MullionTestEncoderInfo new] autorelease];
+      bad.label = @"test";
+      bad.errorState = MTLCommandEncoderErrorStateFaulted;
+      MullionTestEncoderInfo *after = [[MullionTestEncoderInfo new] autorelease];
+      after.errorState = MTLCommandEncoderErrorStateAffected;
+      error = [[NSError errorWithDomain:MTLCommandBufferErrorDomain
+                                   code:test_gpu_error
+                               userInfo:@{
+                                 NSLocalizedDescriptionKey : @"(test)",
+                                 MTLCommandBufferEncoderInfoErrorKey : @[ done, bad, after ]
+                               }] retain];
+    }
+  });
+  return error;
+}
+#endif
+
 void
 execute_on_main(dispatch_block_t block) {
   if ([NSThread isMainThread]) {
@@ -94,13 +147,18 @@ _NSArray_count(void *obj) {
   return STATUS_SUCCESS;
 }
 
-// MULLION_D3D12_GPU_ERRORS, or MULLION_TRACE_GPU=heavy as the process's trace calls say (_WMTTraceWrite): the error of
-// a command buffer the GPU failed lists its encoders and what became of each
+// MULLION_D3D12_GPU_ERRORS, MULLION_GPU_ERROR_DETAIL=1, or MULLION_TRACE_GPU=heavy as the process's trace calls say
+// (_WMTTraceWrite): the error of a command buffer the GPU failed lists its encoders and what became of each.
+// MULLION_GPU_ERROR_DETAIL is the switch d3d12's queue declares (d3d12_command_queue.cpp), read here by its grammar
 static bool encoder_errors;
 
 __attribute__((constructor)) static void
 init_encoder_errors(void) {
-  encoder_errors = getenv("MULLION_D3D12_GPU_ERRORS") || getenv("DXMT_D3D12_GPU_ERRORS");
+  const char *detail = getenv("MULLION_GPU_ERROR_DETAIL");
+  if (!detail || !*detail)
+    detail = getenv("DXMT_GPU_ERROR_DETAIL");
+  encoder_errors = getenv("MULLION_D3D12_GPU_ERRORS") || getenv("DXMT_D3D12_GPU_ERRORS") ||
+                   (detail && !strcmp(detail, "1"));
 }
 
 static NTSTATUS
@@ -220,6 +278,10 @@ _MTLCommandBuffer_status(void *obj) {
   // callers must not mistake a delayed commit for a cancelled buffer and free its allocations.
   if (test_late_ns && params->ret == MTLCommandBufferStatusEnqueued)
     params->ret = MTLCommandBufferStatusCommitted;
+#ifdef MULLION_TEST_HOOKS
+  if (test_gpu_error && params->ret == MTLCommandBufferStatusCompleted)
+    params->ret = MTLCommandBufferStatusError;
+#endif
   return STATUS_SUCCESS;
 }
 
@@ -3136,6 +3198,10 @@ static NTSTATUS
 _MTLCommandBuffer_error(void *obj) {
   struct unixcall_generic_obj_obj_ret *params = obj;
   params->ret = (obj_handle_t)[(id<MTLCommandBuffer>)params->handle error];
+#ifdef MULLION_TEST_HOOKS
+  if (test_gpu_error && !params->ret && [(id<MTLCommandBuffer>)params->handle status] == MTLCommandBufferStatusCompleted)
+    params->ret = (obj_handle_t)test_gpu_error_object();
+#endif
   return STATUS_SUCCESS;
 }
 
@@ -6072,6 +6138,12 @@ _MTL4CommandBuffer_feedback(void *obj) {
       @synchronized(state) {
         p->ret = state->feedback;
       }
+#ifdef MULLION_TEST_HOOKS
+    if (test_gpu_error && p->ret.status == WMTCommandBufferStatusCompleted && !p->ret.error) {
+      p->ret.status = WMTCommandBufferStatusError;
+      p->ret.error = (obj_handle_t)test_gpu_error_object();
+    }
+#endif
   }
   return STATUS_SUCCESS;
 }
@@ -7165,6 +7237,96 @@ _WMTGetSessionFacts(void *obj) {
   return STATUS_SUCCESS;
 }
 
+// MULLION-GPU-ERROR's names: Metal's command buffer errors and Metal 4's queue errors, by their constants. A code
+// not here prints as Unknown with its number
+static const char *
+gpu_error_name(long code) {
+  switch (code) {
+  case MTLCommandBufferErrorInternal: return "Internal";
+  case MTLCommandBufferErrorTimeout: return "Timeout";
+  case MTLCommandBufferErrorPageFault: return "PageFault";
+  case MTLCommandBufferErrorAccessRevoked: return "AccessRevoked";
+  case MTLCommandBufferErrorNotPermitted: return "NotPermitted";
+  case MTLCommandBufferErrorOutOfMemory: return "OutOfMemory";
+  case MTLCommandBufferErrorInvalidResource: return "InvalidResource";
+  case MTLCommandBufferErrorMemoryless: return "Memoryless";
+  case MTLCommandBufferErrorStackOverflow: return "StackOverflow";
+  default: return "";
+  }
+}
+
+static const char *
+API_AVAILABLE(macos(26.0)) gpu_queue_error_name(long code) {
+  switch (code) {
+  case MTL4CommandQueueErrorTimeout: return "Timeout";
+  case MTL4CommandQueueErrorNotPermitted: return "NotPermitted";
+  case MTL4CommandQueueErrorOutOfMemory: return "OutOfMemory";
+  // MTL4CommandQueueErrorDeviceRemoved, by its number as d9mt has it
+  case 4: return "DeviceRemoved";
+  case MTL4CommandQueueErrorAccessRevoked: return "AccessRevoked";
+  case MTL4CommandQueueErrorInternal: return "Internal";
+  default: return "";
+  }
+}
+
+static const char *
+gpu_encoder_state_name(MTLCommandEncoderErrorState state) {
+  switch (state) {
+  case MTLCommandEncoderErrorStateCompleted: return "completed";
+  case MTLCommandEncoderErrorStateAffected: return "affected";
+  case MTLCommandEncoderErrorStatePending: return "pending";
+  case MTLCommandEncoderErrorStateFaulted: return "faulted";
+  default: return "unknown";
+  }
+}
+
+static NTSTATUS
+_WMTGetGPUError(void *obj) {
+  @autoreleasepool {
+    struct unixcall_wmtgpu_error *params = obj;
+    struct WMTGPUError *info = params->info.ptr;
+    NSError *error = (NSError *)params->error;
+    memset(info, 0, sizeof(*info));
+    info->encoders = ~0u;
+    if (!error)
+      return STATUS_SUCCESS;
+    info->code = error.code;
+    const char *name = "";
+    if ([error.domain isEqualToString:MTLCommandBufferErrorDomain])
+      name = gpu_error_name(error.code);
+    else if (@available(macOS 26.0, *)) {
+      if ([error.domain isEqualToString:MTL4CommandQueueErrorDomain])
+        name = gpu_queue_error_name(error.code);
+      else
+        snprintf(info->domain, sizeof(info->domain), "%s", error.domain.UTF8String ?: "");
+    } else
+      snprintf(info->domain, sizeof(info->domain), "%s", error.domain.UTF8String ?: "");
+    snprintf(info->name, sizeof(info->name), "%s", name);
+    snprintf(info->text, sizeof(info->text), "%s", error.localizedDescription.UTF8String ?: "");
+    // the encoders that didn't complete, as MTLCommandBufferErrorOptionEncoderExecutionStatus lists them
+    id infos = error.userInfo[MTLCommandBufferEncoderInfoErrorKey];
+    if ([infos isKindOfClass:[NSArray class]]) {
+      NSArray *list = infos;
+      info->encoders = (uint32_t)MIN(list.count, (NSUInteger)UINT32_MAX - 1);
+      for (NSUInteger i = 0; i < list.count; i++) {
+        id<MTLCommandBufferEncoderInfo> encoder = list[i];
+        if (![encoder conformsToProtocol:@protocol(MTLCommandBufferEncoderInfo)] ||
+            encoder.errorState == MTLCommandEncoderErrorStateCompleted)
+          continue;
+        if (info->listed == sizeof(info->encoder) / sizeof(info->encoder[0])) {
+          info->unlisted++;
+          continue;
+        }
+        struct WMTGPUErrorEncoder *out = &info->encoder[info->listed++];
+        out->index = (uint32_t)i;
+        snprintf(out->state, sizeof(out->state), "%s", gpu_encoder_state_name(encoder.errorState));
+        snprintf(out->label, sizeof(out->label), "%s", encoder.label.UTF8String ?: "");
+      }
+    }
+  }
+  return STATUS_SUCCESS;
+}
+
 const void *__wine_unix_call_funcs[] = {
     &_NSObject_retain,
     &_NSObject_release,
@@ -7380,6 +7542,7 @@ const void *__wine_unix_call_funcs[] = {
     &_MTLDevice_sparseResidencyInTiles,
     &_MTLDevice_newSpecializedRenderPipeline,
     &_WMTGetSessionFacts,
+    &_WMTGetGPUError,
 };
 
 #ifndef MULLION_NATIVE
@@ -7598,6 +7761,7 @@ const void *__wine_unix_call_wow64_funcs[] = {
     &_MTLDevice_sparseResidencyInTiles,
     &_MTLDevice_newSpecializedRenderPipeline,
     &_WMTGetSessionFacts,
+    &_WMTGetGPUError,
 };
 _Static_assert(sizeof(__wine_unix_call_wow64_funcs) / sizeof(__wine_unix_call_wow64_funcs[0]) == WMTUnixCallCount,
                "32-bit bridge call count");

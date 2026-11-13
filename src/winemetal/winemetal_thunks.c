@@ -2098,6 +2098,15 @@ WMTGetSessionFacts(obj_handle_t device, const char *cache_path, struct WMTSessio
 }
 
 WINEMETAL_API void
+WMTGetGPUError(obj_handle_t error, struct WMTGPUError *info) {
+  struct unixcall_wmtgpu_error params;
+  *info = (struct WMTGPUError){.encoders = ~0u};
+  params.error = error;
+  WMT_MEMPTR_SET(params.info, info);
+  UNIX_CALL(WMTUnixGetGPUError, &params);
+}
+
+WINEMETAL_API void
 MTLCommandBuffer_pushDebugGroup(obj_handle_t cmdbuf, obj_handle_t name) {
   struct unixcall_generic_obj_obj_noret params;
   params.handle = cmdbuf;

@@ -947,6 +947,7 @@ public:
     RenderTargetDesc.DepthPlane = 0;
     RenderTargetDesc.RenderTargetArrayLength = 0;
     RenderTargetDesc.Flags = 0;
+    RenderTargetDesc.Resource = this;
 
     switch (ViewDesc.ViewDimension) {
     case D3D12_RTV_DIMENSION_TEXTURE1D: {
@@ -1094,6 +1095,7 @@ public:
     RenderTargetDesc.DepthPlane = 0;
     RenderTargetDesc.RenderTargetArrayLength = 0;
     RenderTargetDesc.Flags = ViewDesc.Flags;
+    RenderTargetDesc.Resource = this;
     RenderTargetDesc.DepthFormat = ViewDesc.Format;
 
     switch (ViewDesc.ViewDimension) {
