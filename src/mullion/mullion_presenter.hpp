@@ -123,6 +123,8 @@ private:
   WMT::MetalLayer layer_;
   InternalCommandLibrary &lib_;
   WMTLayerProps layer_props_;
+  // MULLION_LAYER_WAIT, read once: whether a present waits for the main thread to set a changed layer
+  bool layer_wait_;
   double native_contents_scale_ = 1.0;
   uint32_t sample_count_;
   WMTColorSpace colorspace_ = WMTColorSpaceSRGB;

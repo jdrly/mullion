@@ -1985,7 +1985,9 @@ struct WMTLayerProps {
   double bounds_height;
 };
 
-WINEMETAL_API void MetalLayer_setProps(obj_handle_t layer, const struct WMTLayerProps *props);
+// with `wait` (MULLION_LAYER_WAIT=1) the caller waits for the main thread to set what changed, as upstream does;
+// without, the main thread sets it later, in the order asked (src/winemetal/unix/layer.c)
+WINEMETAL_API void MetalLayer_setProps(obj_handle_t layer, const struct WMTLayerProps *props, bool wait);
 
 WINEMETAL_API void MetalLayer_getProps(obj_handle_t layer, struct WMTLayerProps *props);
 
@@ -2034,7 +2036,8 @@ enum WMTColorSpace : uint64_t {
 
 WINEMETAL_API bool CGColorSpace_checkColorSpaceSupported(enum WMTColorSpace colorspace);
 
-WINEMETAL_API bool MetalLayer_setColorSpace(obj_handle_t layer, enum WMTColorSpace colorspace);
+// `wait` as MetalLayer_setProps'
+WINEMETAL_API bool MetalLayer_setColorSpace(obj_handle_t layer, enum WMTColorSpace colorspace, bool wait);
 
 WINEMETAL_API uint32_t WMTGetPrimaryDisplayId();
 

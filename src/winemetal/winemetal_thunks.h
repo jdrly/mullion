@@ -112,6 +112,20 @@ struct unixcall_generic_obj_constptr_noret {
   struct WMTConstMemoryPointer arg;
 };
 
+// `wait`: MULLION_LAYER_WAIT, whether the caller waits for the main thread to set what changed
+struct unixcall_metal_layer_set_props {
+  obj_handle_t layer;
+  struct WMTConstMemoryPointer props;
+  uint64_t wait;
+};
+
+struct unixcall_metal_layer_set_colorspace {
+  obj_handle_t layer;
+  uint64_t colorspace;
+  uint64_t wait;
+  uint64_t ret;
+};
+
 struct unixcall_generic_obj_obj_uint64_noret {
   obj_handle_t handle;
   obj_handle_t arg0;

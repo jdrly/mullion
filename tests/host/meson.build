@@ -7,6 +7,13 @@ test('host_format', executable('host_format', 'format.cpp', include_directories 
 # the session header's lines against the fixture SWTOR on Mac's report tests copy, and the switch registry
 test('host_session', executable('host_session', 'session.cpp', override_options : ['cpp_std=c++20'], native : true),
      args : files('../swtor/fixtures/session.log'))
+# the bridge's layer setters with the main thread held (MULLION_LAYER_WAIT): a layer without a device, no Wine
+test('host_layer_apply', executable('host_layer_apply', ['layer_apply.c', '../../src/winemetal/unix/layer.c'],
+                                    include_directories : include_directories('../../src/winemetal/unix'),
+                                    c_args : ['-ObjC'],
+                                    link_args : ['-framework', 'Foundation', '-framework', 'QuartzCore',
+                                                 '-framework', 'CoreGraphics', '-framework', 'Metal'],
+                                    native : true))
 test('host_rc_self_move', executable('host_rc_self_move', 'rc.cpp',
                                     override_options : ['cpp_std=c++20'], native : true))
 test('host_denorm', executable('host_denorm', 'denorm.cpp', include_directories : include_directories('metal'),
