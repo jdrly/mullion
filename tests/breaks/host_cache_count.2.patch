@@ -1,0 +1,12 @@
+# CacheWriter's lock ignored: the count goes on while a writer has the cache open
+--- a/src/winemetal/unix/cache_count.h
++++ b/src/winemetal/unix/cache_count.h
+@@ -31,7 +31,7 @@
+   int lock = open(lock_path, O_RDONLY | O_CLOEXEC);
+   if (lock < 0 && errno != ENOENT)
+     return -1;
+-  if (lock >= 0 && flock(lock, LOCK_SH | LOCK_NB)) {
++  if (0) {
+     close(lock);
+     return -1;
+   }

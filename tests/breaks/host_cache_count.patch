@@ -1,11 +1,11 @@
-# always a plain read-only open: SQLite makes the -wal and -shm of a WAL cache that has neither
+# a plain read-only open: SQLite makes the cache's -wal and -shm, or rewrites its -shm
 --- a/src/winemetal/unix/cache_count.h
 +++ b/src/winemetal/unix/cache_count.h
-@@ -38,7 +38,7 @@
+@@ -39,7 +39,7 @@
    size_t n = (size_t)snprintf(uri, sizeof(uri), "file:");
    for (const char *c = file; *c; c++)
      n += (size_t)snprintf(uri + n, sizeof(uri) - n, strchr("%?#", *c) ? "%%%02X" : "%c", (unsigned char)*c);
--  n += (size_t)snprintf(uri + n, sizeof(uri) - n, immutable ? "?immutable=1" : "?mode=ro");
+-  n += (size_t)snprintf(uri + n, sizeof(uri) - n, "?immutable=1");
 +  n += (size_t)snprintf(uri + n, sizeof(uri) - n, "?mode=ro");
    snprintf(query, sizeof(query), "SELECT COUNT(*) FROM cache_%llu;", (unsigned long long)version);
    int64_t count = -1;
