@@ -1,0 +1,232 @@
+# The fork's CI, for SWTOR on Mac's DirectX 12 client: the one build the app installs (x86_64
+# Windows DLLs and the x86_64 winemetal.so, release, NVAPI and NGX off) and the host tests.
+# docs/swtor/README.md § CI says what it leaves out and why. Shaped after jdrly/dxmt's gw2.yml.
+#
+# Runner time: GitHub has blocked two of my forks for wasted compute. So: one run at a time, queued
+# and never cancelled in progress; no schedule; nothing but this one build; caches saved only on a
+# miss; a push run builds and uploads but doesn't repeat the tests, the control or the warnings
+# check that the pull request's run of the same tree passed.
+name: SWTOR
+
+on:
+  pull_request:
+    branches: [swtor-on-mac]
+    paths-ignore: ['**.md', 'docs/**']
+  push:
+    branches: [swtor-on-mac]
+    paths-ignore: ['**.md', 'docs/**']
+
+permissions:
+  contents: read
+
+# One group for the whole repository. A run in progress is never cancelled; GitHub keeps one run
+# waiting behind it and cancels an older waiting run when a newer one arrives, before it gets a runner.
+concurrency:
+  group: swtor
+  cancel-in-progress: false
+
+env:
+  # The PR's own commit, not GitHub's merge commit, so the artifact and VERSION name it
+  COMMIT: ${{ github.event.pull_request.head.sha || github.sha }}
+  XCODE_VERSION: "27.2"
+  # meson.build's -mmacosx-version-min for the native side, which LLVM is linked into
+  MACOSX_DEPLOYMENT_TARGET: "15.0"
+  MESON_VERSION: 1.12.1
+  NINJA_VERSION: 1.13.0
+  LLVM_VERSION: 15.0.7
+  LLVM_SHA256: 8b5fcb24b4128cf04df1b0b9410ce8b1a729cb3c544e6da885d234280dedeac6
+  # Raise it when toolchain.zsh builds LLVM differently, so the cache doesn't keep the old build
+  LLVM_BUILD: 1
+  LLVM_MINGW_VERSION: "20260908"
+  LLVM_MINGW_SHA256: d1dc5d1ecf3a3ced5ed5544c72f1acd0c8e84eb3024d520ecc6b143eec62a149
+  WINE_VERSION: v8.16-3shain
+  WINE_SHA256: 289c7f19e270a3d3d0a6fdb07691b176c70a0795f6811e5255cba82425de4f10
+
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  lint:
+    name: Lint
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ env.COMMIT }}
+          persist-credentials: false
+      - name: actionlint
+        env:
+          ACTIONLINT_VERSION: 1.7.12
+          ACTIONLINT_SHA256: 8aca8db96f1b94770f1b0d72b6dddcb1ebb8123cb3712530b08cc387b349a3d8
+        run: |
+          f="actionlint_${ACTIONLINT_VERSION}_linux_amd64.tar.gz"
+          curl -fsSL --retry 3 -o "$RUNNER_TEMP/$f" "https://github.com/rhysd/actionlint/releases/download/v$ACTIONLINT_VERSION/$f"
+          echo "$ACTIONLINT_SHA256  $RUNNER_TEMP/$f" | sha256sum -c
+          tar -xzf "$RUNNER_TEMP/$f" -C "$RUNNER_TEMP" actionlint
+          "$RUNNER_TEMP/actionlint" -color .github/workflows/swtor.yml
+
+  build:
+    name: Build x86_64
+    runs-on: xcode-27
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ env.COMMIT }}
+          submodules: true
+          persist-credentials: false
+      - name: Select Xcode
+        run: |
+          sudo xcode-select -s "/Applications/Xcode_$XCODE_VERSION.app"
+          # airconv's and the command library's .metal sources need it; Xcode 26 and later ship without it
+          xcrun -f metal >/dev/null 2>&1 || { echo "Downloading the Metal toolchain"; xcodebuild -downloadComponent MetalToolchain; }
+      - name: Install meson
+        run: pip3 install --break-system-packages "meson==$MESON_VERSION" "ninja==$NINJA_VERSION"
+      - name: Script syntax
+        run: for f in .github/swtor/*.zsh; do zsh -n "$f"; echo "ok $f"; done
+
+      - name: Restore Wine
+        id: wine
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          key: wine-x86_64-${{ env.WINE_VERSION }}
+          path: toolchains/wine
+      - name: Download Wine
+        if: steps.wine.outputs.cache-hit != 'true'
+        run: .github/swtor/toolchain.zsh fetch "https://github.com/3Shain/wine/releases/download/$WINE_VERSION/wine.tar.gz" "$WINE_SHA256" toolchains/wine
+      - name: Save Wine
+        if: steps.wine.outputs.cache-hit != 'true'
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          key: wine-x86_64-${{ env.WINE_VERSION }}
+          path: toolchains/wine
+
+      - name: Restore llvm-mingw
+        id: mingw
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          key: llvm-mingw-${{ env.LLVM_MINGW_VERSION }}
+          path: toolchains/llvm-mingw
+      - name: Download llvm-mingw
+        if: steps.mingw.outputs.cache-hit != 'true'
+        run: .github/swtor/toolchain.zsh fetch "https://github.com/mstorsjo/llvm-mingw/releases/download/$LLVM_MINGW_VERSION/llvm-mingw-$LLVM_MINGW_VERSION-ucrt-macos-universal.tar.xz" "$LLVM_MINGW_SHA256" toolchains/llvm-mingw --strip-components 1
+      - name: Save llvm-mingw
+        if: steps.mingw.outputs.cache-hit != 'true'
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          key: llvm-mingw-${{ env.LLVM_MINGW_VERSION }}
+          path: toolchains/llvm-mingw
+
+      # About 25 minutes on a miss
+      - name: Restore LLVM
+        id: llvm
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          key: llvm-${{ env.LLVM_VERSION }}-x86_64-macos${{ env.MACOSX_DEPLOYMENT_TARGET }}-${{ env.LLVM_BUILD }}
+          path: toolchains/llvm
+      - name: Build LLVM
+        if: steps.llvm.outputs.cache-hit != 'true'
+        run: .github/swtor/toolchain.zsh llvm toolchains/llvm
+      - name: Save LLVM
+        if: steps.llvm.outputs.cache-hit != 'true'
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          key: llvm-${{ env.LLVM_VERSION }}-x86_64-macos${{ env.MACOSX_DEPLOYMENT_TARGET }}-${{ env.LLVM_BUILD }}
+          path: toolchains/llvm
+
+      - name: Toolchain versions
+        run: |
+          # appended: llvm-mingw's unprefixed clang mustn't replace Apple's, which builds the native side
+          export PATH="$PATH:$PWD/toolchains/llvm-mingw/bin"
+          # and no other mingw on the image may build the DLLs instead
+          [[ $(command -v x86_64-w64-mingw32-gcc) == "$PWD/toolchains/llvm-mingw/bin/x86_64-w64-mingw32-gcc" ]]
+          {
+            echo '### Toolchain'
+            echo '```'
+            xcodebuild -version
+            echo "macOS SDK $(xcrun -sdk macosx --show-sdk-version)"
+            xcrun -sdk macosx metal --version
+            x86_64-w64-mingw32-gcc --version | head -1
+            echo "llvm-mingw $LLVM_MINGW_VERSION, LLVM $LLVM_VERSION (build $LLVM_BUILD, macOS $MACOSX_DEPLOYMENT_TARGET, no assertions), Wine $WINE_VERSION"
+            echo "meson $(meson --version), ninja $(ninja --version)"
+            echo '```'
+          } | tee -a "$GITHUB_STEP_SUMMARY"
+
+      - name: Build
+        run: |
+          export PATH="$PATH:$PWD/toolchains/llvm-mingw/bin"
+          # relative: meson refuses an absolute include path inside the source tree
+          meson setup build --cross-file build-win64.txt --buildtype release --strip --prefix "$PWD/install" \
+            -Denable_d3d12=true -Denable_nvapi=false -Denable_nvngx=false \
+            -Dnative_llvm_path=toolchains/llvm -Dwine_install_path=toolchains/wine
+          meson compile -C build 2>&1 | tee build.log
+
+      - name: Stage
+        run: |
+          meson install -C build --no-rebuild --quiet
+          rm -f install/*/*.dll.a
+          {
+            git -c diff.ignoreSubmodules=all describe --always --dirty
+            echo "commit: $COMMIT"
+          } >install/VERSION
+          find install -type f | sort
+          # what the app installs
+          for f in x86_64-unix/winemetal.so x86_64-windows/{d3d10core,d3d11,d3d12,d3d12core,dxgi,winemetal}.dll; do
+            [[ -f install/$f ]] || { echo "::error::install/$f is missing"; exit 1; }
+          done
+          # LLVM's assert() and llvm_unreachable() write their source file's path into the binary only
+          # when LLVM is built with assertions
+          n=$(strings -a install/x86_64-unix/winemetal.so | grep -cE '/llvm/(lib|include/llvm)/' || true)
+          echo "LLVM source paths (assertion text) in winemetal.so: $n" | tee -a "$GITHUB_STEP_SUMMARY"
+          [[ $n == 0 ]]
+
+      # tests/host/meson.build: twelve tests, each with meson's 30 s timeout but host_tessellator's
+      # 300 s; none builds the tree or waits on a GPU
+      - name: Host tests
+        if: github.event_name == 'pull_request'
+        timeout-minutes: 15
+        run: |
+          export PATH="$PATH:$PWD/toolchains/llvm-mingw/bin"
+          meson configure build -Denable_tests=true
+          # builds only what the host tests need, not the Windows test programs
+          meson test -C build 'host_*' --print-errorlogs
+
+      - name: The checks fail on a broken copy
+        if: github.event_name == 'pull_request'
+        timeout-minutes: 10
+        run: |
+          export PATH="$PATH:$PWD/toolchains/llvm-mingw/bin"
+          # Rc's move assignment without its self-move guard, in the checkout after staging:
+          # host_rc_self_move has to fail, and on that check
+          rc=src/util/rc/util_rc_ptr.hpp
+          perl -pi -e 's/if \(this != &other\) \{/if (true) {/' "$rc"
+          [[ $(git diff --numstat -- "$rc") == $'1\t1\t'"$rc" ]]
+          status=0
+          meson test -C build host_rc_self_move --print-errorlogs >"$RUNNER_TEMP/control.txt" 2>&1 || status=$?
+          git checkout -- "$rc"
+          cat "$RUNNER_TEMP/control.txt"
+          [[ $status != 0 ]]
+          grep -qF 'failed: owner.ptr() == &object' "$RUNNER_TEMP/control.txt"
+          # the warnings check, given this build's log with one warning more
+          cp build.log "$RUNNER_TEMP/warned.log"
+          echo '../src/d3d12/control.cpp:1:1: warning: a warning no baseline lists [-Wcontrol]' >>"$RUNNER_TEMP/warned.log"
+          status=0
+          .github/swtor/warnings.zsh "$RUNNER_TEMP/warned.log" .github/swtor/warnings-x86_64.txt >"$RUNNER_TEMP/warned.txt" || status=$?
+          [[ $status == 1 ]]
+          grep -qxF '::error::New warning: src/d3d12/control.cpp: warning: a warning no baseline lists [-Wcontrol]' "$RUNNER_TEMP/warned.txt"
+          echo "both checks failed on their break"
+
+      # last, so that a run that only adds a warning still shows everything above
+      - name: No new warnings
+        if: github.event_name == 'pull_request'
+        run: .github/swtor/warnings.zsh build.log .github/swtor/warnings-x86_64.txt
+
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: mullion-swtor-${{ env.COMMIT }}
+          path: install
+          retention-days: 7
+          if-no-files-found: error
