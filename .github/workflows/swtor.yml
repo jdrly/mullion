@@ -220,7 +220,7 @@ jobs:
           { echo '### The build'; echo '```'; cat "$RUNNER_TEMP/check.txt"; echo '```'; } >>"$GITHUB_STEP_SUMMARY"
           exit "$status"
 
-      # tests/host/meson.build: fourteen tests, each with meson's 30 s timeout but host_tessellator's
+      # tests/host/meson.build: thirteen tests, each with meson's 30 s timeout but host_tessellator's
       # 300 s; none builds the tree or waits on a GPU
       - name: Host tests
         if: github.event_name == 'pull_request'
@@ -235,7 +235,7 @@ jobs:
           # reads the machine's real memory pressure; on this runner they ran one after the other (run
           # 43498464580)
           skip=(--exclude host_mutate)
-          # host_tessellator takes about 200 s here (x86_64 under Rosetta), the other eleven about 18 s: it runs
+          # host_tessellator takes about 200 s here (x86_64 under Rosetta), the other ten about 18 s: it runs
           # when the pull request changes what it compiles or how, or when that can't be told. all of
           # src/airconv, so that a header it comes to include there can't slip past
           if git fetch -q origin "$BASE" && git diff --quiet "$BASE" HEAD -- \

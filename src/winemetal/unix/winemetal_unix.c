@@ -7169,8 +7169,8 @@ _MTL4CommandEncoder_encodeCommands(void *obj) {
   return STATUS_SUCCESS;
 }
 
-// cache.c: the rows of a cache's table and its file's size, as WMTSessionFacts has them
-void cache_stats(const char *path, uint64_t version, int64_t *entries, int64_t *bytes);
+// cache.c: a cache file's size, as WMTSessionFacts has it
+int64_t cache_file_size(const char *path);
 
 static NTSTATUS
 _WMTGetSessionFacts(void *obj) {
@@ -7194,9 +7194,7 @@ _WMTGetSessionFacts(void *obj) {
       if ([(id<MTLDevice>)params->device supportsFamily:(MTLGPUFamily)(MTLGPUFamilyApple1 + n - 1)])
         facts->gpu_family = n;
     facts->masked_family = emulated_family();
-    facts->cache_entries = facts->cache_bytes = -1;
-    if (params->cache_path.ptr)
-      cache_stats(params->cache_path.ptr, params->cache_version, &facts->cache_entries, &facts->cache_bytes);
+    facts->cache_bytes = params->cache_path.ptr ? cache_file_size(params->cache_path.ptr) : -1;
   }
   return STATUS_SUCCESS;
 }

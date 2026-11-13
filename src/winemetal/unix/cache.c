@@ -1,7 +1,6 @@
 #import <Foundation/Foundation.h>
 #include "sqlite3.h"
 #include <sys/stat.h>
-#include "cache_count.h"
 #define WINEMETAL_API
 #include "../winemetal_thunks.h"
 
@@ -259,28 +258,23 @@ _CacheWriter_set(void *obj) {
   return 0;
 }
 
-// the session header's count of a cache: the rows of its table cache_<version> (cache_count.h) and its file's size, 0
-// and 0 without the file, -1 for what can't be read. it writes nothing, where resolve_cache_dir would make a directory
-void
-cache_stats(const char *path, uint64_t version, int64_t *entries, int64_t *bytes) {
-  *entries = *bytes = -1;
+// the session header's size of a cache's file: 0 without it, -1 when it can't be told. it only looks, where
+// resolve_cache_dir would make the directory
+int64_t
+cache_file_size(const char *path) {
   NSString *file = [NSString stringWithUTF8String:path];
   if (!file)
-    return;
+    return -1;
   if (![file hasPrefix:@"/"]) {
     char buf[PATH_MAX];
     if (!confstr(_CS_DARWIN_USER_CACHE_DIR, buf, sizeof(buf)))
-      return;
+      return -1;
     file = [[NSString stringWithUTF8String:buf] stringByAppendingPathComponent:file];
   }
   struct stat st;
-  if (stat(file.fileSystemRepresentation, &st)) {
-    if (errno == ENOENT)
-      *entries = *bytes = 0;
-    return;
-  }
-  *bytes = st.st_size;
-  *entries = cache_count(file.fileSystemRepresentation, version);
+  if (stat(file.fileSystemRepresentation, &st))
+    return errno == ENOENT ? 0 : -1;
+  return st.st_size;
 }
 
 #ifndef MULLION_NO_PRIVATE_API

@@ -575,7 +575,6 @@ struct unixcall_wmtgpu_statistics {
 struct unixcall_wmtsession_facts {
   obj_handle_t device;
   struct WMTConstMemoryPointer cache_path;
-  uint64_t cache_version;
   struct WMTMemoryPointer facts;
 };
 

@@ -120,7 +120,8 @@ struct Header {
   std::optional<std::string> cache_directory; // the shader cache's, relative to the user's cache directory or
                                               // absolute; nullopt with the cache off (MULLION_SHADER_CACHE=0)
   std::string cache_file;                     // its file in the directory
-  std::optional<int64_t> cache_entries, cache_bytes;
+  std::optional<int64_t> cache_entries;       // its rows: n/a until private ticket 18 counts them without writing
+  std::optional<int64_t> cache_bytes;         // its file's size, 0 without it
 };
 
 // the variables the env line shows: MULLION_*, DXMT_* and MTL_*, as SWTOR on Mac picks its own (a name of letters,

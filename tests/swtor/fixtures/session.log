@@ -2,4 +2,4 @@ info:  Mullion: session v0.5-alpha.3-118-g1a2b3c4 (jdrly/mullion swtor-on-mac) d
 info:  Mullion: mac macOS=26.1 build=25B78 gpu="Apple M5 Max" family=Apple10 masked=no ram=131072 workingSet=110592 arch=x86_64-rosetta supportsPlacementSparse=1
 info:  Mullion: switches MULLION_SAMPLE_LIMIT=4096 MULLION_SAMPLE_SWITCH=on
 info:  Mullion: env DXMT_LOG_LEVEL=info MTL_HUD_ENABLED=1 MULLION_LOG_PATH=(a path) MULLION_SHADER_FLAGS=0x10
-info:  Mullion: cache shaders=mullion/swtor_RC2.exe/shaders_400.db entries=18234 sizeMiB=700
+info:  Mullion: cache shaders=mullion/swtor_RC2.exe/shaders_400.db entries=n/a sizeMiB=700

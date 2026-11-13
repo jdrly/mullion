@@ -55,13 +55,12 @@ fixture in the same pull request.
 - `switches`: every switch declared in `d3d12.dll`, by name, with its value now: a bool as `on` or `off`, a number as
   its digits.
 - `env`: every `MULLION_*`, `DXMT_*` and `MTL_*` variable set (names of letters, digits and `_`), by name.
-- `cache`: the shader cache's file below the user's cache directory (`off` with `MULLION_SHADER_CACHE=0`), its rows
-  for this `AIRCONV_VERSION` (0 without the file or the table), and the file's size in MiB. Counting writes nothing:
-  SQLite reads the file alone, opened immutable, under the cache writer's own lock (`<file>-lock`, taken shared and
-  never made). While a writer has the cache open, the count is `n/a`. Rows a writer left in a `-wal` without
-  checkpointing them aren't counted.
+- `cache`: the shader cache's file below the user's cache directory (`off` with `MULLION_SHADER_CACHE=0`); `entries`
+  its rows, `n/a` until private ticket 18 counts them (the cache is a SQLite WAL database, and a connection to one
+  rewrites its `-shm`, while reading the file alone races a writer in another process); and the file's size in MiB
+  (0 without it), from a `stat`.
 
-`build`, `family`, `masked`, `ram`, `arch`'s `-rosetta` and the cache's counts come from the bridge
+`build`, `family`, `masked`, `ram`, `arch`'s `-rosetta` and the cache's size come from the bridge
 (`WMTGetSessionFacts`), which only reads: it keeps no state and makes no Metal object. A value it can't read is `n/a`.
 
 Rules every fork log line keeps, this header first:

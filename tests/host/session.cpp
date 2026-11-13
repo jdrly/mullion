@@ -59,7 +59,6 @@ Sample(const sw::Registry &registry) {
                 {"WINEDEBUG", "-all"}};
   header.cache_directory = "mullion/swtor_RC2.exe/";
   header.cache_file = "shaders_400.db";
-  header.cache_entries = 18234;
   header.cache_bytes = (700ll << 20) + (512 << 10);
   return header;
 }

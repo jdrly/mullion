@@ -44,7 +44,7 @@ WriteSessionHeader(uint64_t handle, const char *api, uint32_t feature_level, boo
   auto cache_path = header.cache_directory ? *header.cache_directory + header.cache_file : std::string();
 
   WMTSessionFacts facts;
-  WMTGetSessionFacts(handle, header.cache_directory ? cache_path.c_str() : nullptr, kMullionShaderCacheVersion, &facts);
+  WMTGetSessionFacts(handle, header.cache_directory ? cache_path.c_str() : nullptr, &facts);
   if (facts.macos_build[0])
     header.build = std::string(facts.macos_build);
   if (facts.gpu_family)
@@ -61,8 +61,6 @@ WriteSessionHeader(uint64_t handle, const char *api, uint32_t feature_level, boo
 #endif
   if (facts.translated)
     header.arch += "-rosetta";
-  if (facts.cache_entries >= 0)
-    header.cache_entries = facts.cache_entries;
   if (facts.cache_bytes >= 0)
     header.cache_bytes = facts.cache_bytes;
 
