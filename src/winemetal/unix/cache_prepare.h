@@ -37,12 +37,12 @@ cache_prepare_table(sqlite3 *db, uint64_t version, struct WMTCachePrepared *prep
   char table[32];
   snprintf(table, sizeof(table), "cache_%016llx", (unsigned long long)version);
   char *sql = sqlite3_mprintf("CREATE TABLE IF NOT EXISTS %s (key BLOB PRIMARY KEY, value BLOB NOT NULL);", table);
+  bool made = sqlite3_exec(db, sql, NULL, NULL, NULL) == SQLITE_OK;
+  sqlite3_free(sql);
+  // after the table is made, which may take free pages, so that the drop's count is the pages it freed
   int64_t page = cache_query_number(db, "PRAGMA page_size;");
   int64_t free_before = cache_query_number(db, "PRAGMA freelist_count;");
-  bool ready = sqlite3_exec(db, sql, NULL, NULL, NULL) == SQLITE_OK &&
-               sqlite3_exec(db, "BEGIN IMMEDIATE;", NULL, NULL, NULL) == SQLITE_OK;
-  sqlite3_free(sql);
-  if (ready) {
+  if (made && sqlite3_exec(db, "BEGIN IMMEDIATE;", NULL, NULL, NULL) == SQLITE_OK) {
     uint64_t dropped = 0;
     bool failed = false;
     sqlite3_stmt *other;

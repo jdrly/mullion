@@ -151,6 +151,26 @@ main(void) {
   check(WIFEXITED(status) && !WEXITSTATUS(status), "the writer wrote");
   check(prepared.entries == 301, "a write under the lock is counted");
 
+  // what a drop freed doesn't depend on whether this id's table was made from free pages: two files with the same
+  // old table and free pages, one with this id's table made before it opens
+  {
+    uint64_t freed[2];
+    for (int made = 0; made < 2; made++) {
+      char path[600];
+      snprintf(path, sizeof(path), "%s/shaders_free%d.db", directory, made);
+      sqlite3_open(path, &db);
+      fill(db, "cache_104", 64);
+      fill(db, "scratch", 64);
+      sql(db, "DROP TABLE scratch;");
+      if (made)
+        fill(db, TABLE, 0);
+      sqlite3_close(db);
+      prepared = prepare(path);
+      freed[made] = prepared.dropped_bytes;
+    }
+    check(freed[0] > 0 && freed[0] == freed[1], "the pages a drop freed, whether or not making the table took some");
+  }
+
   // a file that isn't a database: nothing counted, nothing removed but archives
   char bad[600];
   snprintf(bad, sizeof(bad), "%s/shaders_bad.db", directory);
