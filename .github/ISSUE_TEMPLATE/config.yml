@@ -1,9 +1,7 @@
 blank_issues_enabled: false
 contact_links:
-  - name: Questions
-    url: https://github.com/dttdrv/mullion/discussions/categories/q-a
-    about: Questions about installing, setting up and using Mullion.
-  - name: Games that work
-    url: https://github.com/dttdrv/mullion/discussions/categories/game-reports
+  - name: Upstream Mullion (dttdrv/mullion)
+    url: https://github.com/dttdrv/mullion
     about: >-
-      A game that runs, with its version, the Mac, Wine, the settings and the frame rate.
+      Nothing from this fork goes upstream: no issue, pull request or comment. Report problems with this fork's
+      builds here.

@@ -1,0 +1,83 @@
+name: Task
+description: A planned change to the fork, written as a precise specification (developers and agents)
+title: ""
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Write the title as `Context: Actionable result`, for example
+        `Device removal: Say which command buffer failed and why`, and use **the same title for the pull request**
+        (see [CONTRIBUTING.md](../blob/swtor-on-mac/.github/CONTRIBUTING.md#issues)).
+        Nothing from this fork goes to upstream's repositories.
+
+  - type: textarea
+    id: context
+    attributes:
+      label: Context
+      description: What should happen and why, and where the request came from.
+      placeholder: |
+        Where it came from (a log, a review, a gate run, an upstream change, d9mt or jdrly/dxmt), what problem it
+        solves for SWTOR's DirectX 12 client, and what happens if it isn't done. Link the evidence.
+    validations:
+      required: true
+
+  - type: textarea
+    id: scope
+    attributes:
+      label: Affected areas
+      description: >-
+        Files, functions, switches or log lines this touches, at a named commit. **List only what you have verified
+        in the repository**: a wrong path costs whoever picks this up more time than an empty field.
+    validations:
+      required: false
+
+  - type: textarea
+    id: changes
+    attributes:
+      label: What's needed
+      description: A numbered list of concrete changes, each with its `MULLION_*` switch and log line.
+      placeholder: |
+        1. …
+        2. …
+    validations:
+      required: true
+
+  - type: textarea
+    id: acceptance
+    attributes:
+      label: Acceptance criteria
+      description: >-
+        Observable conditions for done (a log line, a test with its failing control, a build). Mark the ones that
+        need a Mac.
+      value: |
+        - [ ]
+        - [ ]
+    validations:
+      required: true
+
+  - type: textarea
+    id: uat
+    attributes:
+      label: Verification (UAT)
+      description: >-
+        What someone does on a Mac, step by step, and the result each step expects. Write "Needs the Mac run" with
+        the exact commands when the runner can't show it.
+      value: |
+        **Fork build:** (commit)
+        **Mac:** (chip, macOS)
+        **Settings:** (MULLION_* switches)
+
+        1. Action.
+           → Expected result.
+        2.
+           →
+    validations:
+      required: true
+
+  - type: textarea
+    id: notes
+    attributes:
+      label: Implementation notes
+      description: Constraints, traps, dependencies on other issues, what deliberately not to do.
+    validations:
+      required: false

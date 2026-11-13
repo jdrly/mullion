@@ -1,0 +1,97 @@
+name: Bug report
+description: SWTOR's DirectX 12 client runs or looks wrong with a build of this fork, or one of its changes does
+title: ""
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Write the title as `Context: What goes wrong`, for example
+        `Device removal: The game freezes after a failed command buffer`.
+        Attach `wine.log` from SWTOR on Mac's logs folder. Never attach anything that names a player or an
+        account, and never a dumped game shader.
+
+  - type: textarea
+    id: observed
+    attributes:
+      label: What happened?
+      description: What you saw, where in the game, and when. Quote the log lines that show it.
+    validations:
+      required: true
+
+  - type: textarea
+    id: expected
+    attributes:
+      label: What did you expect?
+    validations:
+      required: true
+
+  - type: textarea
+    id: repro
+    attributes:
+      label: Steps to reproduce
+      value: |
+        1.
+        2.
+        3.
+    validations:
+      required: true
+
+  - type: dropdown
+    id: impact
+    attributes:
+      label: How bad is it?
+      options:
+        - The game doesn't start, hangs or crashes
+        - The Mac froze, or logged me out
+        - Wrong graphics
+        - Runs badly (frame rate, stutter, heat)
+        - A switch or log line doesn't work as documented
+        - Cosmetic
+    validations:
+      required: true
+
+  - type: input
+    id: build
+    attributes:
+      label: Fork build
+      description: The commit of the fork build that ran.
+    validations:
+      required: true
+
+  - type: input
+    id: mac
+    attributes:
+      label: Mac
+      description: Chip and macOS version.
+      placeholder: "M1, macOS 27.1"
+    validations:
+      required: true
+
+  - type: textarea
+    id: settings
+    attributes:
+      label: Settings
+      description: Any `MULLION_*` switches, and the game's graphics options that matter.
+    validations:
+      required: true
+
+  - type: dropdown
+    id: regression
+    attributes:
+      label: Does it happen with the fork's switch off, or with upstream's build?
+      options:
+        - I haven't tried
+        - "No: only with the fork's change on"
+        - "Yes: also with the switch off"
+        - "Yes: also with upstream's build"
+    validations:
+      required: true
+
+  - type: textarea
+    id: logs
+    attributes:
+      label: Logs
+      description: Drag `wine.log` here.
+    validations:
+      required: true
