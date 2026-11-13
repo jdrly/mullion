@@ -73,16 +73,6 @@ public:
 
   std::map<std::string, llvm::Type *> typeContext;
 
-  llvm::Type* to_vec4_type(llvm::Type* scalar) {
-    if(scalar == _int) {
-      return _int4;
-    }
-    if(scalar == _float) {
-      return _float4;
-    }
-    assert(0 && "input is not a scalar or not implemented.");
-  };
-
   llvm::LLVMContext &context;
 };
 } // namespace mullion

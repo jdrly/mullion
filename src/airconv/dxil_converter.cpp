@@ -800,6 +800,8 @@ scaler_type(uint64_t component) {
   case 5:
     return ScalerDataType::Uint; // U16, U32
   case 10:
+    // F64: Metal has no texture of doubles (Refuse)
+    Refuse("unsupported: a typed resource of doubles");
     return ScalerDataType::Double;
   default:
     return ScalerDataType::Float;
