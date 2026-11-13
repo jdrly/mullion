@@ -2620,6 +2620,7 @@ enum { WMTUnixSampledEncoder = 167, WMTUnixDiagWrite, WMTUnixDispatchDataBytes, 
        WMTUnixComputeStaticThreadgroupMemory, WMTUnixDeviceMaxThreadgroupMemory,
        WMTUnixDeviceMaxThreadsPerThreadgroup, WMTUnixDeviceReport, WMTUnixTextureSparseTailHolds,
        WMTUnixDeviceSparseResidencyInTiles, WMTUnixDeviceNewSpecializedRenderPipeline,
+       WMTUnixGetSessionFacts,
        WMTUnixCallCount };
 WINEMETAL_API obj_handle_t MTLCommandBuffer_sampledCommandEncoder(obj_handle_t cmdbuf, enum WMTSampledEncoder type,
                                                                   const struct WMTSampleBufferAttachmentInfo *samples,
@@ -2646,6 +2647,22 @@ WINEMETAL_API uint64_t WMTGPUStatistics(obj_handle_t device, char *buffer, uint6
 // what the bridge answers of the device (as the family of MULLION_GPU_FAMILY, when one is set), `name=value` lines.
 // their length, written to buffer when it holds them
 WINEMETAL_API uint64_t WMTDeviceReport(obj_handle_t device, char *buffer, uint64_t size);
+// what the session header (src/mullion/mullion_session.hpp) can't read on the Windows side. it only reads: it keeps no
+// state and makes no Metal object
+struct WMTSessionFacts {
+  uint64_t physical_memory; // hw.memsize; 0 when unknown
+  int64_t cache_entries;    // rows of the cache's table: 0 without its file or table, -1 when unknown
+  int64_t cache_bytes;      // the cache file's size: 0 without it, -1 when unknown
+  uint32_t gpu_family;      // the GPU's own newest Apple family, past MULLION_GPU_FAMILY; 0 when unknown
+  uint32_t masked_family;   // the family the bridge answers as (MULLION_GPU_FAMILY); 0: the GPU's own
+  uint32_t translated;      // 1 under Rosetta (sysctl.proc_translated)
+  char macos_build[28];     // kern.osversion, "" when unknown
+};
+STATIC_ASSERT(sizeof(struct WMTSessionFacts) == 64);
+// `cache_path` is the shader cache's file as ShaderCache opens it (relative to the user's cache directory, or
+// absolute), its table `cache_<cache_version>`; NULL for none
+WINEMETAL_API void WMTGetSessionFacts(obj_handle_t device, const char *cache_path, uint64_t cache_version,
+                                      struct WMTSessionFacts *facts);
 WINEMETAL_API void MTLCommandBuffer_pushDebugGroup(obj_handle_t cmdbuf, obj_handle_t name);
 WINEMETAL_API void MTLCommandBuffer_popDebugGroup(obj_handle_t cmdbuf);
 WINEMETAL_API uint64_t DispatchData_getBytes(obj_handle_t data, void *buffer, uint64_t size);

@@ -1,5 +1,6 @@
 #import <Foundation/Foundation.h>
 #include "sqlite3.h"
+#include <sys/stat.h>
 #define WINEMETAL_API
 #include "../winemetal_thunks.h"
 
@@ -255,6 +256,44 @@ _CacheWriter_set(void *obj) {
   [writer set:key value:(dispatch_data_t)params->value_data];
   [key release];
   return 0;
+}
+
+// the session header's count of a cache: the rows of its table cache_<version> and its file's size, 0 and 0 without
+// the file, -1 for what can't be read. it opens the file read-only, where resolve_cache_dir would make its directory
+void
+cache_stats(const char *path, uint64_t version, int64_t *entries, int64_t *bytes) {
+  *entries = *bytes = -1;
+  NSString *file = [NSString stringWithUTF8String:path];
+  if (!file)
+    return;
+  if (![file hasPrefix:@"/"]) {
+    char buf[PATH_MAX];
+    if (!confstr(_CS_DARWIN_USER_CACHE_DIR, buf, sizeof(buf)))
+      return;
+    file = [[NSString stringWithUTF8String:buf] stringByAppendingPathComponent:file];
+  }
+  struct stat st;
+  if (stat(file.fileSystemRepresentation, &st)) {
+    if (errno == ENOENT)
+      *entries = *bytes = 0;
+    return;
+  }
+  *bytes = st.st_size;
+  sqlite3 *db = NULL;
+  sqlite3_stmt *stmt = NULL;
+  NSString *count = [NSString stringWithFormat:@"SELECT COUNT(*) FROM cache_%llu;", version];
+  if (sqlite3_open_v2(file.fileSystemRepresentation, &db, SQLITE_OPEN_READONLY | SQLITE_OPEN_NOMUTEX, NULL) ==
+      SQLITE_OK) {
+    if (sqlite3_prepare_v2(db, count.UTF8String, -1, &stmt, NULL) == SQLITE_OK) {
+      if (sqlite3_step(stmt) == SQLITE_ROW)
+        *entries = sqlite3_column_int64(stmt, 0);
+    } else if (!strncmp(sqlite3_errmsg(db), "no such table", 13)) {
+      // a cache written for another AIRCONV_VERSION only
+      *entries = 0;
+    }
+  }
+  sqlite3_finalize(stmt);
+  sqlite3_close(db);
 }
 
 #ifndef MULLION_NO_PRIVATE_API

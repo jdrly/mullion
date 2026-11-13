@@ -8,6 +8,18 @@ How a switch is declared: [ADR 0001](adr/0001-switches.md).
 
 ## Switches
 
+A fork switch is declared once, at namespace scope, in the file that reads it, through
+[`src/util/util_switch.hpp`](../../src/util/util_switch.hpp):
+
+```cpp
+static sw::Switch<bool> kFoo{"MULLION_FOO", true, sw::notZero}; // kFoo() reads the environment at each call
+```
+
+The declaration gives the name, the default and the grammar (`sw::notZero` for `!= "0"`, `sw::exactlyOne` for
+`== "1"`, or a parser of its own). Declaring it puts it on the session header's `switches` line with its value at
+that moment; nothing else is edited. Upstream's variables aren't declared: the header's `env` line shows the ones that
+are set.
+
 | Variable | Default | What it does | Off restores |
 |---|---|---|---|
 
@@ -15,6 +27,50 @@ How a switch is declared: [ADR 0001](adr/0001-switches.md).
 
 | Line | When | Where it lands | Who reads it |
 |---|---|---|---|
+| `Mullion: session <version> (jdrly/mullion swtor-on-mac) d3d12 fl= metal4= shaderMetal= airconv= codegen=` | Once per process, when the first Direct3D 12 device is created, before its feature level is checked | `d3d12.log` (Wine's output, `wine.log` in the app), at `info` | The app's session report; me, first in every log |
+| `Mullion: mac macOS= build= gpu="" family= masked= ram= workingSet= arch= supportsPlacementSparse=` | With the session line | The same | The same |
+| `Mullion: switches <NAME=value …>` or `none` | With the session line | The same | The same |
+| `Mullion: env <NAME=value …>` or `none` | With the session line | The same | The same |
+| `Mullion: cache shaders= entries= sizeMiB=` | With the session line | The same | The same |
+
+### The session header
+
+What a session ran with, in five lines written together, at `info`: `MULLION_LOG_LEVEL=warn` or above leaves them out
+and reads nothing for them. [`tests/swtor/fixtures/session.log`](../../tests/swtor/fixtures/session.log) is a sample;
+`host_session` fails when the formatter stops writing it, and the app's session report tests copy it. The field names
+and their order are the contract: a field is added at the end of its line, and a renamed or moved field changes the
+fixture in the same pull request.
+
+- `session`: `MULLION_VERSION` (`git describe` of the build); the API; `fl` the device's feature level; `metal4` `on`,
+  `off` (`MULLION_D3D12_METAL4=0`) or `unsupported` (no Metal 4 family); `shaderMetal` the Metal version shaders are
+  converted for (310, 320, 400); `airconv` `AIRCONV_VERSION`; `codegen` the converter's codegen id, `n/a` until the
+  shader cache keys on one (private ticket 18).
+- `mac`: `macOS` the version; `build` the macOS build (`kern.osversion`); `gpu` Metal's device name; `family` the
+  GPU's own newest Apple family, past `MULLION_GPU_FAMILY`; `masked` the family the bridge answers as when
+  `MULLION_GPU_FAMILY` is set, else `no`; `ram` and `workingSet` (the device's recommended maximum) in MiB; `arch` the
+  DLL's architecture, `-rosetta` when the process is translated; `supportsPlacementSparse` 1 or 0, the bridge's
+  answer (0 below macOS 26.4).
+- `switches`: every switch declared in `d3d12.dll`, by name, with its value now: a bool as `on` or `off`, a number as
+  its digits.
+- `env`: every `MULLION_*`, `DXMT_*` and `MTL_*` variable set (names of letters, digits and `_`), by name.
+- `cache`: the shader cache's file below the user's cache directory (`off` with `MULLION_SHADER_CACHE=0`), its rows
+  for this `AIRCONV_VERSION` (0 without the file or the table) and the file's size in MiB.
+
+`build`, `family`, `masked`, `ram`, `arch`'s `-rosetta` and the cache's counts come from the bridge
+(`WMTGetSessionFacts`), which only reads: it keeps no state and makes no Metal object. A value it can't read is `n/a`.
+
+Rules every fork log line keeps, this header first:
+
+- `key=value` fields with a space before each key, and no line of 900 bytes or more, so Wine (1018 bytes) never splits
+  one. A longer line goes on as `Mullion: <line>+ …` from the field that doesn't fit.
+- No absolute host path, user name or home folder. A value from outside Mullion (a variable's, a switch's string)
+  follows the app's rule for its own header: one with `/` or `\` prints as `(a path)`, the rest keeps only
+  `A-Za-z0-9,.;:_+=-`, cut to 80 characters. The cache's directory prints relative to the user's cache directory,
+  and as `(a path)` when `MULLION_SHADER_CACHE_PATH` makes it absolute.
+- No field named `session`, `token`, `account`, `user`, `user_name` or `email`: the app's log bundle blanks such a
+  value and drops a file that still names the user. The header's first word is `session` and a space, never
+  `session=`.
+- One write per line, and a header-only formatter with a host test whose control was seen failing.
 
 ## CI
 

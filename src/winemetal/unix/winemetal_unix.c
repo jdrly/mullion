@@ -7169,6 +7169,38 @@ _MTL4CommandEncoder_encodeCommands(void *obj) {
   return STATUS_SUCCESS;
 }
 
+// cache.c: the rows of a cache's table and its file's size, as WMTSessionFacts has them
+void cache_stats(const char *path, uint64_t version, int64_t *entries, int64_t *bytes);
+
+static NTSTATUS
+_WMTGetSessionFacts(void *obj) {
+  @autoreleasepool {
+    struct unixcall_wmtsession_facts *params = obj;
+    struct WMTSessionFacts *facts = params->facts.ptr;
+    memset(facts, 0, sizeof(*facts));
+    size_t size = sizeof(facts->macos_build);
+    if (sysctlbyname("kern.osversion", facts->macos_build, &size, NULL, 0))
+      memset(facts->macos_build, 0, sizeof(facts->macos_build));
+    facts->macos_build[sizeof(facts->macos_build) - 1] = 0;
+    size = sizeof(facts->physical_memory);
+    if (sysctlbyname("hw.memsize", &facts->physical_memory, &size, NULL, 0))
+      facts->physical_memory = 0;
+    int translated = 0;
+    size = sizeof(translated);
+    facts->translated = !sysctlbyname("sysctl.proc_translated", &translated, &size, NULL, 0) && translated == 1;
+    // Metal's own answer, not _MTLDevice_supportsFamily's, which stops at MULLION_GPU_FAMILY; the families as far as
+    // WMTDeviceReport asks
+    for (unsigned n = 1; n <= 11; n++)
+      if ([(id<MTLDevice>)params->device supportsFamily:(MTLGPUFamily)(MTLGPUFamilyApple1 + n - 1)])
+        facts->gpu_family = n;
+    facts->masked_family = emulated_family();
+    facts->cache_entries = facts->cache_bytes = -1;
+    if (params->cache_path.ptr)
+      cache_stats(params->cache_path.ptr, params->cache_version, &facts->cache_entries, &facts->cache_bytes);
+  }
+  return STATUS_SUCCESS;
+}
+
 const void *__wine_unix_call_funcs[] = {
     &_NSObject_retain,
     &_NSObject_release,
@@ -7383,6 +7415,7 @@ const void *__wine_unix_call_funcs[] = {
     &_MTLDevice_sparseTailHolds,
     &_MTLDevice_sparseResidencyInTiles,
     &_MTLDevice_newSpecializedRenderPipeline,
+    &_WMTGetSessionFacts,
 };
 
 #ifndef MULLION_NATIVE
@@ -7600,6 +7633,7 @@ const void *__wine_unix_call_wow64_funcs[] = {
     &_MTLDevice_sparseTailHolds,
     &_MTLDevice_sparseResidencyInTiles,
     &_MTLDevice_newSpecializedRenderPipeline,
+    &_WMTGetSessionFacts,
 };
 _Static_assert(sizeof(__wine_unix_call_wow64_funcs) / sizeof(__wine_unix_call_wow64_funcs[0]) == WMTUnixCallCount,
                "32-bit bridge call count");

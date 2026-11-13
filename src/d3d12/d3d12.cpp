@@ -23,6 +23,7 @@
 #include "dxgi_interfaces.h"
 #include "dxcore_interface.h"
 #include "log/log.hpp"
+#include "mullion_session.hpp"
 #include "util_md5.hpp"
 #include "DXBCParser/BlobContainer.h"
 #include "util_string.hpp"
@@ -95,6 +96,12 @@ D3D12CreateDevice(IUnknown *pAdapter, D3D_FEATURE_LEVEL MinimumFeatureLevel, REF
   Com<ID3D12Device> device;
   if (FAILED(hr = mullion::CreateD3D12Device(dxgi_adapter_mtl.ptr(), IID_PPV_ARGS(&device))))
     return hr;
+  // what the session runs with, once per process, before a refused feature level can end it
+  auto created = static_cast<mullion::MTLD3D12Device *>(device.ptr());
+  WriteSessionHeader(
+      created->GetMTLDevice().handle, "d3d12", created->GetFeatureLevel(), created->UsesMetal4(),
+      created->GetMetalVersion()
+  );
   D3D12_FEATURE_DATA_FEATURE_LEVELS levels{1, &MinimumFeatureLevel};
   if (FAILED(hr = device->CheckFeatureSupport(D3D12_FEATURE_FEATURE_LEVELS, &levels, sizeof(levels))))
     return hr;
