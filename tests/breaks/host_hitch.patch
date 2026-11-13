@@ -1,0 +1,12 @@
+# MULLION_HITCH_MS's default raised from d9mt's 50 ms to 75: a 70 ms frame is no hitch
+--- a/src/mullion/mullion_hitch.hpp
++++ b/src/mullion/mullion_hitch.hpp
+@@ -26,7 +26,7 @@
+ namespace mullion::hitch {
+ 
+ // MULLION_HITCH_MS's default: d9mt's D9MT_HITCH_MS
+-constexpr unsigned kDefaultMs = 50;
++constexpr unsigned kDefaultMs = 75;
+ // a frame this long has a COMPILE line with no compile work in it (d9mt's)
+ constexpr double kCompileSlowMs = 33.4;
+ 

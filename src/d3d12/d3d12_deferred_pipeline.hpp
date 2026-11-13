@@ -1,5 +1,6 @@
 #pragma once
 
+#include "mullion_hitch.hpp"
 #include "mullion_stats.hpp"
 #include "thread.hpp"
 #include "util_env.hpp"
@@ -19,7 +20,11 @@ namespace mullion {
 // to the first draw of each, with no compile threads (d3d12_deferred_pipelines)
 class DeferredPipeline {
 public:
-  explicit DeferredPipeline(std::function<void()> make) : make_(std::move(make)) {}
+  explicit DeferredPipeline(std::function<void()> make) : make_(std::move(make)) {
+    // MULLION_STATS: COMPILE's queued, until it is made or dropped
+    if (stats::on)
+      hitch::counters.compiling.fetch_add(1, std::memory_order_relaxed);
+  }
 
   // the Metal pipeline is made: made now on this thread when no compile thread has begun it
   void
@@ -39,6 +44,7 @@ public:
             std::memory_order_relaxed);
       }
     } waited;
+    hitch::Scope wait(hitch::PipelineWait);
     std::unique_lock lock(mutex_);
     if (state_ == State::Queued) {
       state_ = State::Running;
@@ -57,6 +63,8 @@ public:
       state_ = State::Done;
       make_ = nullptr;
       done_.store(true, std::memory_order_release);
+      if (stats::on)
+        hitch::counters.compiling.fetch_sub(1, std::memory_order_relaxed);
       return;
     }
     made_.wait(lock, [&] { return state_ == State::Done; });
@@ -112,6 +120,8 @@ private:
       state_ = State::Done;
     }
     done_.store(true, std::memory_order_release);
+    if (stats::on)
+      hitch::counters.compiling.fetch_sub(1, std::memory_order_relaxed);
     made_.notify_all();
   }
 

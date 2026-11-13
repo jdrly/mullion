@@ -542,6 +542,9 @@ public:
   void Name(std::initializer_list<D3D12_SHADER_BYTECODE> Shaders);
 };
 
+// the variant the pipelines this thread makes now are, for their MULLION-PIPELINE line (MTLD3D12PipelineState::Fuller)
+inline thread_local const char *made_variant = nullptr;
+
 class MTLD3D12GraphicsPipelineState : public MTLD3D12PipelineState {
 public:
   WMT::Reference<WMT::RenderPipelineState> pso;
@@ -701,10 +704,11 @@ public:
   Archived(Info info, WMT::Reference<WMT::Error> &error, Make make) {
     std::shared_lock lock(archive_lock);
     auto archives = PipelineArchives();
-    // MULLION_STATS: each pipeline Metal compiles, not found in the archive
+    // MULLION_STATS: each pipeline Metal compiles, not found in the archive, and its time
     if (archives.empty()) {
       if (stats::on)
         stats::counters.pipelines.fetch_add(1, std::memory_order_relaxed);
+      hitch::Timed timed(hitch::counters.pipeline_ns);
       return make(info, error);
     }
     info.binary_archives_for_lookup.set(archives.data());
@@ -717,7 +721,10 @@ public:
     error = {};
     if (stats::on)
       stats::counters.pipelines.fetch_add(1, std::memory_order_relaxed);
-    auto made = make(info, error);
+    auto made = [&] {
+      hitch::Timed timed(hitch::counters.pipeline_ns);
+      return make(info, error);
+    }();
     if (made)
       PipelineArchived();
     return made;
@@ -861,7 +868,13 @@ public:
   virtual std::string PassName(const EncoderData *pass, bool consume = true, obj_handle_t metal = 0) = 0;
   // shared by every queue and swap chain: the first non-test Present accepted by a queue
   std::atomic<std::chrono::steady_clock::time_point> first_present{};
-  virtual void PipelineMade(const std::string &name, const char *kind, std::chrono::steady_clock::time_point start) = 0;
+  // a pipeline made since `start`: the profile's span, the trace's [shader] line, and the MULLION-PIPELINE line when it
+  // took 20 ms or more or ends after first_present. `variant` the draw-time variant it is (topology, targets), else
+  // made_variant's, else base
+  virtual void PipelineMade(
+      const std::string &name, const char *kind, std::chrono::steady_clock::time_point start,
+      const char *variant = nullptr
+  ) = 0;
   virtual void ReportPipelineTotals() = 0;
 
   bool

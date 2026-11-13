@@ -25,6 +25,7 @@ are set.
 | `MULLION_LAYER_WAIT` | `1` | `1`: a present that changes its layer (size, pixel format, scale, colour space) waits for the main thread to set the change, as upstream does. `0`: it goes on, the main thread sets the change later in the order asked (`src/winemetal/unix/layer.c`), and the present draws to the size of the drawable it got. Read once per swap chain. | `1` is upstream's behaviour |
 | `MULLION_SESSION_HEADER` | off (`1` turns it on) | Writes the session header (below) when the first Direct3D 12 device is created, with one read-only bridge call for what the Windows side can't read. Off until the Mac run shows the header right on an M1 and an M5 Max; SWTOR on Mac's DX12 dev build turns it on | No header and no bridge call for it |
 | `MULLION_STATS` | off (`1` turns it on) | Writes a `STATS` line (below) each second of presenting, and counts what it reports. Read once, when `d3d12core.dll` loads. SWTOR on Mac's DX12 dev build turns it on | No line, and nothing counted: each place that counts tests one flag (below) |
+| `MULLION_HITCH_MS` | `50` | With `MULLION_STATS=1`, a frame (Present to Present) this many ms long or longer gets a `HITCH` line, and its `COMPILE` line is at `warn`. Whole ms, 1 to 60000; anything else is 50. Read once, at the first Present counted | Nothing to restore: it only moves a threshold, and `MULLION_STATS` off writes no `HITCH` |
 | `MULLION_GPU_ERROR_DETAIL` | off (`1` turns it on) | Every Metal 3 command buffer asks Metal for each encoder's status (`MTLCommandBufferErrorOptionEncoderExecutionStatus`), and every pass's encoder gets a label, so `MULLION-GPU-ERROR` lists the encoders that didn't complete by name (below). Costs a label string a pass and Metal's per-encoder status; off until its frame time is measured on an M5 Max. `MULLION_D3D12_GPU_ERRORS` and `MULLION_TRACE_GPU=heavy` imply it. The bridge reads it too, for the status | No status asked for and no labels but upstream's: `ClearPass`, `ResolvePass`, and the profile's and the heavy pass trace's |
 
 A test hook, not a switch, and only in a build with the tests (`-Denable_tests=true`): `MULLION_TEST_GPU_ERROR=<code>`
@@ -49,6 +50,10 @@ removed with `DXGI_ERROR_DEVICE_HUNG`. A release build doesn't have it.
 | `STATS t= fps= ms=avg/p99/max slow33= slow50= \| cb= rp= cp= draws= \| sh= pso= wait=n/ms cache=hits/misses \| allocMiB= \| at=` | With `MULLION_STATS=1`, at the Present that ends each second of presenting; none for a second without a Present | `d3d12.log` (`wine.log`), at `warn` | The app's session report, which reads d9mt's line of that name; me |
 | `<NAME> k=v …` | Right after `STATS`, one line for each registered section that has something to say | The same | The tickets that register one |
 | `CACHE rejected=` | The `STATS` section of a window in which Metal refused stored shaders, each then deleted from the cache and converted again | The same | Me: a damaged cache, or one a macOS update made stale |
+| `HITCH frame= dtMs= inDriverMs= (pct%) \| <category>=n/ms … or none \| queue: gpuMs= encodeMs= behind= \| at=` | With `MULLION_STATS=1`, at the Present that ends a frame of `MULLION_HITCH_MS` or longer, before that second's `STATS` line | `d3d12.log` (`wine.log`), at `warn` | The app's session report (its ticket 13 reads `inDriverMs` and `pipelineWait`); me, after a stutter |
+| `COMPILE frame= dtMs= shaders=n/ms psos=n/ms renderWait=n/ms cache=hits/misses queued=` | With `MULLION_STATS=1`, at the Present that ends a frame in which a shader was converted, a Metal pipeline compiled or a draw waited, or that took 33.4 ms or more; right after its `HITCH` line | The same, at `warn` with a `HITCH` line, else `info` | The app's session report, which reads d9mt's line of that name |
+| `MULLION-PIPELINE at= kind= ms= late= variant= name= [[n earlier lines suppressed]]` | Always, for each pipeline made that took 20 ms or more, or was made after the first Present, at most 30 lines in 10 s. Replaces `D3D12 pipeline made: <kind>; <name>; <ms> ms`, which only `MULLION_D3D12_GPU_ERRORS` wrote, and only for late pipelines | `d3d12.log` (`wine.log`), at `info` | Me, after a stutter: which pipeline, and which variant |
+| `MULLION-PIPELINE-TOTALS late= ms= longestMs=` | With `MULLION_D3D12_GPU_ERRORS`, at each queue's release: the pipelines made after the first Present, their total and longest ms. Replaces `D3D12 pipeline totals: …` | The same | Me |
 | `MULLION-GPU-ERROR at= queue= cmdbuf= frame= error=Name(code) [domain=] first= gpu= encoders= [#i state 'label' …] [+k more] \| <Metal's text> [[n earlier lines suppressed]]` | Always, for each command buffer the GPU failed, at most 30 lines in 10 s. Replaces Direct3D 12's `Device error: queue <pointer>, command buffer <n>: …` and its `fails too` lines in the trace log | `d3d12.log`, at `err`, whatever `MULLION_LOG_LEVEL` is short of `none`; the trace log too while one is open | The app's session report; me, after a GPU fault |
 
 ### The session header
@@ -185,6 +190,68 @@ Frame times measured with the line on describe a session with it on: compare lik
   intervals once, reads Metal's allocated size with one bridge call and writes the lines with one log call.
 - Only the first swap chain to present is counted, until it is released; then the next one to present takes over, and
   `t` goes on.
+
+### The HITCH and COMPILE lines
+
+d9mt's `HITCH` and `COMPILE` lines in Mullion, at the Present that ends a frame, from the thread that presents, with
+`MULLION_STATS=1`. A long frame says where its time went: a compile, a wait inside the driver, the GPU, or the game.
+Both come before the `STATS` line of their second, which is where the report looks for them.
+[`tests/swtor/fixtures/session.log`](../../tests/swtor/fixtures/session.log) has three frames of them: a 120 ms frame
+the presenting thread spent outside the driver (the game's), a 45 ms one, and a 70 ms one it spent 40 ms of in the
+driver, waiting for a pipeline. `host_hitch` fails when the frames stop writing them.
+
+`HITCH`:
+
+| Field | What it is |
+|---|---|
+| `frame` | Presents of the counted swap chain, the one that ends the frame included |
+| `dtMs` | The frame: Present to Present, in ms |
+| `inDriverMs` (`pct%`) | The time the presenting thread spent in the driver's calls that can block, during the frame, and its share of `dtMs`. This driver's name for d9mt's `inD9mtMs` |
+| categories | `name=n/ms`, in this order, each with the calls and their ms: `pipelineWait`, a draw or dispatch waiting for its Metal pipeline (compiled on a compile thread, or made now); `shaderConvert`, `CreateGraphicsPipelineState`, `CreateComputePipelineState` and `CreatePipelineState`, and a shader converted for a variant at draw time; `present`, the Present call up to the end of its frame; `fenceWait`, `SetEventOnCompletion` and `SetEventOnMultipleFenceCompletion` without an event. One with nothing in it is left out; `none` when all are. A call inside another counts in the outer one only, so the categories add up to `inDriverMs` |
+| `gpuMs` | GPU time of the command buffers the queues saw complete during the frame, as far as Metal had given it by then: a Metal 3 buffer whose completion was read from its event before Metal completed it counts nothing |
+| `encodeMs` | Time the queues spent on command buffers ended during the frame, from taking a buffer's slot to committing it. A buffer encoded on the parallel encode threads counts from the slot on |
+| `behind` | Command buffers committed and not yet complete at the line, of all queues |
+| `at` | The local time of the line, `HH:MM:SS.mmm` |
+
+`COMPILE`, of all threads, not only the presenting one: `shaders` the shaders converted and the ms of converting each,
+making its Metal function and storing it in the cache; `psos` the Metal pipelines compiled (as `STATS`'s `pso`) and
+their ms; `renderWait` the draws and dispatches that waited for their pipeline and their ms (as `STATS`'s `wait`);
+`cache` the shader cache's hits and misses (as `STATS`'s); `queued` the Metal pipelines left to the compile threads or
+to their first draw and not made yet.
+
+`shaders`, `psos`, `renderWait`, `dtMs` and `inDriverMs` are the report's names and are never renamed. A ticket adds a
+`HITCH` category with an entry in `hitch::Category` and its name ([`mullion_hitch.hpp`](../../src/mullion/mullion_hitch.hpp)),
+and a scope where the thread waits. Both lines stay under 900 bytes for any numbers; `host_hitch` tries the largest.
+
+Cost. Off: each scope tests one flag on entry and a null pointer on exit (one load, one compare and one branch, then
+one test: llvm-mingw `-O2`, `cmpb $1, stats::on; je`); each shader converted, Metal pipeline compiled, command buffer
+committed or completed, and deferred pipeline made tests one flag. On: a scope reads the clock twice when it is the
+thread's outermost one; each Present reads the sixteen counters (relaxed loads; `STATS` read its ten once a second
+before) and takes the presenting thread's frame; each shader converted, pipeline compiled and command buffer committed
+reads the clock twice and adds one atomic; each command buffer completed adds one atomic, and when Metal says it
+completed, two bridge calls for its GPU times (Metal 3) or one (the Metal 4 feedback). A frame with a line reads the
+local time and makes one log call.
+
+### The pipeline line
+
+`MULLION-PIPELINE`, always on: a pipeline that took 20 ms or more to make, or was made after the first Present
+(`late=yes`), which is a stutter the player sees. At most 30 lines in 10 s for the process (the limit
+`MULLION-GPU-ERROR` has); the next line after says how many were left out.
+
+| Field | What it is |
+|---|---|
+| `at` | The local time, `HH:MM:SS.mmm` |
+| `kind` | `graphics`, `mesh` (a mesh shader pipeline), `compute` or `ray` |
+| `ms` | From the start of its creation to the pipeline made: conversion, and Metal's compile when it isn't left to a compile thread |
+| `late` | `yes` when it ended after the first Present any queue accepted, else `no` |
+| `variant` | `base`, the pipeline the program created; `topology`, its variant for a topology with adjacency, made at the first draw of it; `targets`, its variant for the render targets, statistics or depth format a draw has; `sampler-emulation`, the variant a sampler that needs emulation brings at draw time |
+| `name` | Its shaders' SHA-1s, joined with commas: what the trace log and dumped shaders call it. No path |
+
+The trace log's `[shader] <kind> pipeline <name>: <ms> ms` line and the profile's `pipeline` span are as they were,
+written now whether `MULLION_D3D12_GPU_ERRORS` is set or not (they need `MULLION_TRACE_SHADER` and the profile, as
+before), and the first Present is always noted (one load a Present once it is). A mesh shader pipeline's kind there is
+`mesh` now. Ray tracing pipelines are always named, which before only `MULLION_D3D12_GPU_ERRORS` did: one SHA-1 of each
+library added.
 
 ## CI
 

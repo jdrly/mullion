@@ -986,6 +986,8 @@ private:
           ReleaseSemaphore(inflight.semaphore, 1, nullptr);
         inflight = {};
         retired_.Reach(internal_seq);
+        if (stats::on)
+          hitch::counters.completed.fetch_add(1, std::memory_order_relaxed);
         inflight_cmdbuf_count_.fetch_sub(1, std::memory_order_release);
         inflight_cmdbuf_count_.notify_one();
         internal_seq++;
@@ -1016,6 +1018,18 @@ private:
       // read once: Metal may fail the buffer between two reads, and an error neither the report below nor the list of
       // buffers whose status is to come sees would be lost
       const auto status = inflight.cmdbuf.status();
+      // MULLION_STATS: the GPU's time on it, when Metal has given it by now (HITCH's gpuMs)
+      if (stats::on && status == WMTCommandBufferStatusCompleted) {
+        uint64_t began, ended;
+        if constexpr (Metal4) {
+          auto feedback = inflight.cmdbuf.feedback();
+          began = feedback.gpu_start, ended = feedback.gpu_end;
+        } else {
+          began = inflight.cmdbuf.gpuStartTime(), ended = inflight.cmdbuf.gpuEndTime();
+        }
+        if (ended > began)
+          hitch::counters.gpu_ns.fetch_add(ended - began, std::memory_order_relaxed);
+      }
       if (status == WMTCommandBufferStatusError) {
         bool first = SUCCEEDED(device_->RemovedReason());
         ReportGPUError(internal_seq, inflight.cmdbuf, first);
@@ -1157,6 +1171,8 @@ private:
       inflight = {};
       retired_.Reach(internal_seq);
 
+      if (stats::on)
+        hitch::counters.completed.fetch_add(1, std::memory_order_relaxed);
       inflight_cmdbuf_count_.fetch_sub(1, std::memory_order_release);
       inflight_cmdbuf_count_.notify_one();
 
@@ -1169,6 +1185,8 @@ private:
     std::lock_guard<mullion::mutex> lock;
     InflightCommandBuffer *inflight;
     WMT::Reference<WMT::Object> pool;
+    // MULLION_STATS: when the slot was taken (HITCH's encodeMs)
+    uint64_t encoding = 0;
 
     CommittingScope(MTLD3D12CommandQueueImpl *queue) :
         queue(queue), lock(queue->mutex_commit_) {
@@ -1184,6 +1202,8 @@ private:
       queue->inflight_cmdbuf_count_.fetch_add(1, std::memory_order_relaxed);
       auto seq = queue->inflight_cmdbuf_seq_.load(std::memory_order_relaxed);
       inflight = &queue->inflight_cmdbuf_pool_[seq % kCommandQueueSize];
+      if (stats::on)
+        encoding = hitch::SteadyNs();
       pool = WMT::MakeAutoreleasePool();
       if constexpr (Metal4) {
         inflight->cmdbuf = encoded ? std::move(encoded) : queue->NewCommandBuffer(seq);
@@ -1212,9 +1232,10 @@ private:
         }
       if (diag::events)
         inflight->groups.Enter(ended, {});
-      // MULLION_STATS: the buffer and its passes
+      // MULLION_STATS: the buffer and its passes, and the time from its slot to here
       if (stats::on) {
         auto &passes = inflight->encoders;
+        hitch::counters.encode_ns.fetch_add(hitch::SteadyNs() - encoding, std::memory_order_relaxed);
         stats::counters.command_buffers.fetch_add(1, std::memory_order_relaxed);
         stats::counters.render_passes.fetch_add(
             passes[size_t(EncoderType::Render)] + passes[size_t(EncoderType::Clear)], std::memory_order_relaxed);
@@ -2777,10 +2798,10 @@ public:
       std::vector<PresentCopy> copies, SpatialScaler *scaler, WMT::Texture upscaled
   ) override {
     presents.fetch_add(1, std::memory_order_relaxed);
-    if (device_->NamesPasses()) {
-      std::chrono::steady_clock::time_point unset;
+    // a pipeline made after it is late (MULLION-PIPELINE): one load a Present once it is set
+    if (std::chrono::steady_clock::time_point unset;
+        device_->first_present.load(std::memory_order_relaxed) == unset)
       device_->first_present.compare_exchange_strong(unset, std::chrono::steady_clock::now());
-    }
     auto state = presenter->synchronizeLayerProperties();
     if (Holding() &&
         Hold([this, swapchain = Com(swapchain), presenter, backbuffer = Com(backbuffer), view, hLantecyWaitable, after,

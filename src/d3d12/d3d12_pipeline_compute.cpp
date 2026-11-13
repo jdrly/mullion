@@ -51,7 +51,7 @@ public:
 
   HRESULT
   Initialize(const D3D12_COMPUTE_PIPELINE_STATE_DESC *pDesc) {
-    auto start = device_->NamesPasses() ? std::chrono::steady_clock::now() : std::chrono::steady_clock::time_point();
+    auto start = std::chrono::steady_clock::now();
     SM50_SHADER_ROOT_SIGNATURE_DATA rootsig{};
     rootsig.type = SM50_SHADER_ROOT_SIGNATURE;
     rootsig.bytecode_length = static_cast<MTLD3D12RootSignature *>(pDesc->pRootSignature)->GetBlob(&rootsig.bytecode);
@@ -129,8 +129,7 @@ public:
           pso, uint64_t(threadgroup_size.width) * threadgroup_size.height * threadgroup_size.depth, !locks
       );
 
-    if (device_->NamesPasses())
-      device_->PipelineMade(name, "compute", start);
+    device_->PipelineMade(name, "compute", start);
     return S_OK;
   }
 
