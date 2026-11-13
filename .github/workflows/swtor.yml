@@ -191,11 +191,22 @@ jobs:
       - name: Host tests
         if: github.event_name == 'pull_request'
         timeout-minutes: 15
+        env:
+          BASE: ${{ github.event.pull_request.base.sha }}
         run: |
           export PATH="$PATH:$PWD/toolchains/llvm-mingw/bin"
           meson configure build -Denable_tests=true
+          # host_tessellator takes about 200 s here (x86_64 under Rosetta), the other ten about 28 s: it runs
+          # when the pull request changes what it compiles, or when that can't be told
+          skip=()
+          if git fetch -q --depth=1 origin "$BASE" && git diff --quiet "$BASE" HEAD -- \
+            src/airconv/shaders/air_tessellation.metal src/airconv/tessellation_limits.hpp src/airconv/airconv_public.h \
+            libs/DXBCParser tests/tessellator.hpp tests/reference tests/host .github/workflows/swtor.yml; then
+            skip=(--exclude host_tessellator)
+            echo "host_tessellator left out: nothing it compiles changed since $BASE" | tee -a "$GITHUB_STEP_SUMMARY"
+          fi
           # builds only what the host tests need, not the Windows test programs
-          meson test -C build 'host_*' --print-errorlogs
+          meson test -C build 'host_*' "${skip[@]}" --print-errorlogs
 
       - name: The checks fail on a broken copy
         if: github.event_name == 'pull_request'
