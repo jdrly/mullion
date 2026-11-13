@@ -29,6 +29,10 @@ swap chain commits that only added a field to the startup line.
   that are set on a line of their own, so upstream's are visible too. That line keeps the log rules: a value that is
   a path, or could name the player, never prints as it is. The session header's work sets how such a value prints.
 - The registry is header-only, pure C++ without Windows or Metal, and has a host test.
+- A fix needs no switch when it only removes undefined behaviour, or makes code do what its own comment and its
+  callers already say it does, such as a check that an operator precedence mistake makes always false. Its off value
+  would bring the defect back, and nobody would choose that. The pull request says which of the two the fix is, and
+  why. A change that makes code do something it never said it does is a behaviour change, and has a switch.
 
 The worked example is `jdrly/dxmt`'s `src/dxmt/dxmt_gw2_switches.hpp` and its ADR 0004. The implementation here is
 the session header's work (private ticket 03), which also picks the file.
