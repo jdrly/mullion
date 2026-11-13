@@ -35,6 +35,8 @@
 #include "util_hotpatch.h"
 #include "config/config.hpp"
 #include "util_env.hpp"
+#include "util_switch.hpp"
+#include "mullion_stats.hpp"
 #include <bit>
 #include <cfloat>
 #include <limits>
@@ -113,6 +115,15 @@ public:
     }
   };
 };
+
+// MULLION_STATS=1: a STATS line each second of presenting (src/mullion/mullion_stats.hpp, docs/swtor/README.md). Off
+// by default; SWTOR on Mac's DX12 dev build turns it on. Read once: off, a Present pays one load and one branch
+static sw::Switch<bool> kStats{"MULLION_STATS", false, sw::exactlyOne};
+const bool stats::on = kStats();
+
+// the swap chain whose Presents the line counts: the first to present, until it goes. Two swap chains presenting
+// would otherwise both close windows over the same counters
+static std::atomic<const void *> stats_owner{nullptr};
 
 class MTLD3D12SwapChain final : public MTLDXGISubObject<IMTLDXGISwapChain, MTLD3D12Device> {
 
@@ -273,7 +284,33 @@ public:
     if (diag::profile)
       diag::LatencyClosed(present_semaphore_);
     CloseHandle(present_semaphore_);
+    if (stats::on) {
+      const void *self = this;
+      stats_owner.compare_exchange_strong(self, nullptr);
+    }
   };
+
+  // MULLION_STATS: a Present counted, and at the end of a second its lines, from this thread. The window and its
+  // count go on across owners
+  void
+  CountPresent() {
+    const void *none = nullptr;
+    if (stats_owner.load(std::memory_order_relaxed) != this && !stats_owner.compare_exchange_strong(none, this))
+      return;
+    static stats::Window window;
+    auto now = uint64_t(std::chrono::duration_cast<std::chrono::nanoseconds>(
+                            std::chrono::steady_clock::now().time_since_epoch()).count());
+    if (!window.Add(now))
+      return;
+    SYSTEMTIME local;
+    GetLocalTime(&local);
+    std::string text;
+    for (auto &line : window.Take(now, stats::Read(), device_->GetMTLDevice().currentAllocatedSize(),
+                                  {local.wHour, local.wMinute, local.wSecond, local.wMilliseconds}))
+      text += (text.empty() ? "" : "\n") + line;
+    // one message: its lines stay together
+    Logger::warn(text);
+  }
 
   HRESULT
   STDMETHODCALLTYPE
@@ -927,6 +964,8 @@ public:
 
     presentation_count_ += 1;
     current_buffer_ = (current_buffer_ + 1) % backbuffers_.size();
+    if (stats::on)
+      CountPresent();
     if (began) {
       diag::Write(diag::Line("span", "present", "", GetCurrentThreadId(), began, diag::Now() - began));
       diag::LatencyPresented(present_semaphore_);

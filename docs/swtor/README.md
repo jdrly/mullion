@@ -24,6 +24,7 @@ are set.
 |---|---|---|---|
 | `MULLION_LAYER_WAIT` | `1` | `1`: a present that changes its layer (size, pixel format, scale, colour space) waits for the main thread to set the change, as upstream does. `0`: it goes on, the main thread sets the change later in the order asked (`src/winemetal/unix/layer.c`), and the present draws to the size of the drawable it got. Read once per swap chain. | `1` is upstream's behaviour |
 | `MULLION_SESSION_HEADER` | off (`1` turns it on) | Writes the session header (below) when the first Direct3D 12 device is created, with one read-only bridge call for what the Windows side can't read. Off until the Mac run shows the header right on an M1 and an M5 Max; SWTOR on Mac's DX12 dev build turns it on | No header and no bridge call for it |
+| `MULLION_STATS` | off (`1` turns it on) | Writes a `STATS` line (below) each second of presenting, and counts what it reports. Read once, when `d3d12core.dll` loads. SWTOR on Mac's DX12 dev build turns it on | No line, and nothing counted: each place that counts tests one flag (below) |
 
 ## Log lines
 
@@ -37,6 +38,8 @@ are set.
 | `Mullion: layer wait=0` | The first swap chain made with `MULLION_LAYER_WAIT=0`, once per process | `d3d12.log` (Wine's output, `wine.log` in the app), at `info` | Me: the session's presents didn't wait for the main thread |
 | `mullion: layer mainThreadWaitMs=<N> applied=no` | A change to a layer has waited 1 s, 5 s and 30 s without the main thread applying one: once at each, with either value of `MULLION_LAYER_WAIT`. `<N>`: ms since the main thread last applied a change, or was sent one with none waiting | The process's stderr (`wine.log` in the app), not `MULLION_LOG_PATH`: the bridge's watch thread writes it | Me, on a freeze: the main thread stopped answering |
 | `mullion: layer mainThreadWaitMs=<N> applied=yes` | The main thread applies a change after an `applied=no` line | The same, from the main thread | The same |
+| `STATS t= fps= ms=avg/p99/max slow33= slow50= \| cb= rp= cp= draws= \| sh= pso= wait=n/ms cache=hits/misses \| allocMiB= \| at=` | With `MULLION_STATS=1`, at the Present that ends each second of presenting; none for a second without a Present | `d3d12.log` (`wine.log`), at `warn` | The app's session report, which reads d9mt's line of that name; me |
+| `<NAME> k=v …` | Right after `STATS`, one line for each registered section that has something to say. None registers one yet | The same | The tickets that register one |
 
 ### The session header
 
@@ -84,6 +87,53 @@ Rules every fork log line keeps, this header first:
   value and drops a file that still names the user. The header's first word is `session` and a space, never
   `session=`.
 - One write per line, and a header-only formatter with a host test whose control was seen failing.
+
+### The STATS line
+
+d9mt's `STATS` line in Mullion: one second of presenting, at `warn` so it shows at the app's normal level, from the
+thread that presents. The app's session report reads it unchanged: frame rate, frame-time tail, slow frames, compiles,
+compile waits, the memory peak, passes and draws. [`tests/swtor/fixtures/session.log`](../../tests/swtor/fixtures/session.log)
+has sixty seconds of it; `host_stats` fails when the window stops writing them, and the app's report prints frame
+rows from them.
+
+| Field | What it is |
+|---|---|
+| `t` | Seconds since the first Present the line counts |
+| `fps` | Presents of the window per second of it. A window ends at the first Present a second or more after it began, so a gap of 3 s is one window with its own `t` |
+| `ms` | The window's Present-to-Present intervals: average, 99th percentile and longest, in ms. The 99th percentile is d9mt's: the interval at index `n × 0.99` of the window's sorted intervals, so at 100 frames a second or fewer it is the longest |
+| `slow33`, `slow50` | The window's intervals longer than 33.4 ms and 50 ms (d9mt's thresholds) |
+| `cb` | Per Present: command buffers the queues committed |
+| `rp`, `cp` | Per Present: render passes (draw passes and clears) and compute passes in them, as the driver records them (Metal 4 may merge some) |
+| `draws` | Per Present: `DrawInstanced` and `DrawIndexedInstanced` calls of the command lists executed, each time a list runs. `ExecuteIndirect` and mesh draws aren't counted |
+| `sh` | Shaders of graphics and compute pipelines converted in the window (a shader cache miss, or the cache off). Ray tracing libraries aren't counted |
+| `pso` | Metal pipelines compiled in the window: every one with the cache off, else the ones the program's pipeline archive didn't have |
+| `wait` | Draws and dispatches that waited for their pipeline to be made, and the total ms they waited |
+| `cache` | Shader cache lookups that found the shader / that didn't (and converted it). Shaders reused in the process aren't lookups |
+| `allocMiB` | Metal's `currentAllocatedSize` at the line, in MiB |
+| `at` | The local time of the line, `HH:MM:SS.mmm` |
+
+The names up to `slow50`, and `sh`, `pso`, `wait` and `allocMiB`, are the report's and are never renamed. A new group
+goes after a ` | `, before ` | at=`. A module's own numbers don't widen the line: it registers a section
+(`stats::SectionRegistrar` in [`mullion_stats.hpp`](../../src/mullion/mullion_stats.hpp)), and each section with
+something to say prints right after `STATS` as `<NAME> k=v …`, cut below 900 bytes. A section's name must not be one the
+report reads for something else (`PACE`, `HITCH`, `COMPILE`, `RESTORE`, `XFER`, `THREADCPU`, `RAWMOUSE`, `STATECACHE`,
+`DIAG`). The `STATS` line itself stays under 900 bytes for any numbers; `host_stats` tries the largest.
+
+What it doesn't have yet: hidden-window seconds (the report leaves them out using d9mt's presenter visibility lines,
+which Mullion doesn't write, so every second counts as shown), `PACE` and `SCREEN`.
+
+Counting and cost. Counters any thread writes are relaxed atomics, read once a second; nothing takes a lock per frame.
+Frame times measured with the line on describe a session with it on: compare like with like.
+
+- Off (the default): each Present tests one flag (one load and one branch), as do each command buffer committed, each
+  `ExecuteCommandLists`, each Metal pipeline made, each shader converted or found in the cache, and each draw or
+  dispatch that has to wait for its pipeline. Each draw call adds one to its command list's count, with no atomic and
+  no branch.
+- On: each Present also reads the clock and stores its interval; each command buffer adds three relaxed atomics, each
+  `ExecuteCommandLists` one, and each counted event above one or two. Once a second the line sorts the second's
+  intervals once, reads Metal's allocated size with one bridge call and writes the lines with one log call.
+- Only the first swap chain to present is counted, until it is released; then the next one to present takes over, and
+  `t` goes on.
 
 ## CI
 

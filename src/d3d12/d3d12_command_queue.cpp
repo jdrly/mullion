@@ -1121,6 +1121,15 @@ private:
         }
       if (diag::events)
         inflight->groups.Enter(ended, {});
+      // MULLION_STATS: the buffer and its passes
+      if (stats::on) {
+        auto &passes = inflight->encoders;
+        stats::counters.command_buffers.fetch_add(1, std::memory_order_relaxed);
+        stats::counters.render_passes.fetch_add(
+            passes[size_t(EncoderType::Render)] + passes[size_t(EncoderType::Clear)], std::memory_order_relaxed);
+        stats::counters.compute_passes.fetch_add(
+            passes[size_t(EncoderType::Compute)] + passes[size_t(EncoderType::ComputeParts)], std::memory_order_relaxed);
+      }
       if (diag::trace_encoders) {
         auto &counts = inflight->physical;
         uint32_t render = counts[WMTMetal4Render], compute = counts[WMTMetal4Compute], blit = counts[WMTMetal4Blit];
@@ -1511,12 +1520,17 @@ public:
     // what the lists recorded, which is theirs no longer: the application may record them again at once
     std::vector<EncoderData *> recorded(Count);
     std::vector<Com<MTLD3D12CommandAllocator>> allocators(Count);
+    uint64_t draws = 0;
     for (UINT i = 0; i < Count; i++) {
       auto list = static_cast<MTLD3D12GraphicsCommandList *>(ppCommandLists[i]);
       recorded[i] = list->entry;
       if ((allocators[i] = list->recorded_on))
         allocators[i]->pending++;
+      draws += list->draw_calls;
     }
+    // MULLION_STATS: the lists' draws, each time they run
+    if (stats::on)
+      stats::counters.draws.fetch_add(draws, std::memory_order_relaxed);
     Trace("ExecuteCommandLists of ", Count);
     FLIGHT_HEAVY(Sync, "queue %p: ExecuteCommandLists of %llu", this, uint64_t(Count));
     auto work = [this, recorded = std::move(recorded), allocators = std::move(allocators)]() mutable {
