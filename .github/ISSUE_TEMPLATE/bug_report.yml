@@ -1,0 +1,134 @@
+name: Bug report
+description: SWTOR's DirectX 12 client runs or looks wrong with a build of this fork, or one of its changes does
+title: ""
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Write the title as `Context: What goes wrong`, for example
+        `Device removal: The game freezes after a failed command buffer`, and use **the same title for the pull
+        request** that fixes it.
+        Attach `wine.log` from SWTOR on Mac's logs folder. Never attach anything that names a player or an
+        account, and never a dumped game shader. Nothing from this fork goes to upstream's repositories.
+
+  - type: textarea
+    id: context
+    attributes:
+      label: Context
+      description: What happened, where in the game and when, and what you expected instead. Quote the log lines that show it.
+    validations:
+      required: true
+
+  - type: dropdown
+    id: impact
+    attributes:
+      label: How bad is it?
+      options:
+        - The game doesn't start, hangs or crashes
+        - The Mac froze, or logged me out
+        - Wrong graphics
+        - Runs badly (frame rate, stutter, heat)
+        - A switch or log line doesn't work as documented
+        - Cosmetic
+    validations:
+      required: true
+
+  - type: input
+    id: build
+    attributes:
+      label: Fork build
+      description: The commit of the fork build that ran.
+    validations:
+      required: true
+
+  - type: input
+    id: mac
+    attributes:
+      label: Mac
+      description: Chip and macOS version.
+      placeholder: "M1, macOS 27.1"
+    validations:
+      required: true
+
+  - type: textarea
+    id: settings
+    attributes:
+      label: Settings
+      description: Any `MULLION_*` switches, and the game's graphics options that matter.
+    validations:
+      required: true
+
+  - type: dropdown
+    id: regression
+    attributes:
+      label: Does it happen with the fork's switch off, or with upstream's build?
+      options:
+        - I haven't tried
+        - "No: only with the fork's change on"
+        - "Yes: also with the switch off"
+        - "Yes: also with upstream's build"
+    validations:
+      required: true
+
+  - type: textarea
+    id: scope
+    attributes:
+      label: Affected areas
+      description: >-
+        Files, functions, switches or log lines involved, at a named commit, if you know them. **List only what you
+        have verified in the repository.**
+    validations:
+      required: false
+
+  - type: textarea
+    id: changes
+    attributes:
+      label: What's needed
+      description: The fix, as a numbered list of concrete changes with their switch and log line, once it is known.
+    validations:
+      required: false
+
+  - type: textarea
+    id: acceptance
+    attributes:
+      label: Acceptance criteria
+      description: Observable conditions for fixed. Mark the ones that need a Mac.
+      value: |
+        - [ ] The steps under Verification no longer show the bug.
+        - [ ]
+    validations:
+      required: true
+
+  - type: textarea
+    id: uat
+    attributes:
+      label: Verification (UAT)
+      description: >-
+        The steps that show the bug on a Mac, each with the result it should have. They become the check that it is
+        fixed.
+      value: |
+        **Starting point:** (for example: the game closed, the build above installed)
+
+        1. Action.
+           → Expected result (what happens instead today).
+        2.
+           →
+    validations:
+      required: true
+
+  - type: textarea
+    id: notes
+    attributes:
+      label: Implementation notes
+      description: Suspected causes (marked as guesses), traps, related issues.
+    validations:
+      required: false
+
+  - type: textarea
+    id: logs
+    attributes:
+      label: Logs
+      description: Drag `wine.log` here.
+    validations:
+      required: true
