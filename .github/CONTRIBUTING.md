@@ -95,7 +95,8 @@ follow-up.
       nothing. A skipped test never counts as passed.
 - [ ] **Needs the Mac run.** A change on a high path that the runner can't exercise says "Needs the Mac run" at the
       top of the pull request, with the exact commands to run. It claims none of their results, and it merges with
-      its new behaviour off.
+      its new behaviour off. A fix that needs no switch (above) has no off: it merges on, and still says "Needs the
+      Mac run".
 - [ ] **Generated code.** A change to `src/airconv` says whether the shader code it generates changes. Until the
       shader cache's key follows that by itself, a change that does means players reconvert, and the next build's
       notes say so.

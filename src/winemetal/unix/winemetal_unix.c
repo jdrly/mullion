@@ -3226,7 +3226,7 @@ _MetalLayer_setColorSpace(void *obj) {
     return STATUS_SUCCESS;
   CFStringRef current = layer.colorspace ? CGColorSpaceGetName(layer.colorspace) : NULL;
   // a present sets it each frame, and setting it waits for the main thread: an unchanged one is not set. both sides
-  // are made bools: the macro's `x & 0b100` is 0 or 4, and unparenthesized it bound to `==` first
+  // are bools: the macro's `x & 0b100` is 0 or 4, and the layer may hold the 4 it was set to
   if (current && CFEqual(current, name) &&
       (bool)layer.wantsExtendedDynamicRangeContent == (bool)(WMT_COLORSPACE_IS_HDR(colorspace))) {
     params->ret = true;
