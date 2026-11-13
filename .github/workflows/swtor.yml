@@ -167,6 +167,8 @@ jobs:
 
       - name: Stage
         run: |
+          # --strip runs x86_64-w64-mingw32-strip on the DLLs
+          export PATH="$PATH:$PWD/toolchains/llvm-mingw/bin"
           meson install -C build --no-rebuild --quiet
           rm -f install/*/*.dll.a
           {
