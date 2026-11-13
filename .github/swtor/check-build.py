@@ -6,9 +6,11 @@
 # - x86_64-unix/winemetal.so: no LLVM source paths, which only LLVM's assertions write into a binary; built for
 #   macOS 15.0 (minos of LC_BUILD_VERSION); an ad hoc signature that codesign verifies;
 # - the internal Metal library (src/mullion/mullion_command.metal), which every DLL that links it carries as a byte
-#   array: a container version macOS 26 loads, macOS 15.0 as its OS, and every function built as Metal 3.2.
+#   array: a container version macOS 26 loads, macOS 15.0 as its OS, and every function built as Metal 3.2;
+# - with <codegen id> (tools/codegen_id.py on the tree that was built): every DLL that keys the shader cache on it
+#   carries it, and VERSION's codegen line names it, so a build whose converter changed without its id fails.
 #
-#   python3 -I check-build.py <dir>
+#   python3 -I check-build.py <dir> [<codegen id>]
 import os
 import re
 import struct
@@ -28,6 +30,8 @@ FILES = sorted([
 ])
 SO = 'x86_64-unix/winemetal.so'
 MINOS = (15, 0, 0)
+# src/mullion/mullion_shader_cache.cpp, which keys the shader cache on MULLION_CODEGEN_ID, links into these
+CODEGEN_DLLS = ['x86_64-windows/d3d11.dll', 'x86_64-windows/d3d12core.dll']
 # a container tagged 2.9 gave a black screen on every macOS 26 Mac (d9mt #110); 2.8 is the most macOS 26 reads
 CONTAINER_MAX = (2, 8)
 # src/mullion/meson.build: -std=metal3.2, which is AIR 2.7
@@ -144,9 +148,24 @@ def check_metallib(root):
     report(seen > 0, f'internal metallib found in {seen} DLLs')
 
 
+def check_codegen(root, codegen):
+    if not re.fullmatch('[0-9a-f]{64}', codegen):
+        report(False, f'codegen id {codegen!r}: not 64 hex digits')
+        return
+    for dll in CODEGEN_DLLS:
+        path = os.path.join(root, dll)
+        if os.path.isfile(path):
+            report(codegen.encode() in open(path, 'rb').read(), f'{dll}: carries the codegen id {codegen[:12]}')
+    path = os.path.join(root, 'VERSION')
+    lines = open(path).read().splitlines() if os.path.isfile(path) else []
+    report(any(line.startswith(f'codegen: {codegen[:12]} ') for line in lines), f'VERSION: codegen {codegen[:12]}')
+
+
 root = sys.argv[1]
 check_files(root)
 if os.path.isfile(os.path.join(root, SO)):
     check_so(root)
 check_metallib(root)
+if len(sys.argv) > 2:
+    check_codegen(root, sys.argv[2])
 sys.exit(1 if failed else 0)

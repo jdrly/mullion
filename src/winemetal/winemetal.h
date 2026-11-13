@@ -2623,7 +2623,7 @@ enum { WMTUnixSampledEncoder = 167, WMTUnixDiagWrite, WMTUnixDispatchDataBytes, 
        WMTUnixComputeStaticThreadgroupMemory, WMTUnixDeviceMaxThreadgroupMemory,
        WMTUnixDeviceMaxThreadsPerThreadgroup, WMTUnixDeviceReport, WMTUnixTextureSparseTailHolds,
        WMTUnixDeviceSparseResidencyInTiles, WMTUnixDeviceNewSpecializedRenderPipeline,
-       WMTUnixGetSessionFacts, WMTUnixGetGPUError,
+       WMTUnixGetSessionFacts, WMTUnixGetGPUError, WMTUnixCachePrepare,
        WMTUnixCallCount };
 WINEMETAL_API obj_handle_t MTLCommandBuffer_sampledCommandEncoder(obj_handle_t cmdbuf, enum WMTSampledEncoder type,
                                                                   const struct WMTSampleBufferAttachmentInfo *samples,
@@ -2663,6 +2663,7 @@ struct WMTSessionFacts {
 STATIC_ASSERT(sizeof(struct WMTSessionFacts) == 64);
 // `cache_path` is the shader cache's file as ShaderCache opens it (relative to the user's cache directory, or
 // absolute); NULL for none
+// `device` may be 0: gpu_family is then 0
 WINEMETAL_API void WMTGetSessionFacts(obj_handle_t device, const char *cache_path, struct WMTSessionFacts *facts);
 // a command buffer's error (MTLCommandBuffer_error, or Metal 4's feedback), as MULLION-GPU-ERROR has it
 // (src/mullion/mullion_gpu_error.hpp). it only reads. every string is cut to its array and ends with a 0
@@ -2684,6 +2685,22 @@ struct WMTGPUError {
 };
 STATIC_ASSERT(sizeof(struct WMTGPUError) == 816);
 WINEMETAL_API void WMTGetGPUError(obj_handle_t error, struct WMTGPUError *info);
+// what WMTCachePrepare found and did; -1 where it couldn't tell
+struct WMTCachePrepared {
+  int64_t entries;         // rows of the table, counted under the writers' lock
+  int64_t bytes;           // the file's size, after the drop
+  uint64_t dropped_tables; // the other cache_* tables dropped
+  uint64_t dropped_bytes;  // the pages they took, which the file keeps for new rows
+  uint64_t removed_shards; // the files removed for `shard_family` but not `shard_keep`
+  uint64_t removed_bytes;
+};
+STATIC_ASSERT(sizeof(struct WMTCachePrepared) == 48);
+// opens the shader cache's file `path` (as CacheWriter_alloc_init takes it) under the writers' lock, makes table
+// cache_<version as 16 hex digits>, drops every other cache_* table and counts its rows; then removes the files of the
+// same directory whose names start with `shard_family` but not with `shard_keep` and end in .metallib: the pipeline
+// archives of other ids
+WINEMETAL_API void WMTCachePrepare(const char *path, uint64_t version, const char *shard_family,
+                                   const char *shard_keep, struct WMTCachePrepared *prepared);
 WINEMETAL_API void MTLCommandBuffer_pushDebugGroup(obj_handle_t cmdbuf, obj_handle_t name);
 WINEMETAL_API void MTLCommandBuffer_popDebugGroup(obj_handle_t cmdbuf);
 WINEMETAL_API uint64_t DispatchData_getBytes(obj_handle_t data, void *buffer, uint64_t size);

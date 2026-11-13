@@ -7,6 +7,18 @@ test('host_format', executable('host_format', 'format.cpp', include_directories 
 # the session header's lines against the fixture SWTOR on Mac's report tests copy, and the switch registry
 test('host_session', executable('host_session', 'session.cpp', override_options : ['cpp_std=c++20'], native : true),
      args : files('../swtor/fixtures/session.log'))
+# the shader cache's key and tag follow its identity, the codegen id and the macOS build (src/mullion/mullion_cache_identity.hpp)
+test('host_cache_identity', executable('host_cache_identity',
+                                       ['cache_identity.cpp', '../../src/util/sha1/sha1_util.cpp', '../../src/util/sha1/sha1.c'],
+                                       include_directories : include_directories('../../src/util'),
+                                       override_options : ['cpp_std=c++20'], native : true))
+# what a shader cache drops of other identities when it opens, and its count under the writers' lock
+# (src/winemetal/unix/cache_prepare.h). linked as C++: the root meson.build gives native links their -arch for C++ only
+test('host_cache_prepare', executable('host_cache_prepare', 'cache_prepare.c', link_args : ['-lsqlite3'],
+                                      link_language : 'cpp', native : true))
+# the converter's codegen id (tools/codegen_id.py)
+test('host_codegen_id', find_program('python3', native : true),
+     args : files('codegen_id.py') + [meson.project_source_root() / 'tools/codegen_id.py'])
 # the bridge's layer setters with the main thread held (MULLION_LAYER_WAIT): a layer without a device, no Wine
 test('host_layer_apply', executable('host_layer_apply', ['layer_apply.c', '../../src/winemetal/unix/layer.c'],
                                     include_directories : include_directories('../../src/winemetal/unix'),

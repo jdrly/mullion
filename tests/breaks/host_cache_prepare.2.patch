@@ -1,0 +1,12 @@
+# this id's own archives are removed with the others
+--- a/src/winemetal/unix/cache_prepare.h
++++ b/src/winemetal/unix/cache_prepare.h
+@@ -85,7 +85,7 @@
+   for (struct dirent *entry; (entry = readdir(dir));) {
+     const char *name = entry->d_name;
+     size_t length = strlen(name);
+-    if (strncmp(name, shard_family, family) || !strncmp(name, shard_keep, keep) || length < suffix ||
++    if (strncmp(name, shard_family, family) || length < suffix ||
+         strcmp(name + length - suffix, ".metallib"))
+       continue;
+     char *file = sqlite3_mprintf("%s/%s", directory, name);

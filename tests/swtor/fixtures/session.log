@@ -1,8 +1,8 @@
-info:  Mullion: session v0.5-alpha.3-118-g1a2b3c4 (jdrly/mullion swtor-on-mac) d3d12 fl=12_1 metal4=on shaderMetal=400 airconv=103 codegen=n/a
+info:  Mullion: session v0.5-alpha.3-118-g1a2b3c4 (jdrly/mullion swtor-on-mac) d3d12 fl=12_1 metal4=on shaderMetal=400 airconv=103 codegen=3f2a9c01d4e5
 info:  Mullion: mac macOS=26.1 build=25B78 gpu="Apple M5 Max" family=Apple10 masked=no ram=131072 workingSet=110592 arch=x86_64-rosetta supportsPlacementSparse=1
 info:  Mullion: switches MULLION_SAMPLE_LIMIT=4096 MULLION_SAMPLE_SWITCH=on
 info:  Mullion: env DXMT_LOG_LEVEL=info MTL_HUD_ENABLED=1 MULLION_LOG_PATH=(a path) MULLION_SHADER_FLAGS=0x10
-info:  Mullion: cache shaders=mullion/swtor_RC2.exe/shaders_400.db entries=n/a sizeMiB=700
+info:  Mullion: cache shaders=mullion/swtor_RC2.exe/shaders_400.db entries=48211 sizeMiB=700
 warn:  STATS t=1 fps=25.0 ms=40.0/40.0/40.0 slow33=25 slow50=0 | cb=3.4 rp=12.0 cp=2.0 draws=850 | sh=120 pso=44 wait=5/71.5ms cache=80/120 | allocMiB=1820 | at=20:00:05.001
 warn:  STATS t=2 fps=25.0 ms=40.0/40.0/40.0 slow33=25 slow50=0 | cb=3.4 rp=12.1 cp=2.0 draws=851 | sh=100 pso=38 wait=4/57.2ms cache=70/100 | allocMiB=1840 | at=20:00:06.002
 warn:  STATS t=3 fps=25.0 ms=40.0/40.0/40.0 slow33=25 slow50=0 | cb=3.4 rp=12.0 cp=2.0 draws=851 | sh=80 pso=32 wait=3/42.9ms cache=60/80 | allocMiB=1860 | at=20:00:07.003

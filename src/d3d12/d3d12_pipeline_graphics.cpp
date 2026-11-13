@@ -446,6 +446,12 @@ PipelineKey(const D3D12_GRAPHICS_PIPELINE_STATE_DESC &Desc, Sha1Digest &Key, boo
   return GetPipelineKey(Desc, Key, DepthBounds, AS, MS, DepthStencil2);
 }
 
+// CACHE after STATS (docs/swtor/README.md): the stored shaders Metal refused in the window
+static stats::SectionRegistrar kCacheSection{"CACHE", [](double, uint64_t) {
+  static uint64_t last = 0;
+  return stats::CacheSection(stats::Read().cache_rejected, last);
+}};
+
 WMT::Reference<WMT::Function>
 CompileFunction(
     MTLD3D12Device *device, MTLD3D12PipelineState *pipeline, std::span<const D3D12_SHADER_BYTECODE> shaders,
@@ -461,7 +467,8 @@ CompileFunction(
       h.update(data, size);
   };
   bytes("d3d12", strlen("d3d12"));
-  hash(AIRCONV_VERSION, device->GetMTLDevice().registryID(), uint64_t(shaders.size()));
+  cache::Hash(h, ShaderCacheIdentity());
+  hash(device->GetMTLDevice().registryID(), uint64_t(shaders.size()));
   bytes(name, strlen(name));
   for (auto shader : shaders) {
     h.update(uint64_t(shader.BytecodeLength));
@@ -602,6 +609,8 @@ CompileFunction(
           stats::counters.cache_hits.fetch_add(1, std::memory_order_relaxed);
         return function;
       }
+      if (stats::on)
+        stats::counters.cache_rejected.fetch_add(1, std::memory_order_relaxed);
       if (auto writer = cache.getWriter())
         writer->set(key, {});
     }

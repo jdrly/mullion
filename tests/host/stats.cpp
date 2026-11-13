@@ -158,10 +158,18 @@ main(int argc, char **argv) {
           "a long section is cut below 900 bytes: " + std::to_string(lines[2].size()));
   }
 
+  // the CACHE section: the stored shaders Metal refused in the window, nothing for a window without one
+  {
+    uint64_t last = 0;
+    equal(stats::CacheSection(3, last), "rejected=3");
+    check(stats::CacheSection(3, last).empty(), "none in the next window: nothing");
+    equal(stats::CacheSection(5, last), "rejected=2");
+  }
+
   // no line reaches 900 bytes, whatever the numbers
   {
     constexpr uint64_t most = std::numeric_limits<uint64_t>::max();
-    stats::Totals full{most, most, most, most, most, most, most, most, most, most};
+    stats::Totals full{most, most, most, most, most, most, most, most, most, most, most};
     for (uint64_t interval : {uint64_t(1000), 1000 * kMs, most / 4}) {
       stats::Window window;
       uint64_t now = 0;

@@ -11,6 +11,10 @@
 //   Mullion: env <every MULLION_*, DXMT_*, MTL_* variable set, NAME=value, by name>     or "none"
 //   Mullion: cache shaders= entries= sizeMiB=
 //
+// and, apart from the header, each time a process opens a shader cache (CacheOpenLines):
+//
+//   Mullion: cacheOpen shaders= codegen= build= entries= sizeMiB= droppedTables= droppedShards= droppedMiB=
+//
 // A line that would reach kLineLimit bytes goes on as `Mullion: <line>+ ...` from the field that doesn't fit, so
 // Wine (1018 bytes) never splits one. No value names a host path or the player: a value from outside Mullion goes
 // through Value(). "n/a" is a value that couldn't be read.
@@ -105,7 +109,7 @@ struct Header {
   std::string metal4;                 // on, off (MULLION_D3D12_METAL4=0) or unsupported (no Metal 4 family)
   uint32_t shader_metal = 0;          // the Metal language version shaders are converted for: 310, 320, 400
   uint32_t airconv = 0;               // AIRCONV_VERSION
-  std::optional<std::string> codegen; // the converter's codegen id (private ticket 18)
+  std::optional<std::string> codegen; // the converter's codegen id, MULLION_CODEGEN_ID: its first 12 digits print
   uint64_t macos[3] = {};             // major, minor, patch
   std::optional<std::string> build;   // the macOS build, kern.osversion
   std::string gpu;                    // the Metal device's name
@@ -120,7 +124,7 @@ struct Header {
   std::optional<std::string> cache_directory; // the shader cache's, relative to the user's cache directory or
                                               // absolute; nullopt with the cache off (MULLION_SHADER_CACHE=0)
   std::string cache_file;                     // its file in the directory
-  std::optional<int64_t> cache_entries;       // its rows: n/a until private ticket 18 counts them without writing
+  std::optional<int64_t> cache_entries;       // its table's rows when the cache opened (CacheOpen)
   std::optional<int64_t> cache_bytes;         // its file's size, 0 without it
 };
 
@@ -157,6 +161,27 @@ UserNames(const std::vector<std::pair<std::string, std::string>> &env) {
   return names;
 }
 
+// the shader cache's file as a line prints it: `off` without a directory (MULLION_SHADER_CACHE=0); a relative directory
+// is below the user's cache directory, which names the user, and prints without it; an absolute one doesn't print
+inline std::string
+CachePath(const std::optional<std::string> &directory, const std::string &file, const std::vector<std::string> &names) {
+  if (!directory)
+    return "off";
+  std::string shaders = directory->starts_with("/") ? "(a path)/" : "";
+  if (shaders.empty())
+    for (char c : *directory)
+      if (c == '/' || Kept(c))
+        shaders += c;
+  shaders += Value(file, names);
+  return Names(shaders, names) ? "(a name)" : shaders;
+}
+
+// the first 12 digits of a codegen id
+inline std::string
+Codegen(const std::string &id, const std::vector<std::string> &names) {
+  return Value(id.substr(0, 12), names);
+}
+
 inline std::vector<std::string>
 Format(const Header &header) {
   auto names = UserNames(header.env);
@@ -183,20 +208,6 @@ Format(const Header &header) {
       env.push_back({name.substr(0, kValueLimit), text(value)});
   std::sort(env.begin(), env.end(), [](auto &a, auto &b) { return a.name < b.name; });
 
-  // a relative directory is below the user's cache directory, which names the user, and prints without it; an
-  // absolute one doesn't print
-  std::string shaders = "off";
-  if (auto &directory = header.cache_directory) {
-    shaders = directory->starts_with("/") ? "(a path)/" : "";
-    if (shaders.empty())
-      for (char c : *directory)
-        if (c == '/' || Kept(c))
-          shaders += c;
-    shaders += text(header.cache_file);
-    if (Names(shaders, names))
-      shaders = "(a name)";
-  }
-
   std::vector<std::string> lines;
   auto add = [&](std::string_view head, const std::vector<Field> &fields, std::string_view empty = {}) {
     auto more = Lines(head, fields, empty);
@@ -209,7 +220,7 @@ Format(const Header &header) {
                   {"metal4", header.metal4},
                   {"shaderMetal", number(header.shader_metal)},
                   {"airconv", number(header.airconv)},
-                  {"codegen", known(header.codegen, text)}});
+                  {"codegen", known(header.codegen, [&](auto &id) { return Codegen(id, names); })}});
   add("mac", {{"macOS", macos},
               {"build", known(header.build, text)},
               {"gpu", "\"" + gpu + "\""},
@@ -221,15 +232,45 @@ Format(const Header &header) {
               {"supportsPlacementSparse", header.placement_sparse ? "1" : "0"}});
   add("switches", switches, "none");
   add("env", env, "none");
-  add("cache", {{"shaders", shaders},
+  add("cache", {{"shaders", CachePath(header.cache_directory, header.cache_file, names)},
                 {"entries", known(header.cache_entries, number)},
                 {"sizeMiB", known(header.cache_bytes, mib)}});
   return lines;
 }
 
+// what a shader cache found when it opened (ShaderCache, WMTCachePrepare)
+struct CacheOpen {
+  std::string directory, file;           // as the header's cache_directory and cache_file
+  std::string codegen, build;            // its identity (mullion_cache_identity.hpp)
+  std::optional<int64_t> entries, bytes; // its table's rows, its file's size
+  uint64_t dropped_tables = 0;           // other ids' tables
+  uint64_t dropped_shards = 0;           // other ids' pipeline archives
+  uint64_t dropped_bytes = 0;            // what both took
+  std::vector<std::pair<std::string, std::string>> env; // the process's environment, for the names that mustn't print
+};
+
+inline std::vector<std::string>
+CacheOpenLines(const CacheOpen &open) {
+  auto names = UserNames(open.env);
+  auto known = [](const auto &value, auto text) { return value ? text(*value) : std::string("n/a"); };
+  auto number = [](auto value) { return std::to_string(value); };
+  auto mib = [](uint64_t bytes) { return std::to_string(bytes >> 20); };
+  return Lines("cacheOpen", {{"shaders", CachePath(open.directory, open.file, names)},
+                             {"codegen", Codegen(open.codegen, names)},
+                             {"build", open.build.empty() ? "n/a" : Value(open.build, names)},
+                             {"entries", known(open.entries, number)},
+                             {"sizeMiB", known(open.bytes, mib)},
+                             {"droppedTables", number(open.dropped_tables)},
+                             {"droppedShards", number(open.dropped_shards)},
+                             {"droppedMiB", mib(open.dropped_bytes)}});
+}
+
 } // namespace mullion::session
 
 namespace mullion {
+
+// the process's environment, as GetEnvironmentStringsW has it
+std::vector<std::pair<std::string, std::string>> ProcessEnvironment();
 
 // mullion_session.cpp: the header for the process's first device (a WMT::Device's handle; `metal4`: whether it uses
 // Metal 4, `shader_metal` the Metal version its shaders are converted for), written at info once per process. Nothing

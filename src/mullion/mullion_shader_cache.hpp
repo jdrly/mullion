@@ -2,13 +2,13 @@
 #include "Metal.hpp"
 #include "thread.hpp"
 #include "airconv_public.h"
+#include "mullion_cache_identity.hpp"
 #include "mullion_format.hpp"
+#include <optional>
 #include <span>
 #include <string>
 
 namespace mullion {
-
-constexpr int kMullionShaderCacheVersion = AIRCONV_VERSION;
 
 inline auto
 PixelShaderOutputFormats(
@@ -43,6 +43,12 @@ PixelShaderOutputFormats(
 // where a program's caches are, in the user's cache directory when relative (the bridge's resolve_cache_dir): none
 // with MULLION_SHADER_CACHE=0
 std::string ShaderCacheDirectory();
+
+// the cache's identity (mullion_cache_identity.hpp): MULLION_CODEGEN_ID and the macOS build, read once per process
+const cache::Identity &ShaderCacheIdentity();
+uint64_t ShaderCacheTag();
+// the start of the names of the pipeline archives of this Metal version and this identity, in ShaderCacheDirectory
+std::string ShaderCacheArchivePrefix(uint32_t metal_version);
 
 class ShaderCache {
 public:
@@ -95,7 +101,14 @@ public:
   ShaderCache(WMTMetalVersion metal_version);
   ShaderCache(const ShaderCache &copy) = delete;
 
+  // its table's rows when it opened, counted under the writers' lock
+  std::optional<int64_t>
+  entries() const {
+    return entries_;
+  }
+
 private:
+  std::optional<int64_t> entries_;
   WMT::Reference<WMT::CacheWriter> scache_writer_;
   mullion::mutex scache_writer_mutex_;
 

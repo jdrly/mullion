@@ -22,6 +22,7 @@
 #include "d3d12_pipeline.hpp"
 #include "DXBCParser/d3d12tokenizedprogramformat.hpp"
 #include "d3d12_deferred_pipeline.hpp"
+#include "mullion_shader_cache.hpp"
 #include "log/log.hpp"
 #include <array>
 #include <limits>
@@ -281,7 +282,8 @@ public:
     hash.update(data + kHeaderSize, size - kHeaderSize);
     if (hash.final() != checksum)
       return FAIL(E_INVALIDARG);
-    if (version != AIRCONV_VERSION)
+    // another codegen id's, or another macOS build's: its shaders' keys never match
+    if (version != uint32_t(ShaderCacheTag()))
       return D3D12_ERROR_DRIVER_VERSION_MISMATCH;
     if (adapter != device_->GetMTLDevice().registryID())
       return D3D12_ERROR_ADAPTER_NOT_FOUND;
@@ -409,7 +411,7 @@ public:
       memcpy(data_ptr + offset, value, bytes);
       offset += bytes;
     };
-    uint32_t version = AIRCONV_VERSION;
+    uint32_t version = uint32_t(ShaderCacheTag());
     uint64_t adapter = device_->GetMTLDevice().registryID();
     write(kMagic, sizeof(kMagic)), write(&version, sizeof(version)), write(&adapter, sizeof(adapter));
     offset = kHeaderSize;

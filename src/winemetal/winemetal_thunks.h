@@ -597,6 +597,12 @@ struct unixcall_wmtgpu_error {
   struct WMTMemoryPointer info;
 };
 
+struct unixcall_cache_prepare {
+  struct WMTConstMemoryPointer path, shard_family, shard_keep;
+  uint64_t version;
+  struct WMTMemoryPointer prepared;
+};
+
 struct unixcall_wmtdiag_write {
   struct WMTConstMemoryPointer directory, lines;
   uint64_t length;

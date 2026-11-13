@@ -97,9 +97,9 @@ follow-up.
       top of the pull request, with the exact commands to run. It claims none of their results, and it merges with
       its new behaviour off. A fix that needs no switch (above) has no off: it merges on, and still says "Needs the
       Mac run".
-- [ ] **Generated code.** A change to `src/airconv` says whether the shader code it generates changes. Until the
-      shader cache's key follows that by itself, a change that does means players reconvert, and the next build's
-      notes say so.
+- [ ] **Generated code.** A change to `src/airconv` says whether the shader code it generates changes. Any change
+      to the converter's inputs gives a new codegen id, so players convert every shader again once, and the next
+      build's notes say so ([caches.md](../docs/swtor/caches.md)).
 - [ ] **Reviewed.** The independent review says `APPROVE` on the head commit with no open `Blocker` or `High`, and its
       verdict is in the pull request.
 

@@ -187,7 +187,10 @@ jobs:
             # v0.5-alpha.3-<n>-g<hash>: upstream's last v tag. swtor-builds is a lightweight tag, which it skips
             git -c diff.ignoreSubmodules=all describe --always --dirty
             echo "commit: $COMMIT"
-            echo "codegen: airconv $(sed -n 's/^#define AIRCONV_VERSION //p' src/airconv/airconv_public.h)"
+            # the first 12 digits of the converter's codegen id, which keys the shader cache, as the cacheOpen line and
+            # the session header print it; then the hand-raised number upstream keeps
+            echo "codegen: $(sed -n 's/^#define MULLION_CODEGEN_ID "\([0-9a-f]\{12\}\).*/\1/p' build/mullion_codegen.h)" \
+              "(airconv $(sed -n 's/^#define AIRCONV_VERSION //p' src/airconv/airconv_public.h))"
             echo "toolchain: $(xcodebuild -version | paste -sd ' ' -), macOS SDK $(xcrun -sdk macosx --show-sdk-version)," \
               "$(xcrun -sdk macosx metal --version | sed -n 1p), LLVM $LLVM_VERSION without assertions," \
               "llvm-mingw $LLVM_MINGW_VERSION ($(x86_64-w64-mingw32-gcc --version | sed -n 1p))"
@@ -211,16 +214,18 @@ jobs:
           echo "date=$(git log -1 --format=%cI)" >>"$GITHUB_OUTPUT"
 
       # .github/swtor/check-build.py: the file list, winemetal.so (no LLVM assertion text, minos 15.0, an ad hoc
-      # signature) and the internal Metal library's versions. a push run checks its own build: that is what ships
+      # signature), the internal Metal library's versions, and the converter's codegen id, computed again from the
+      # checkout, in the DLLs and VERSION. a push run checks its own build: that is what ships
       - name: Check the build
         run: |
+          codegen=$(python3 -I -B tools/codegen_id.py --llvm toolchains/llvm .)
           status=0
-          python3 -I .github/swtor/check-build.py install >"$RUNNER_TEMP/check.txt" || status=$?
+          python3 -I .github/swtor/check-build.py install "$codegen" >"$RUNNER_TEMP/check.txt" || status=$?
           cat "$RUNNER_TEMP/check.txt"
           { echo '### The build'; echo '```'; cat "$RUNNER_TEMP/check.txt"; echo '```'; } >>"$GITHUB_STEP_SUMMARY"
           exit "$status"
 
-      # tests/host/meson.build: fourteen tests, each with meson's 30 s timeout but host_tessellator's
+      # tests/host/meson.build: nineteen tests, each with meson's 30 s timeout but host_tessellator's
       # 300 s; none builds the tree or waits on a GPU
       - name: Host tests
         if: github.event_name == 'pull_request'
@@ -328,7 +333,22 @@ jobs:
           [[ -z $(git status --porcelain -- src/winemetal) ]]
           grep -qF 'failed: returned >= 0 && returned < 100' "$RUNNER_TEMP/layer.txt"
           grep -qF 'failed: CGSizeEqualToSize(layer.drawableSize, CGSizeMake(800, 600))' "$RUNNER_TEMP/layer.2.txt"
-          echo "all five checks failed on their break"
+          # a converter change the build's codegen id doesn't follow: this build against the id of the tree with one
+          # comment more in src/airconv. both DLLs and VERSION have to fail
+          cv=src/airconv/dxbc_converter.cpp
+          echo '// control' >>"$cv"
+          changed=$(python3 -I -B tools/codegen_id.py --llvm toolchains/llvm .)
+          git checkout -- "$cv"
+          status=0
+          python3 -I .github/swtor/check-build.py install "$changed" >"$RUNNER_TEMP/codegen.txt" || status=$?
+          cat "$RUNNER_TEMP/codegen.txt"
+          [[ $status == 1 ]]
+          [[ $(grep -c '^FAIL' "$RUNNER_TEMP/codegen.txt") == 3 ]]
+          for f in d3d11.dll d3d12core.dll; do
+            grep -qxF "FAIL  x86_64-windows/$f: carries the codegen id ${changed:0:12}" "$RUNNER_TEMP/codegen.txt"
+          done
+          grep -qxF "FAIL  VERSION: codegen ${changed:0:12}" "$RUNNER_TEMP/codegen.txt"
+          echo "all six checks failed on their break"
 
       # last, so that a run that only adds a warning still shows everything above
       - name: No new warnings

@@ -3,6 +3,7 @@
 #include <sys/stat.h>
 #define WINEMETAL_API
 #include "../winemetal_thunks.h"
+#include "cache_prepare.h"
 
 @interface CacheReader : NSObject
 - (instancetype)initWithPath:(NSString *)path version:(uint64_t)version;
@@ -49,7 +50,7 @@ resolve_cache_dir(NSString *path, bool path_is_file) {
       NSLog(@"[CacheReader] Failed to resolve cache path");
       return nil;
     }
-    NSString *tableName = [NSString stringWithFormat:@"cache_%llu", version];
+    NSString *tableName = [NSString stringWithFormat:@"cache_%016llx", version];
     if (sqlite3_open_v2([dbPath fileSystemRepresentation], &_db, SQLITE_OPEN_READONLY | SQLITE_OPEN_NOMUTEX, NULL) !=
         SQLITE_OK) {
       NSLog(@"[CacheReader] Failed to open DB: %s", sqlite3_errmsg(_db));
@@ -138,7 +139,7 @@ resolve_cache_dir(NSString *path, bool path_is_file) {
     sqlite3_exec(_db, "PRAGMA journal_mode=WAL;", NULL, NULL, NULL);
     sqlite3_exec(_db, "PRAGMA synchronous=NORMAL;", NULL, NULL, NULL);
 
-    NSString *tableName = [NSString stringWithFormat:@"cache_%llu", version];
+    NSString *tableName = [NSString stringWithFormat:@"cache_%016llx", version];
     NSString *sqlCreate = [NSString stringWithFormat:@"CREATE TABLE IF NOT EXISTS %@ ("
                                                       "key BLOB PRIMARY KEY, "
                                                       "value BLOB NOT NULL);",
@@ -275,6 +276,18 @@ cache_file_size(const char *path) {
   if (stat(file.fileSystemRepresentation, &st))
     return errno == ENOENT ? 0 : -1;
   return st.st_size;
+}
+
+int
+_WMTCachePrepare(void *obj) {
+  struct unixcall_cache_prepare *params = obj;
+  @autoreleasepool {
+    NSString *db_path = resolve_cache_dir([NSString stringWithUTF8String:params->path.ptr], true);
+    if (db_path)
+      cache_prepare(db_path.fileSystemRepresentation, params->version, params->shard_family.ptr,
+                    params->shard_keep.ptr, params->prepared.ptr);
+  }
+  return 0;
 }
 
 #ifndef MULLION_NO_PRIVATE_API

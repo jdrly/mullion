@@ -152,6 +152,19 @@ case $v in *-dirty) [ -n "$2" ] || { echo "$v"; exit; }
   output: 'version.h',
 )
 
+# the converter's codegen id, which keys the shader cache (tools/codegen_id.py, docs/swtor/caches.md): computed on every
+# build from the converter's sources, its LLVM and the Metal compiler, and rewritten only when it changes. the build's
+# output prints it
+codegen_llvm_path = get_option('native_llvm_path')
+mullion_codegen = custom_target('mullion_codegen',
+  output: 'mullion_codegen.h',
+  command: [find_program('python3', native : true), '-I', files('tools/codegen_id.py'), '--header', '@OUTPUT@',
+            '--llvm', codegen_llvm_path.startswith('/') ? codegen_llvm_path
+                                                        : meson.project_source_root() / codegen_llvm_path,
+            meson.project_source_root()],
+  build_always_stale: true,
+)
+
 if mullion_crossbuild
   wine_builtin_dll = get_option('wine_builtin_dll')
 

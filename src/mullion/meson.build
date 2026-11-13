@@ -42,7 +42,7 @@ mullion_shaders_lib = metallib_generator.process(mullion_shaders_ir)
 
 mullion_shaders_header = hexdump_generator.process(mullion_shaders_lib)
 
-mullion_lib = static_library('mullion', mullion_src, mullion_shaders_header, mullion_version,
+mullion_lib = static_library('mullion', mullion_src, mullion_shaders_header, mullion_version, mullion_codegen,
   dependencies        : [ util_dep, airconv_forward_dep, winemetal_dep ],
   include_directories : [ mullion_include_path ],
 )

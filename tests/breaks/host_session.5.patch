@@ -1,0 +1,13 @@
+# the cacheOpen line leaves out what the drop freed
+--- a/src/mullion/mullion_session.hpp
++++ b/src/mullion/mullion_session.hpp
+@@ -261,8 +261,7 @@
+                              {"entries", known(open.entries, number)},
+                              {"sizeMiB", known(open.bytes, mib)},
+                              {"droppedTables", number(open.dropped_tables)},
+-                             {"droppedShards", number(open.dropped_shards)},
+-                             {"droppedMiB", mib(open.dropped_bytes)}});
++                             {"droppedShards", number(open.dropped_shards)}});
+ }
+ 
+ } // namespace mullion::session

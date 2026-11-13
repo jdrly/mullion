@@ -48,6 +48,7 @@ constexpr double kSlow33Ms = 33.4, kSlow50Ms = 50.0;
 struct Counters {
   std::atomic<uint64_t> command_buffers{0}, render_passes{0}, compute_passes{0}, draws{0};
   std::atomic<uint64_t> shaders{0}, pipelines{0}, waits{0}, wait_ns{0}, cache_hits{0}, cache_misses{0};
+  std::atomic<uint64_t> cache_rejected{0};
 };
 
 // this DLL's
@@ -57,6 +58,7 @@ inline Counters counters;
 struct Totals {
   uint64_t command_buffers = 0, render_passes = 0, compute_passes = 0, draws = 0;
   uint64_t shaders = 0, pipelines = 0, waits = 0, wait_ns = 0, cache_hits = 0, cache_misses = 0;
+  uint64_t cache_rejected = 0;
 };
 
 inline Totals
@@ -64,7 +66,7 @@ Read(const Counters &from = counters) {
   auto get = [](const std::atomic<uint64_t> &counter) { return counter.load(std::memory_order_relaxed); };
   return {get(from.command_buffers), get(from.render_passes), get(from.compute_passes), get(from.draws),
           get(from.shaders),         get(from.pipelines),     get(from.waits),          get(from.wait_ns),
-          get(from.cache_hits),      get(from.cache_misses)};
+          get(from.cache_hits),      get(from.cache_misses),  get(from.cache_rejected)};
 }
 
 // the local time of a line
@@ -110,6 +112,14 @@ processSections() {
 struct SectionRegistrar {
   SectionRegistrar(const char *name, SectionFn fn, Sections &sections = processSections()) { sections.add(name, fn); }
 };
+
+// the CACHE section's text (d3d12_pipeline_graphics.cpp): the stored shaders Metal refused since `last`, the count at
+// the window before, each deleted and converted again; "" when there were none
+inline std::string
+CacheSection(uint64_t rejected, uint64_t &last) {
+  uint64_t window = rejected - std::exchange(last, rejected);
+  return window ? "rejected=" + std::to_string(window) : std::string();
+}
 
 // the second of Presents a line is about
 class Window {

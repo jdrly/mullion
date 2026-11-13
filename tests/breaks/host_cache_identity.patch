@@ -1,0 +1,12 @@
+# the macOS build is left out of the key and the tag
+--- a/src/mullion/mullion_cache_identity.hpp
++++ b/src/mullion/mullion_cache_identity.hpp
+@@ -23,7 +23,7 @@
+ // a key's first fields
+ inline void
+ Hash(Sha1HashState &h, const Identity &identity) {
+-  for (std::string_view part : {std::string_view(identity.codegen), std::string_view(identity.build)}) {
++  for (std::string_view part : {std::string_view(identity.codegen)}) {
+     h.update(uint64_t(part.size()));
+     h.update(part.data(), part.size());
+   }
