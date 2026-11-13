@@ -10,7 +10,6 @@ src/airconv/dxbc_binding_rootsig.cpp: warning: 'GetUAVTexture' overrides a membe
 src/airconv/dxbc_binding_rootsig.cpp: warning: missing field 'Anisotropic' initializer [-Wmissing-field-initializers]
 src/airconv/dxbc_binding_sm50.cpp: warning: missing field 'Anisotropic' initializer [-Wmissing-field-initializers]
 src/airconv/dxbc_converter.cpp: warning: missing field 'FineShading' initializer [-Wmissing-field-initializers]
-src/airconv/dxbc_converter.cpp: warning: non-void function does not return a value in all control paths [-Wreturn-type]
 src/airconv/dxbc_converter_basicblock.cpp: warning: non-void lambda does not return a value in all control paths [-Wreturn-type]
 src/airconv/tessellation_limits.hpp: warning: missing field 'instance_parts' initializer [-Wmissing-field-initializers]
 src/d3d11/d3d11.cpp: warning: comparison of integers of different signs: 'int' and 'UINT' (aka 'unsigned int') [-Wsign-compare]

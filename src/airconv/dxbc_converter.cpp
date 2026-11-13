@@ -76,28 +76,6 @@ to_shader_resource_type(microsoft::D3D10_SB_RESOURCE_DIMENSION dim) {
   assert(0 && "invalid D3D10_SB_RESOURCE_DIMENSION");
 };
 
-inline mullion::shader::common::ScalerDataType
-to_shader_scaler_type(microsoft::D3D10_SB_RESOURCE_RETURN_TYPE type) {
-  switch (type) {
-
-  case microsoft::D3D10_SB_RETURN_TYPE_UNORM:
-  case microsoft::D3D10_SB_RETURN_TYPE_SNORM:
-  case microsoft::D3D10_SB_RETURN_TYPE_FLOAT:
-    return shader::common::ScalerDataType::Float;
-  case microsoft::D3D10_SB_RETURN_TYPE_SINT:
-    return shader::common::ScalerDataType::Int;
-  case microsoft::D3D10_SB_RETURN_TYPE_UINT:
-    return shader::common::ScalerDataType::Uint;
-  case microsoft::D3D10_SB_RETURN_TYPE_MIXED:
-    return shader::common::ScalerDataType::Uint; // kinda weird but ok
-  case microsoft::D3D11_SB_RETURN_TYPE_DOUBLE:
-  case microsoft::D3D11_SB_RETURN_TYPE_CONTINUED:
-  case microsoft::D3D11_SB_RETURN_TYPE_UNUSED:
-    break;
-  }
-  assert(0 && "invalid D3D10_SB_RESOURCE_RETURN_TYPE");
-}
-
 uint32_t next_pow2(uint32_t x) {
   return x == 1 ? 1 : 1 << (32 - __builtin_clz(x - 1));
 }
