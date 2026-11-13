@@ -4354,16 +4354,14 @@ CREATES(_MTLDevice_newMTL4CommandQueue)(void *obj) {
   return STATUS_SUCCESS;
 }
 
-/* the WMTSparse* operations are Metal's MTL4 sparse mapping operations, field for field */
-_Static_assert(sizeof(struct WMTSparseBufferMapping) == sizeof(MTL4UpdateSparseBufferMappingOperation), "");
-_Static_assert(sizeof(struct WMTSparseTextureMapping) == sizeof(MTL4UpdateSparseTextureMappingOperation), "");
-_Static_assert(sizeof(struct WMTSparseBufferMappingCopy) == sizeof(MTL4CopySparseBufferMappingOperation), "");
-_Static_assert(sizeof(struct WMTSparseTextureMappingCopy) == sizeof(MTL4CopySparseTextureMappingOperation), "");
-
+/* the WMTSparse* operations are Metal's MTL4 sparse mapping operations, field for field. asserted inside the macOS 26
+ * guard: Metal's types are declared from macOS 26.0 on, and the build targets 15.0 */
 static NTSTATUS
 _MTL4CommandQueue_updateMappings(void *obj) {
   struct unixcall_mtl4_mappings *params = obj;
   if (@available(macOS 26.0, *)) {
+    _Static_assert(sizeof(struct WMTSparseBufferMapping) == sizeof(MTL4UpdateSparseBufferMappingOperation), "");
+    _Static_assert(sizeof(struct WMTSparseTextureMapping) == sizeof(MTL4UpdateSparseTextureMappingOperation), "");
     id<MTL4CommandQueue> queue = (id<MTL4CommandQueue>)params->queue;
     if (params->texture)
       [queue updateTextureMappings:(id<MTLTexture>)params->resource
@@ -4383,6 +4381,8 @@ static NTSTATUS
 _MTL4CommandQueue_copyMappings(void *obj) {
   struct unixcall_mtl4_mappings *params = obj;
   if (@available(macOS 26.0, *)) {
+    _Static_assert(sizeof(struct WMTSparseBufferMappingCopy) == sizeof(MTL4CopySparseBufferMappingOperation), "");
+    _Static_assert(sizeof(struct WMTSparseTextureMappingCopy) == sizeof(MTL4CopySparseTextureMappingOperation), "");
     id<MTL4CommandQueue> queue = (id<MTL4CommandQueue>)params->queue;
     if (params->texture)
       [queue copyTextureMappingsFromTexture:(id<MTLTexture>)params->resource
@@ -5275,13 +5275,14 @@ _WMTGPUStatistics(void *obj) {
  * four tiles by four the second tile of the first row is mapped alone, and a kernel reads the texel in that tile's
  * middle and the texel whose coordinates are the tile's, (1, 0), which lies in the first tile. where texels are read
  * the first is resident and the second is not, where tiles are read it is the other way round. any other answer, or
- * a GPU without such textures, says texels */
+ * a GPU without such textures, says texels. so does a macOS before 26.4, which has no supportsPlacementSparse (and
+ * where _MTLDevice_supportsPlacementSparse answers no) */
 static NTSTATUS
 _MTLDevice_sparseResidencyInTiles(void *obj) {
   struct unixcall_generic_obj_uint64_ret *params = obj;
   id<MTLDevice> device = (id<MTLDevice>)params->handle;
   params->ret = 0;
-  if (@available(macOS 26.0, *)) {
+  if (@available(macOS 26.4, *)) {
     @autoreleasepool {
       const MTLSparsePageSize page_size = MTLSparsePageSize16;
       NSUInteger page = [device supportsPlacementSparse] ? [device sparseTileSizeInBytesForSparsePageSize:page_size] : 0;

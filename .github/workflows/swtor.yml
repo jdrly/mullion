@@ -236,7 +236,24 @@ jobs:
           .github/swtor/warnings.zsh "$RUNNER_TEMP/warned.log" .github/swtor/warnings-x86_64.txt >"$RUNNER_TEMP/warned.txt" || status=$?
           [[ $status == 1 ]]
           grep -qxF '::error::New warning: src/d3d12/control.cpp: warning: a warning no baseline lists [-Wcontrol]' "$RUNNER_TEMP/warned.txt"
-          echo "both checks failed on their break"
+          # the bridge's availability guards: winemetal_unix.c with sparseResidencyInTiles' macOS 26.4 guard lowered
+          # to 26.0 and a macOS 26 type used outside any guard, compiled alone for the build's target (15.0). the
+          # warnings check has to name both
+          wm=src/winemetal/unix/winemetal_unix.c
+          perl -pi -e 's/if \(\@available\(macOS 26\.4, \*\)\) \{/if (\@available(macOS 26.0, *)) {/' "$wm"
+          echo '_Static_assert(sizeof(MTL4CopySparseTextureMappingOperation) != 0, "");' >>"$wm"
+          [[ $(git diff --numstat -- "$wm") == $'2\t1\t'"$wm" ]]
+          obj=$(ninja -C build -t targets all | sed -n 's/^\([^:]*winemetal_unix\.c\.o\): .*/\1/p')
+          [[ $obj == *.o && $obj != *$'\n'* ]]
+          ninja -C build "$obj" >"$RUNNER_TEMP/unguarded.log" 2>&1 || true
+          git checkout -- "$wm"
+          status=0
+          .github/swtor/warnings.zsh "$RUNNER_TEMP/unguarded.log" .github/swtor/warnings-x86_64.txt >"$RUNNER_TEMP/unguarded.txt" || status=$?
+          cat "$RUNNER_TEMP/unguarded.txt"
+          [[ $status == 1 ]]
+          grep -qxF "::error::New warning: $wm: warning: 'supportsPlacementSparse' is only available on macOS 26.4 or newer [-Wunguarded-availability-new]" "$RUNNER_TEMP/unguarded.txt"
+          grep -qxF "::error::New warning: $wm: warning: 'MTL4CopySparseTextureMappingOperation' is only available on macOS 26.0 or newer [-Wunguarded-availability-new]" "$RUNNER_TEMP/unguarded.txt"
+          echo "all three checks failed on their break"
 
       # last, so that a run that only adds a warning still shows everything above
       - name: No new warnings

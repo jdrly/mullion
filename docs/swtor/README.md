@@ -30,9 +30,15 @@ How a switch is declared: [ADR 0001](adr/0001-switches.md).
   checks that the seven files the app installs are there and that `winemetal.so` holds no LLVM assertion text, then
   uploads `mullion-swtor-<commit>` (7 days): `x86_64-windows/{d3d10core,d3d11,d3d12,d3d12core,dxgi,winemetal}.dll`,
   `x86_64-unix/winemetal.so` and `VERSION`. For a pull request it also runs the host tests in `tests/host` (`meson test
-  'host_*'`; `host_tessellator` and `host_mutate` below), breaks two checks on purpose and requires both to fail, and
+  'host_*'`; `host_tessellator` and `host_mutate` below), breaks three checks on purpose and requires each to fail, and
   fails on a compiler warning that `.github/swtor/warnings-x86_64.txt` doesn't list. A push run builds and uploads only:
   the pull request's run of the same tree has already passed the rest.
+
+  The third break guards the bridge's availability checks. The build targets macOS 15.0, so clang warns
+  (`-Wunguarded-availability-new`) wherever `src/winemetal/unix/winemetal_unix.c` uses Metal API that a newer macOS
+  introduced outside an `@available` check, and the baseline lists none of those warnings. The control lowers
+  `sparseResidencyInTiles`' macOS 26.4 check to 26.0, adds a use of a macOS 26.0 type outside any check, recompiles
+  that one file and requires the warnings check to name both.
 
   `host_tessellator` takes about 200 s on the runner, which is arm64 and runs the x86_64 host tests under Rosetta; the
   others take about 18 s together. It runs only when the pull request changes what it compiles or how (`src/airconv`,
