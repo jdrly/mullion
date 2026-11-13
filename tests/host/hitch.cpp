@@ -92,7 +92,7 @@ main(int argc, char **argv) {
   check(!frames.End(now += 33'300'000, {}, stats, totals, hitch::kDefaultMs), "33.3 ms with nothing writes nothing");
   check(frames.End(now += 33'400'000, {}, stats, totals, hitch::kDefaultMs) && frames.Compile() && !frames.Hitch(),
         "33.4 ms has a COMPILE line");
-  stats.shaders += 3, stats.pipelines += 2, stats.waits += 1, stats.wait_ns += 12'340'000;
+  totals.shaders += 3, totals.pipelines += 2, stats.waits += 1, stats.wait_ns += 12'340'000;
   stats.cache_hits += 5, stats.cache_misses += 3, stats.command_buffers += 7;
   totals.shader_ns += 21'000'000, totals.pipeline_ns += 44'440'000, totals.gpu_ns += 9'960'000;
   totals.encode_ns += 1'250'000, totals.completed += 4, totals.compiling = 6;
@@ -110,6 +110,24 @@ main(int argc, char **argv) {
   equal(frames.CompileLine(), "COMPILE frame=10 dtMs=60.0 shaders=0/0.0ms psos=0/0.0ms renderWait=0/0.0ms cache=0/0"
                               " queued=6");
 
+  // a pipeline compiled across a frame's end counts, with its time, in the frame it ends in
+  {
+    hitch::Frames across;
+    hitch::Counters counters;
+    clock_ns = 0;
+    across.End(clock_ns, {}, {}, hitch::Read(counters), hitch::kDefaultMs);
+    {
+      hitch::Timed<TestNow> compiling(counters.pipelines, counters.pipeline_ns);
+      check(!across.End(clock_ns += 16 * kMs, {}, {}, hitch::Read(counters), hitch::kDefaultMs),
+            "a frame a compile only began in has nothing to say");
+      clock_ns += 8 * kMs;
+    }
+    check(across.End(clock_ns += 8 * kMs, {}, {}, hitch::Read(counters), hitch::kDefaultMs) && across.Compile(),
+          "the frame it ended in has a COMPILE line");
+    equal(across.CompileLine(), "COMPILE frame=3 dtMs=16.0 shaders=0/0.0ms psos=1/24.0ms renderWait=0/0.0ms cache=0/0"
+                                " queued=0");
+  }
+
   // the largest numbers stay under 900 bytes
   {
     hitch::Frames big;
@@ -117,9 +135,9 @@ main(int argc, char **argv) {
     for (unsigned i = 0; i < hitch::kCategories; i++)
       full.n[i] = full.ns[i] = std::numeric_limits<uint64_t>::max() / 8;
     stats::Totals most;
-    most.command_buffers = most.shaders = most.pipelines = most.waits = most.wait_ns = most.cache_hits =
-        most.cache_misses = std::numeric_limits<uint64_t>::max();
-    hitch::Totals all{~0ull, ~0ull, ~0ull, ~0ull, 0, std::numeric_limits<int64_t>::max()};
+    most.command_buffers = most.waits = most.wait_ns = most.cache_hits = most.cache_misses =
+        std::numeric_limits<uint64_t>::max();
+    hitch::Totals all{~0ull, ~0ull, ~0ull, ~0ull, ~0ull, ~0ull, 0, std::numeric_limits<int64_t>::max()};
     big.End(0, {}, {}, {}, hitch::kDefaultMs);
     big.End(~0ull, full, most, all, hitch::kDefaultMs);
     check(big.HitchLine({99, 99, 99, 999}).size() < stats::kLineLimit, "HITCH under 900 bytes");
@@ -186,7 +204,7 @@ main(int argc, char **argv) {
     Quiet(session, t, 965, stats_now, totals_now);
     // second 20's hitch: a pipeline compiled and a draw on another thread waited for it; the presenting thread only
     // presented. The game's
-    stats_now.shaders += 2, stats_now.pipelines += 1, stats_now.waits += 1, stats_now.wait_ns += 38'600'000;
+    totals_now.shaders += 2, totals_now.pipelines += 1, stats_now.waits += 1, stats_now.wait_ns += 38'600'000;
     stats_now.cache_misses += 2, stats_now.command_buffers += 5;
     totals_now.shader_ns += 18'200'000, totals_now.pipeline_ns += 31'000'000, totals_now.gpu_ns += 10'400'000;
     totals_now.encode_ns += 2'100'000, totals_now.completed += 3;
@@ -196,7 +214,7 @@ main(int argc, char **argv) {
     // second 41: a 45 ms frame with nothing in it, then 70 ms with 38.6 of them waiting for a pipeline: the driver's
     session.End(t += 45 * kMs, {}, stats_now, totals_now, hitch::kDefaultMs);
     write({20, 0, 44, 72});
-    stats_now.shaders += 2, stats_now.pipelines += 1, stats_now.waits += 1, stats_now.wait_ns += 38'600'000;
+    totals_now.shaders += 2, totals_now.pipelines += 1, stats_now.waits += 1, stats_now.wait_ns += 38'600'000;
     stats_now.cache_misses += 2, stats_now.command_buffers += 5;
     totals_now.shader_ns += 18'200'000, totals_now.pipeline_ns += 31'000'000, totals_now.gpu_ns += 9'800'000;
     totals_now.encode_ns += 2'300'000, totals_now.completed += 5;

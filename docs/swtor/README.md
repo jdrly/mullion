@@ -213,24 +213,26 @@ driver, waiting for a pipeline. `host_hitch` fails when the frames stop writing 
 | `behind` | Command buffers committed and not yet complete at the line, of all queues |
 | `at` | The local time of the line, `HH:MM:SS.mmm` |
 
-`COMPILE`, of all threads, not only the presenting one: `shaders` the shaders converted and the ms of converting each,
-making its Metal function and storing it in the cache; `psos` the Metal pipelines compiled (as `STATS`'s `pso`) and
-their ms; `renderWait` the draws and dispatches that waited for their pipeline and their ms (as `STATS`'s `wait`);
-`cache` the shader cache's hits and misses (as `STATS`'s); `queued` the Metal pipelines left to the compile threads or
-to their first draw and not made yet.
+`COMPILE`, of all threads, not only the presenting one: `shaders` the shaders converted (or tried) and the ms of
+converting each, making its Metal function and storing it in the cache; `psos` the Metal pipelines compiled and their
+ms. Each is counted with its time in the frame it ends in, where `STATS`'s `sh` and `pso` count it as it begins.
+`renderWait` the draws and dispatches that waited for their pipeline and their ms (as `STATS`'s `wait`); `cache` the
+shader cache's hits and misses (as `STATS`'s); `queued` the Metal pipelines left to the compile threads or to their
+first draw and not made yet.
 
 `shaders`, `psos`, `renderWait`, `dtMs` and `inDriverMs` are the report's names and are never renamed. A ticket adds a
-`HITCH` category with an entry in `hitch::Category` and its name ([`mullion_hitch.hpp`](../../src/mullion/mullion_hitch.hpp)),
-and a scope where the thread waits. Both lines stay under 900 bytes for any numbers; `host_hitch` tries the largest.
+`HITCH` category with an entry in `hitch::Category` and its name
+([`mullion_hitch.hpp`](../../src/mullion/mullion_hitch.hpp)), and a scope where the thread waits. Both lines stay
+under 900 bytes for any numbers; `host_hitch` tries the largest.
 
 Cost. Off: each scope tests one flag on entry and a null pointer on exit (one load, one compare and one branch, then
 one test: llvm-mingw `-O2`, `cmpb $1, stats::on; je`); each shader converted, Metal pipeline compiled, command buffer
 committed or completed, and deferred pipeline made tests one flag. On: a scope reads the clock twice when it is the
-thread's outermost one; each Present reads the sixteen counters (relaxed loads; `STATS` read its ten once a second
-before) and takes the presenting thread's frame; each shader converted, pipeline compiled and command buffer committed
-reads the clock twice and adds one atomic; each command buffer completed adds one atomic, and when Metal says it
-completed, two bridge calls for its GPU times (Metal 3) or one (the Metal 4 feedback). A frame with a line reads the
-local time and makes one log call.
+thread's outermost one; each Present reads the eighteen counters (relaxed loads; `STATS` read its ten once a second
+before) and takes the presenting thread's frame; each shader converted and pipeline compiled reads the clock twice and
+adds two atomics, each command buffer committed reads it twice and adds one; each command buffer completed adds one
+atomic, and when Metal says it completed, two bridge calls for its GPU times (Metal 3) or one (the Metal 4 feedback). A
+frame with a line reads the local time and makes one log call.
 
 ### The pipeline line
 

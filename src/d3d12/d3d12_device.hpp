@@ -708,7 +708,7 @@ public:
     if (archives.empty()) {
       if (stats::on)
         stats::counters.pipelines.fetch_add(1, std::memory_order_relaxed);
-      hitch::Timed timed(hitch::counters.pipeline_ns);
+      hitch::Timed timed(hitch::counters.pipelines, hitch::counters.pipeline_ns);
       return make(info, error);
     }
     info.binary_archives_for_lookup.set(archives.data());
@@ -722,7 +722,7 @@ public:
     if (stats::on)
       stats::counters.pipelines.fetch_add(1, std::memory_order_relaxed);
     auto made = [&] {
-      hitch::Timed timed(hitch::counters.pipeline_ns);
+      hitch::Timed timed(hitch::counters.pipelines, hitch::counters.pipeline_ns);
       return make(info, error);
     }();
     if (made)

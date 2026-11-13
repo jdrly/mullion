@@ -648,7 +648,7 @@ CompileFunction(
   if (stats::on && enabled)
     stats::counters.cache_misses.fetch_add(1, std::memory_order_relaxed);
   hitch::Scope converting(hitch::ShaderConvert);
-  hitch::Timed timed(hitch::counters.shader_ns);
+  hitch::Timed timed(hitch::counters.shaders, hitch::counters.shader_ns);
   SM50ShaderBitcode bitcode;
   SM50Error sm50_error;
   if (compile(arguments, name, &bitcode, &sm50_error)) {

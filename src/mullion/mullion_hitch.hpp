@@ -103,29 +103,35 @@ private:
   uint64_t start_;
 };
 
-// adds the time from here to its end to `to`, with MULLION_STATS on
+// at its end, with MULLION_STATS on, adds one to `count` and the time from here to `ns`: together, so that a frame
+// that sees the one sees the other
 template <uint64_t (*Now)() = SteadyNs> class Timed {
 public:
-  explicit Timed(std::atomic<uint64_t> &to) : to_(stats::on ? &to : nullptr), start_(to_ ? Now() : 0) {}
+  Timed(std::atomic<uint64_t> &count, std::atomic<uint64_t> &ns)
+      : count_(stats::on ? &count : nullptr), ns_(&ns), start_(count_ ? Now() : 0) {}
   Timed(const Timed &) = delete;
   Timed &operator=(const Timed &) = delete;
   ~Timed() {
-    if (to_) [[unlikely]]
-      to_->fetch_add(Now() - start_, std::memory_order_relaxed);
+    if (!count_) [[likely]]
+      return;
+    ns_->fetch_add(Now() - start_, std::memory_order_relaxed);
+    count_->fetch_add(1, std::memory_order_relaxed);
   }
 
 private:
-  std::atomic<uint64_t> *to_;
+  std::atomic<uint64_t> *count_, *ns_;
   uint64_t start_;
 };
 
 // what COMPILE and HITCH's queue group read beside ticket 07's counters; any thread adds, each place testing
 // stats::on first
 struct Counters {
-  // time spent converting shaders (with each one's Metal function made and stored in the cache), compiling Metal
-  // pipelines, by the GPU on the command buffers completed (as Metal gave it by their completion), and encoding command
+  // shaders converted (or tried) and Metal pipelines compiled, each counted with its time when it ends (Timed): a
+  // shader's with its Metal function made and stored in the cache. STATS's sh and pso count them as they begin
+  std::atomic<uint64_t> shaders{0}, shader_ns{0}, pipelines{0}, pipeline_ns{0};
+  // time spent by the GPU on the command buffers completed (as Metal gave it by their completion), and encoding command
   // buffers (from a slot taken to its commit)
-  std::atomic<uint64_t> shader_ns{0}, pipeline_ns{0}, gpu_ns{0}, encode_ns{0};
+  std::atomic<uint64_t> gpu_ns{0}, encode_ns{0};
   // command buffers completed (or cancelled), against ticket 07's committed
   std::atomic<uint64_t> completed{0};
   // Metal pipelines left to the compile threads or to their first draw, not made yet
@@ -136,15 +142,15 @@ struct Counters {
 inline Counters counters;
 
 struct Totals {
-  uint64_t shader_ns = 0, pipeline_ns = 0, gpu_ns = 0, encode_ns = 0, completed = 0;
+  uint64_t shaders = 0, shader_ns = 0, pipelines = 0, pipeline_ns = 0, gpu_ns = 0, encode_ns = 0, completed = 0;
   int64_t compiling = 0;
 };
 
 inline Totals
 Read(const Counters &from = counters) {
   auto get = [](const auto &counter) { return counter.load(std::memory_order_relaxed); };
-  return {get(from.shader_ns), get(from.pipeline_ns), get(from.gpu_ns),
-          get(from.encode_ns), get(from.completed),   get(from.compiling)};
+  return {get(from.shaders), get(from.shader_ns), get(from.pipelines), get(from.pipeline_ns),
+          get(from.gpu_ns),  get(from.encode_ns), get(from.completed), get(from.compiling)};
 }
 
 // the frames of the counted swap chain: Present to Present
@@ -159,11 +165,11 @@ public:
     last_ = now;
     frame_data_ = frame;
     auto in = [&](uint64_t stats::Totals::*counter) { return stats.*counter - last_stats_.*counter; };
-    shaders_ = in(&stats::Totals::shaders), psos_ = in(&stats::Totals::pipelines), waits_ = in(&stats::Totals::waits);
-    wait_ns_ = in(&stats::Totals::wait_ns), hits_ = in(&stats::Totals::cache_hits);
+    auto of = [&](uint64_t Totals::*counter) { return totals.*counter - last_totals_.*counter; };
+    waits_ = in(&stats::Totals::waits), wait_ns_ = in(&stats::Totals::wait_ns), hits_ = in(&stats::Totals::cache_hits);
     misses_ = in(&stats::Totals::cache_misses);
-    shader_ns_ = totals.shader_ns - last_totals_.shader_ns, pipeline_ns_ = totals.pipeline_ns - last_totals_.pipeline_ns;
-    gpu_ns_ = totals.gpu_ns - last_totals_.gpu_ns, encode_ns_ = totals.encode_ns - last_totals_.encode_ns;
+    shaders_ = of(&Totals::shaders), shader_ns_ = of(&Totals::shader_ns), psos_ = of(&Totals::pipelines);
+    pipeline_ns_ = of(&Totals::pipeline_ns), gpu_ns_ = of(&Totals::gpu_ns), encode_ns_ = of(&Totals::encode_ns);
     behind_ = stats.command_buffers > totals.completed ? stats.command_buffers - totals.completed : 0;
     compiling_ = totals.compiling > 0 ? uint64_t(totals.compiling) : 0;
     last_stats_ = stats;

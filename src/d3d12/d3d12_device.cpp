@@ -267,8 +267,6 @@ class MTLD3D12DeviceImpl : public MTLD3D12Object<ComObject<MTLD3D12Device, ID3DD
   std::unordered_map<const EncoderData *, std::unordered_map<obj_handle_t, std::string>> pass_pipelines_;
   uint64_t late_pipelines_ = 0;
   double pipeline_ms_ = 0, longest_pipeline_ms_ = 0;
-  // MULLION-PIPELINE's: 30 lines in 10 s
-  gpu_error::Limiter pipeline_lines_;
   mullion::mutex acceleration_structure_lock_;
   std::map<uint64_t, std::shared_ptr<AccelerationStructure>> acceleration_structures_;
   // compacted sizes are uint64s of shared buffers the GPU writes
@@ -2621,18 +2619,23 @@ public:
       TRACE_IN(Shader, kind, " pipeline ", name, ": ", ms, " ms", late ? ", after the first present" : "");
     if (!late && ms < hitch::kSlowPipelineMs)
       return;
-    SYSTEMTIME local;
-    GetLocalTime(&local);
-    std::lock_guard<mullion::mutex> lock(pass_names_lock_);
     if (late) {
+      std::lock_guard<mullion::mutex> lock(pass_names_lock_);
       late_pipelines_++;
       pipeline_ms_ += ms;
       longest_pipeline_ms_ = std::max(longest_pipeline_ms_, ms);
     }
+    // the process's 30 lines in 10 s, the clock read under the lock so that the limit's window only moves forward
+    static mullion::mutex lines_lock;
+    static gpu_error::Limiter lines;
+    std::lock_guard<mullion::mutex> lock(lines_lock);
     uint64_t dropped = 0;
-    if (pipeline_lines_.Allow(std::chrono::nanoseconds(end.time_since_epoch()).count(), dropped))
-      Logger::info(hitch::PipelineLine({local.wHour, local.wMinute, local.wSecond, local.wMilliseconds}, kind, ms, late,
-                                       variant ? variant : made_variant ? made_variant : "base", name, dropped));
+    if (!lines.Allow(hitch::SteadyNs(), dropped))
+      return;
+    SYSTEMTIME local;
+    GetLocalTime(&local);
+    Logger::info(hitch::PipelineLine({local.wHour, local.wMinute, local.wSecond, local.wMilliseconds}, kind, ms, late,
+                                     variant ? variant : made_variant ? made_variant : "base", name, dropped));
   }
 
   void
