@@ -137,6 +137,8 @@ class MTLD3D12GraphicsCommandList : public ID3D12GraphicsCommandList9 {
 public:
   EncoderData *entry;
   size_t encoder_count;
+  // its draw calls since it was reset (MULLION_STATS counts them each time it runs)
+  uint32_t draw_calls = 0;
   // the allocator the closed list recorded into, which a queue keeps until the list has run
   MTLD3D12CommandAllocator *recorded_on = nullptr;
   // whether a command on an acceleration structure that is not there is left for the queue (LaterEncoderData),
@@ -699,8 +701,12 @@ public:
   Archived(Info info, WMT::Reference<WMT::Error> &error, Make make) {
     std::shared_lock lock(archive_lock);
     auto archives = PipelineArchives();
-    if (archives.empty())
+    // MULLION_STATS: each pipeline Metal compiles, not found in the archive
+    if (archives.empty()) {
+      if (stats::on)
+        stats::counters.pipelines.fetch_add(1, std::memory_order_relaxed);
       return make(info, error);
+    }
     info.binary_archives_for_lookup.set(archives.data());
     info.num_binary_archives_for_lookup = archives.size();
     info.fail_on_binary_archive_miss = true;
@@ -709,6 +715,8 @@ public:
     info.fail_on_binary_archive_miss = false;
     info.binary_archive_for_serialization = archives.back();
     error = {};
+    if (stats::on)
+      stats::counters.pipelines.fetch_add(1, std::memory_order_relaxed);
     auto made = make(info, error);
     if (made)
       PipelineArchived();

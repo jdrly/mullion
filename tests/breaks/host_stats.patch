@@ -1,0 +1,12 @@
+# slow33's threshold lowered from d9mt's 33.4 ms to 33.0: an interval of exactly 33.4 ms counts as slow
+--- a/src/mullion/mullion_stats.hpp
++++ b/src/mullion/mullion_stats.hpp
+@@ -42,7 +42,7 @@
+ // every line is shorter, as the session header's (docs/swtor/README.md § Log lines)
+ constexpr size_t kLineLimit = 900;
+ // d9mt's thresholds (driver/d3d9/d3d9_stats.h): an interval longer than these is slow
+-constexpr double kSlow33Ms = 33.4, kSlow50Ms = 50.0;
++constexpr double kSlow33Ms = 33.0, kSlow50Ms = 50.0;
+ 
+ // the process's counts since it started; any thread adds
+ struct Counters {

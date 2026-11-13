@@ -16,6 +16,9 @@ test('host_layer_apply', executable('host_layer_apply', ['layer_apply.c', '../..
                                                  '-framework', 'CoreGraphics', '-framework', 'Metal']
                                                 + (mullion_crossbuild ? ['-arch', native_compiler_arch] : []),
                                     native : true))
+# the STATS line's arithmetic and format, and the fixture's STATS lines
+test('host_stats', executable('host_stats', 'stats.cpp', override_options : ['cpp_std=c++20'], native : true),
+     args : files('../swtor/fixtures/session.log'))
 test('host_rc_self_move', executable('host_rc_self_move', 'rc.cpp',
                                     override_options : ['cpp_std=c++20'], native : true))
 test('host_denorm', executable('host_denorm', 'denorm.cpp', include_directories : include_directories('metal'),

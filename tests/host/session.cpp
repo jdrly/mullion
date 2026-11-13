@@ -81,12 +81,13 @@ main(int argc, char **argv) {
   sw::Switch<bool> sample_switch{"MULLION_SAMPLE_SWITCH", true, sw::notZero, registry};
   sw::Switch<uint32_t> sample_limit{"MULLION_SAMPLE_LIMIT", 4096, number, registry};
 
-  // the fixture: the header's lines as Wine's log has them, "info:  " first
+  // the fixture: the header's lines as Wine's log has them, "info:  " first (its other lines are tests/host/stats.cpp's)
   {
     std::vector<std::string> want;
     std::ifstream fixture(argv[1]);
     for (std::string line; std::getline(fixture, line);)
-      want.push_back(line);
+      if (line.starts_with("info:  Mullion: "))
+        want.push_back(line);
     check(!want.empty(), std::string("the fixture ") + argv[1] + " has lines");
     std::vector<std::string> got;
     for (auto &line : session::Format(Sample(registry)))

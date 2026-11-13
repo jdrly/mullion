@@ -1,8 +1,10 @@
 #pragma once
 
+#include "mullion_stats.hpp"
 #include "thread.hpp"
 #include "util_env.hpp"
 #include <atomic>
+#include <chrono>
 #include <deque>
 #include <functional>
 #include <memory>
@@ -24,6 +26,19 @@ public:
   Wait() {
     if (done_.load(std::memory_order_acquire))
       return;
+    // MULLION_STATS: a draw or dispatch that waited, and how long
+    struct Waited {
+      std::chrono::steady_clock::time_point start = stats::on ? std::chrono::steady_clock::now()
+                                                              : std::chrono::steady_clock::time_point();
+      ~Waited() {
+        if (!stats::on)
+          return;
+        stats::counters.waits.fetch_add(1, std::memory_order_relaxed);
+        stats::counters.wait_ns.fetch_add(
+            std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::steady_clock::now() - start).count(),
+            std::memory_order_relaxed);
+      }
+    } waited;
     std::unique_lock lock(mutex_);
     if (state_ == State::Queued) {
       state_ = State::Running;

@@ -597,8 +597,11 @@ CompileFunction(
     if (auto reader = cache.getReader())
       data = reader->get(key);
     if (data) {
-      if (auto function = load(data, error))
+      if (auto function = load(data, error)) {
+        if (stats::on)
+          stats::counters.cache_hits.fetch_add(1, std::memory_order_relaxed);
         return function;
+      }
       if (auto writer = cache.getWriter())
         writer->set(key, {});
     }
@@ -631,6 +634,9 @@ CompileFunction(
     if (auto function = cached())
       return function;
   }
+  // MULLION_STATS: a lookup the cache missed, and a shader converted
+  if (stats::on && enabled)
+    stats::counters.cache_misses.fetch_add(1, std::memory_order_relaxed);
   SM50ShaderBitcode bitcode;
   SM50Error sm50_error;
   if (compile(arguments, name, &bitcode, &sm50_error)) {
@@ -639,6 +645,8 @@ CompileFunction(
       MTLD3D12PipelineState::DumpShaders({shader});
     return {};
   }
+  if (stats::on)
+    stats::counters.shaders.fetch_add(1, std::memory_order_relaxed);
   SM50_COMPILED_BITCODE compiled;
   SM50GetCompiledBitcode(bitcode, &compiled);
   auto data = WMT::MakeDispatchData(compiled.Data, compiled.Size);

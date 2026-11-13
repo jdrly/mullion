@@ -822,6 +822,7 @@ public:
     predication_region_ = nullptr;
     left_for_later_ = false;
     events_.clear();
+    draw_calls = 0;
 
     encoder_count = std::numeric_limits<size_t>::max();
     return allocator_->StartRecord(&entry);
@@ -1821,6 +1822,7 @@ public:
   DrawInstanced(UINT VertexCountPerInstance, UINT InstanceCount, UINT StartVertexLocation, UINT StartInstanceLocation) {
     if (Bundled() && Record([=](auto *l) { l->DrawInstanced(VertexCountPerInstance, InstanceCount, StartVertexLocation, StartInstanceLocation); }))
       return;
+    draw_calls++;
     // a draw of nothing: Metal takes no empty draw
     if (!VertexCountPerInstance || !InstanceCount)
       return;
@@ -1874,6 +1876,7 @@ public:
   ) {
     if (Bundled() && Record([=](auto *l) { l->DrawIndexedInstanced(IndexCountPerInstance, InstanceCount, StartVertexLocation, BaseVertexLocation, StartInstanceLocation); }))
       return;
+    draw_calls++;
     if (!IndexCountPerInstance || !InstanceCount)
       return;
     WMTPrimitiveType primitive_type;
