@@ -249,7 +249,9 @@ jobs:
           git checkout -- "$wm"
           status=0
           .github/swtor/warnings.zsh "$RUNNER_TEMP/unguarded.log" .github/swtor/warnings-x86_64.txt >"$RUNNER_TEMP/unguarded.txt" || status=$?
-          cat "$RUNNER_TEMP/unguarded.txt"
+          # only its new warnings, and not as workflow commands: GitHub would annotate every pull request with them,
+          # and with a "Gone" notice for each baseline warning of the files this compile left out
+          sed -n 's/^::error::New warning: /control, new warning: /p' "$RUNNER_TEMP/unguarded.txt"
           [[ $status == 1 ]]
           grep -qxF "::error::New warning: $wm: warning: 'supportsPlacementSparse' is only available on macOS 26.4 or newer [-Wunguarded-availability-new]" "$RUNNER_TEMP/unguarded.txt"
           grep -qxF "::error::New warning: $wm: warning: 'MTL4CopySparseTextureMappingOperation' is only available on macOS 26.0 or newer [-Wunguarded-availability-new]" "$RUNNER_TEMP/unguarded.txt"
