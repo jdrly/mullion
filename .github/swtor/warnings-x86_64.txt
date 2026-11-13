@@ -1,5 +1,4 @@
 src/airconv/air_signature.hpp: warning: non-void function does not return a value in all control paths [-Wreturn-type]
-src/airconv/air_type.hpp: warning: non-void function does not return a value in all control paths [-Wreturn-type]
 src/airconv/dxbc_binding_rootsig.cpp: warning: 'GetConstantBuffer' overrides a member function but is not marked 'override' [-Winconsistent-missing-override]
 src/airconv/dxbc_binding_rootsig.cpp: warning: 'GetSRVBuffer' overrides a member function but is not marked 'override' [-Winconsistent-missing-override]
 src/airconv/dxbc_binding_rootsig.cpp: warning: 'GetSRVTexture' overrides a member function but is not marked 'override' [-Winconsistent-missing-override]
