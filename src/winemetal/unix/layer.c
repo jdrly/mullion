@@ -9,9 +9,10 @@
 static _Atomic uint64_t sent, applied;
 // when the main thread last applied a change, or was sent one with none waiting
 static _Atomic uint64_t since_ns;
-// `applied` when the main thread last applied a change, shifted left by 2, and how many `applied=no` lines the wait
-// after it has written: a line of a wait that has just ended can't be written after that change's `applied=yes`
-static _Atomic uint64_t said;
+// how many `applied=no` lines this wait has written. under said_lock with the lines themselves, so that a wait's
+// lines come before the `applied=yes` that ends it
+static pthread_mutex_t said_lock = PTHREAD_MUTEX_INITIALIZER;
+static unsigned said;
 static atomic_bool watching;
 static const uint64_t marks_ms[] = {1000, 5000, 30000};
 
@@ -50,25 +51,33 @@ watch(void) {
     if (atomic_load(&applied) == atomic_load(&sent) || atomic_exchange(&watching, true))
       return;
   }
-  uint64_t done = atomic_load(&applied);
-  uint64_t ms = since_ms(atomic_load(&since_ns), now_ns());
-  uint64_t was = atomic_load(&said), due = was & 3;
-  while (due < 3 && ms >= marks_ms[due])
-    due++;
-  // not while the main thread is between applying a change and saying so
-  if (was >> 2 == done && due > (was & 3) && atomic_compare_exchange_strong(&said, &was, done << 2 | due))
-    fprintf(stderr, "mullion: layer mainThreadWaitMs=%llu applied=no\n", (unsigned long long)ms);
+  pthread_mutex_lock(&said_lock);
+  // still waiting: the main thread may have applied the change since
+  if (atomic_load(&applied) != atomic_load(&sent)) {
+    uint64_t ms = since_ms(atomic_load(&since_ns), now_ns());
+    unsigned due = said;
+    while (due < 3 && ms >= marks_ms[due])
+      due++;
+    if (due > said) {
+      said = due;
+      fprintf(stderr, "mullion: layer mainThreadWaitMs=%llu applied=no\n", (unsigned long long)ms);
+    }
+  }
+  pthread_mutex_unlock(&said_lock);
   watch_later();
 }
 
 // on the main thread, after a change
 static void
 applied_one(void) {
+  pthread_mutex_lock(&said_lock);
   uint64_t now = now_ns();
   uint64_t ms = since_ms(atomic_exchange(&since_ns, now), now);
-  uint64_t done = atomic_fetch_add(&applied, 1) + 1;
-  if (atomic_exchange(&said, done << 2) & 3)
+  atomic_fetch_add(&applied, 1);
+  if (said)
     fprintf(stderr, "mullion: layer mainThreadWaitMs=%llu applied=yes\n", (unsigned long long)ms);
+  said = 0;
+  pthread_mutex_unlock(&said_lock);
 }
 
 // runs `set` on the main thread, after what was sent to it before, and waits for it with `wait`. its number among the
