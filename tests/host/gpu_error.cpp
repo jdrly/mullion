@@ -73,11 +73,36 @@ main(int argc, char **argv) {
     check(gpu_error::Text("at (C:\\users\\someone\\x)") == "at ((a path))", "a Windows path");
     check(gpu_error::Text("from ~/Library") == "from (a path)", "a home path");
     check(gpu_error::Text("a\nb\tc\x01\xc3\xa9") == "a b c???", "printable ASCII only");
+    check(gpu_error::Text("failed\n/Users/someone/cache") == "failed (a path)", "a path after a newline");
+    check(gpu_error::Text("at file:///Users/someone/cache now") == "at (a path) now", "a file: URL");
+    check(gpu_error::Text("relative x/y and C:/z") == "relative (a path) and (a path)", "any word with a slash");
+    check(gpu_error::Text("Code=3 \"PageFault\" (00000003:kIOGPU)") == "Code=3 \"PageFault\" (00000003:kIOGPU)",
+          "Metal's own words stay");
     auto report = Sample();
     report.text = "Error Domain=MTLCommandBufferErrorDomain <MTLEncoderInfo: 0x7f8a12345678> /Users/someone/x";
     report.listed[0].label = "pass in /Users/someone/x";
     auto line = gpu_error::Line(report);
     check(line.find("0x7f8a") == std::string::npos && line.find("someone") == std::string::npos, line);
+  }
+
+  // no user's or computer's name, in any case, in Metal's text, a label or the domain (session::Names)
+  {
+    auto report = Sample();
+    report.names = {"alice", "ALICES-MBP", "jd"};
+    report.text = "owner=Alice";
+    report.listed[0].label = "render for alices-mbp";
+    report.domain = "AliceDomain";
+    report.name.clear();
+    auto line = gpu_error::Line(report);
+    check(line.find("lice") == std::string::npos, "no name: " + line);
+    check(line.find(" domain=(a_name) ") != std::string::npos && line.find(" '(a name)' | (a name)") != std::string::npos,
+          line);
+    report = Sample();
+    report.names = {"jd"};
+    report.text = "jd ran 0xjd1";
+    check(gpu_error::Line(report).ends_with(" | (a name)"), "a short name as a whole word");
+    report.text = "a jdx b";
+    check(gpu_error::Line(report).ends_with(" | a jdx b"), "a short name inside a word stays");
   }
 
   // at most 8 encoders, then how many more; a label cut to 40 bytes, its ' as "

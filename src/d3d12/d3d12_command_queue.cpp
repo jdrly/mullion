@@ -62,7 +62,7 @@ GPUErrorDetail() {
   return detail;
 }
 
-// MULLION_GPU_ERROR_DETAIL: a pass's encoder's label, `render 1a2b3c4d/5e6f7a8b rt0=1920x1080 RGBA8 "SceneColor"`:
+// MULLION_GPU_ERROR_DETAIL: a pass's encoder's label, `render 1a2b3c4d+5e6f7a8b rt0=1920x1080 RGBA8 "SceneColor"`:
 // its kind, its first pipeline by the first 8 digits of each of its shaders' SHA-1, and its targets. Once a pass
 static std::string
 PassLabel(const char *kind, const EncoderData *pass) {
@@ -70,13 +70,35 @@ PassLabel(const char *kind, const EncoderData *pass) {
   for (size_t at = 0, end, shown = 0; pass && at < pass->pipeline.size(); at = end + 1) {
     end = std::min(pass->pipeline.find(' ', at), pass->pipeline.size());
     if (end > at)
-      label += (shown++ ? "/" : " ") + pass->pipeline.substr(at, std::min<size_t>(end - at, 8));
+      label += (shown++ ? "+" : " ") + pass->pipeline.substr(at, std::min<size_t>(end - at, 8));
   }
   if (pass)
     label += pass->targets;
   if (label.size() > 120)
     label.resize(120);
   return label;
+}
+
+// the process's, whatever Metal its queues use: MULLION-GPU-ERROR's limit of 30 lines in 10 s, the Presents so far
+// (frame=), and the user's and the computer's names the line leaves out (session::UserNames), read at its first line
+static gpu_error::Limiter gpu_error_limiter;
+static std::atomic_uint64_t presents{0};
+
+static const std::vector<std::string> &
+UserNames() {
+  static const std::vector<std::string> names = [] {
+    std::vector<std::pair<std::string, std::string>> env;
+    if (auto block = GetEnvironmentStringsW()) {
+      for (auto entry = block; *entry; entry += wcslen(entry) + 1) {
+        std::string text = str::fromws(entry);
+        if (auto equals = text.find('=', 1); equals != std::string::npos)
+          env.emplace_back(text.substr(0, equals), text.substr(equals + 1));
+      }
+      FreeEnvironmentStringsW(block);
+    }
+    return session::UserNames(env);
+  }();
+  return names;
 }
 
 template <typename Encoder>
@@ -660,10 +682,9 @@ class MTLD3D12CommandQueueImpl : public MTLD3D12Pageable<MTLD3D12CommandQueue, I
   // an innocent victim of a GPU recovery leaves the one at fault to another command buffer
   void
   ReportGPUError(uint64_t seq, MetalCommandBuffer &cmdbuf, bool first) {
-    static gpu_error::Limiter limiter;
     gpu_error::Report report;
     auto now = std::chrono::steady_clock::now().time_since_epoch();
-    if (!limiter.Allow(std::chrono::duration_cast<std::chrono::nanoseconds>(now).count(), report.suppressed))
+    if (!gpu_error_limiter.Allow(std::chrono::duration_cast<std::chrono::nanoseconds>(now).count(), report.suppressed))
       return;
     WMTGPUError error;
     WMTGetGPUError(cmdbuf.error().handle, &error);
@@ -672,7 +693,7 @@ class MTLD3D12CommandQueueImpl : public MTLD3D12Pageable<MTLD3D12CommandQueue, I
     GetLocalTime(&time);
     report.hour = time.wHour, report.minute = time.wMinute, report.second = time.wSecond;
     report.millisecond = time.wMilliseconds;
-    report.queue = ordinal_, report.cmdbuf = seq, report.frame = presents_.load(std::memory_order_relaxed);
+    report.queue = ordinal_, report.cmdbuf = seq, report.frame = presents.load(std::memory_order_relaxed);
     report.name = text(error.name, sizeof(error.name));
     report.code = error.code;
     report.domain = text(error.domain, sizeof(error.domain));
@@ -687,13 +708,12 @@ class MTLD3D12CommandQueueImpl : public MTLD3D12Pageable<MTLD3D12CommandQueue, I
     }
     report.unlisted = error.unlisted;
     report.text = text(error.text, sizeof(error.text));
+    report.names = UserNames();
     Logger::err(gpu_error::Line(report));
   }
 
-  // the queue's number among its device's, from 1, and the process's Presents so far: MULLION-GPU-ERROR's queue= and
-  // frame=
+  // the queue's number among its device's, from 1: MULLION-GPU-ERROR's queue=
   uint64_t ordinal_ = 0;
-  static inline std::atomic_uint64_t presents_ = 0;
 
 public:
   static void
@@ -1875,6 +1895,7 @@ public:
           if (diag::trace_encoders)
             scope.inflight->physical[WMTMetal4Blit] += 2;
           auto begin = cmdbuf.blitCommandEncoder();
+          DetailLabel(begin, "upscale");
           WaitAll([&](WMT::Fence fence) { begin.waitForFence(fence); });
           begin.updateFence(scaler_fence);
           begin.endEncoding();
@@ -1889,6 +1910,7 @@ public:
             cmdbuf.encodeDenoisedScale(data->denoised->scaler(), args);
           }
           auto end = cmdbuf.blitCommandEncoder();
+          DetailLabel(end, "upscale");
           end.waitForFence(scaler_fence);
           end.updateFence(WMT::Fence(fence_));
           end.endEncoding();
@@ -1917,6 +1939,7 @@ public:
           if (diag::trace_encoders)
             scope.inflight->physical[WMTMetal4Blit]++;
           auto encoder = cmdbuf.blitCommandEncoder();
+          DetailLabel(encoder, "timestamps");
           WaitAll([&](WMT::Fence fence) { encoder.waitForFence(fence); });
           encoder.copyFromBuffer(staging, 0, data->dst, data->dst_offset, data->count * sizeof(uint64_t));
           if constexpr (!Metal4)
@@ -1952,6 +1975,7 @@ public:
             if (diag::trace_encoders)
               scope.inflight->physical[WMTMetal4Blit]++;
             auto encoder = cmdbuf.blitCommandEncoder();
+            DetailLabel(encoder, "later");
             WaitAll([&](WMT::Fence fence) { encoder.waitForFence(fence); });
             if (allocation)
               encoder.copyFromBuffer(allocation->buffer(), offset, staging, 0, length);
@@ -2752,7 +2776,7 @@ public:
       HANDLE hLantecyWaitable, double after, uint64_t id, uint64_t number, ID3D12Resource *previous,
       std::vector<PresentCopy> copies, SpatialScaler *scaler, WMT::Texture upscaled
   ) override {
-    presents_.fetch_add(1, std::memory_order_relaxed);
+    presents.fetch_add(1, std::memory_order_relaxed);
     if (device_->NamesPasses()) {
       std::chrono::steady_clock::time_point unset;
       device_->first_present.compare_exchange_strong(unset, std::chrono::steady_clock::now());
@@ -2825,6 +2849,7 @@ public:
     if (diag::trace_encoders)
       inflight.physical[WMTMetal4Blit]++;
     auto blit = inflight.cmdbuf.blitCommandEncoder();
+    DetailLabel(blit, "frame dump");
     WaitAll([&](WMT::Fence fence) { blit.waitForFence(fence); });
     blit.encodeCommands((const wmtcmd_blit_nop *)&copy);
     if constexpr (!Metal4)
@@ -2873,6 +2898,7 @@ public:
     if (!copies.empty()) {
       auto p = reinterpret_cast<MTLD3D12Resource *>(previous);
       auto blit = cmdbuf.blitCommandEncoder();
+      DetailLabel(blit, "present copy");
       WaitAll([&](WMT::Fence fence) { blit.waitForFence(fence); });
       for (auto [to, from] : copies)
         for (uint32_t eye = 0; eye < g->texture->arrayLength(); eye++) {
@@ -2899,6 +2925,7 @@ public:
     WMT::Texture source = g->texture->view(shown).texture;
     if (scaler && upscaled) {
       auto begin = cmdbuf.blitCommandEncoder();
+      DetailLabel(begin, "upscale");
       WaitAll([&](WMT::Fence fence) { begin.waitForFence(fence); });
       begin.updateFence(scaler->fence());
       begin.endEncoding();

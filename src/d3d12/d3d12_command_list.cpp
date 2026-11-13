@@ -3255,6 +3255,9 @@ public:
       encoder_info = StartClearPass(AttachmentDesc);
     if (!clears_.empty() && clears_.back().pass == encoder_info)
       clears_.back().textures.back() = AttachmentDesc.Texture;
+    // a clear pass joins a depth clear only while it has none
+    if (GPUErrorDetail())
+      encoder_info->targets += TargetLabel(" ds=", AttachmentDesc);
     if (CheckedFlags & D3D12_CLEAR_FLAG_DEPTH) {
       auto &rt = encoder_info->depth;
       rt.attachment = AttachmentDesc.Texture->view(AttachmentDesc.View);
@@ -3318,6 +3321,8 @@ public:
     if (!clears_.empty() && clears_.back().pass == encoder_info)
       clears_.back().textures[slot] = AttachmentDesc.Texture;
     auto &rt = encoder_info->colors[slot];
+    if (GPUErrorDetail() && !rt.attachment)
+      encoder_info->targets += TargetLabel(str::format(" rt", slot, "="), AttachmentDesc);
     rt.attachment = AttachmentDesc.Texture->view(AttachmentDesc.View);
     rt.depth_plane = AttachmentDesc.DepthPlane;
     rt.load_action = WMTLoadActionClear;

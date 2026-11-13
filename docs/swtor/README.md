@@ -101,13 +101,17 @@ removed. [`tests/swtor/fixtures/session.log`](../../tests/swtor/fixtures/session
   `MULLION_GPU_ERROR_DETAIL=1`, which asks Metal for the list. Metal 4's command buffers have no such option, so on
   Metal 4 the list is whatever Metal's error has (not seen yet on a Mac).
 - A label, with `MULLION_GPU_ERROR_DETAIL=1`, is the pass's kind (`render`, `clear`, `compute`, `blit`,
-  `acceleration`, and the driver's own `indirect`, `indirect copy`, `ClearPass`, `ResolvePass`), its first pipeline by
-  the first 8 hexadecimal digits of each of its shaders' SHA-1 (as `MULLION_SHADER_DUMP_PATH` names them), and a render
-  pass's targets, ` rt0=1920x1080 RGBA8 "SceneColor" ds=1920x1080 D32F`, with the name the game gave the resource
-  (`SetName`) when it gave one. The line cuts each label to 40 bytes, and a `'` in it prints as `"`. Metal's label keeps
-  up to 120 bytes. The present's, the timestamps' and the upscaler's encoders have no label.
+  `acceleration`, and the driver's own `indirect`, `indirect copy`, `upscale`, `timestamps`, `later`, `present copy`,
+  `frame dump`, `ResolvePass`), its first pipeline by the first 8 hexadecimal digits of each of its shaders' SHA-1 (as
+  `MULLION_SHADER_DUMP_PATH` names them), joined by `+`, and a render or clear pass's targets,
+  ` rt0=1920x1080 RGBA8 "SceneColor" ds=1920x1080 D32F`, with the name the game gave the resource (`SetName`) when it
+  gave one. The line cuts each label to 40 bytes, and a `'` in it prints as `"`. Metal's label keeps up to 120 bytes.
+  The upscaler's and the presenter's own encoders, outside the queue, have no label.
 - After ` | `: Metal's own text (`localizedDescription`), printable ASCII, at most 200 bytes, an address of 6
-  hexadecimal digits or more as `0x?` and a word that is a path as `(a path)`.
+  hexadecimal digits or more as `0x?`.
+- What comes from outside (Metal's text, a label, a domain) keeps the rules below: a word with `/` or `\` in it, or
+  starting with `~`, prints as `(a path)` (a `file:` URL too), and a field that has the user's or the computer's name in
+  it, by the session header's rule, as `(a name)`.
 - `[<n> earlier lines suppressed]`: the limit, 30 lines in 10 s for the process, left out that many since the last line.
 
 What it can't say: Metal's error has no faulting address, so the line names the pass and what the pass was built to
