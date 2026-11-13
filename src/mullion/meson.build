@@ -23,6 +23,7 @@ mullion_src = [
   'mullion_counter.cpp',
   'mullion_fence.cpp',
   'mullion_keyed_mutex.cpp',
+  'mullion_session.cpp',
 ]
 
 mullion_shaders = [

@@ -2086,6 +2086,16 @@ WMTDeviceReport(obj_handle_t device, char *buffer, uint64_t size) {
 }
 
 WINEMETAL_API void
+WMTGetSessionFacts(obj_handle_t device, const char *cache_path, struct WMTSessionFacts *facts) {
+  struct unixcall_wmtsession_facts params;
+  *facts = (struct WMTSessionFacts){.cache_bytes = -1};
+  params.device = device;
+  WMT_MEMPTR_SET(params.cache_path, cache_path);
+  WMT_MEMPTR_SET(params.facts, facts);
+  UNIX_CALL(WMTUnixGetSessionFacts, &params);
+}
+
+WINEMETAL_API void
 MTLCommandBuffer_pushDebugGroup(obj_handle_t cmdbuf, obj_handle_t name) {
   struct unixcall_generic_obj_obj_noret params;
   params.handle = cmdbuf;

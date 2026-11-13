@@ -1,5 +1,6 @@
 #import <Foundation/Foundation.h>
 #include "sqlite3.h"
+#include <sys/stat.h>
 #define WINEMETAL_API
 #include "../winemetal_thunks.h"
 
@@ -255,6 +256,25 @@ _CacheWriter_set(void *obj) {
   [writer set:key value:(dispatch_data_t)params->value_data];
   [key release];
   return 0;
+}
+
+// the session header's size of a cache's file: 0 without it, -1 when it can't be told. it only looks, where
+// resolve_cache_dir would make the directory
+int64_t
+cache_file_size(const char *path) {
+  NSString *file = [NSString stringWithUTF8String:path];
+  if (!file)
+    return -1;
+  if (![file hasPrefix:@"/"]) {
+    char buf[PATH_MAX];
+    if (!confstr(_CS_DARWIN_USER_CACHE_DIR, buf, sizeof(buf)))
+      return -1;
+    file = [[NSString stringWithUTF8String:buf] stringByAppendingPathComponent:file];
+  }
+  struct stat st;
+  if (stat(file.fileSystemRepresentation, &st))
+    return errno == ENOENT ? 0 : -1;
+  return st.st_size;
 }
 
 #ifndef MULLION_NO_PRIVATE_API

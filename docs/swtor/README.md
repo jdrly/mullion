@@ -8,13 +8,78 @@ How a switch is declared: [ADR 0001](adr/0001-switches.md).
 
 ## Switches
 
+A fork switch is declared once, at namespace scope, in the file that reads it, through
+[`src/util/util_switch.hpp`](../../src/util/util_switch.hpp):
+
+```cpp
+static sw::Switch<bool> kFoo{"MULLION_FOO", true, sw::notZero}; // kFoo() reads the environment at each call
+```
+
+The declaration gives the name, the default and the grammar (`sw::notZero` for `!= "0"`, `sw::exactlyOne` for
+`== "1"`, or a parser of its own). Declaring it puts it on the session header's `switches` line with its value at
+that moment; nothing else is edited. Upstream's variables aren't declared: the header's `env` line shows the ones that
+are set.
+
 | Variable | Default | What it does | Off restores |
 |---|---|---|---|
+| `MULLION_SESSION_HEADER` | off (`1` turns it on) | Writes the session header (below) when the first Direct3D 12 device is created, with one read-only bridge call for what the Windows side can't read. Off until the Mac run shows the header right on an M1 and an M5 Max; SWTOR on Mac's DX12 dev build turns it on | No header and no bridge call for it |
 
 ## Log lines
 
 | Line | When | Where it lands | Who reads it |
 |---|---|---|---|
+| `Mullion: session <version> (jdrly/mullion swtor-on-mac) d3d12 fl= metal4= shaderMetal= airconv= codegen=` | With `MULLION_SESSION_HEADER=1`, once per process, when the first Direct3D 12 device is created, before its feature level is checked | `d3d12.log` (Wine's output, `wine.log` in the app), at `info` | The app's session report; me, first in every log |
+| `Mullion: mac macOS= build= gpu="" family= masked= ram= workingSet= arch= supportsPlacementSparse=` | With the session line | The same | The same |
+| `Mullion: switches <NAME=value …>` or `none` | With the session line | The same | The same |
+| `Mullion: env <NAME=value …>` or `none` | With the session line | The same | The same |
+| `Mullion: cache shaders= entries= sizeMiB=` | With the session line | The same | The same |
+
+### The session header
+
+What a session ran with, in five lines written together, at `info`, with `MULLION_SESSION_HEADER=1`. Without it (the
+default), or with `MULLION_LOG_LEVEL=warn` or above, nothing is written or read for them.
+[`tests/swtor/fixtures/session.log`](../../tests/swtor/fixtures/session.log) is a sample;
+`host_session` fails when the formatter stops writing it, and the app's session report tests copy it. The field names
+and their order are the contract: a field is added at the end of its line, and a renamed or moved field changes the
+fixture in the same pull request.
+
+- `session`: `MULLION_VERSION` (`git describe` of the build); the API; `fl` the device's feature level; `metal4` `on`,
+  `off` (`MULLION_D3D12_METAL4=0`) or `unsupported` (no Metal 4 family); `shaderMetal` the Metal version shaders are
+  converted for (310, 320, 400); `airconv` `AIRCONV_VERSION`; `codegen` the converter's codegen id, `n/a` until the
+  shader cache keys on one (private ticket 18).
+- `mac`: `macOS` the version; `build` the macOS build (`kern.osversion`); `gpu` Metal's device name; `family` the
+  GPU's own newest Apple family, past `MULLION_GPU_FAMILY`; `masked` the family the bridge answers as when
+  `MULLION_GPU_FAMILY` is set, else `no`; `ram` and `workingSet` (the device's recommended maximum) in MiB; `arch` the
+  DLL's architecture, `-rosetta` when the process is translated; `supportsPlacementSparse` 1 or 0, the bridge's
+  answer (0 below macOS 26.4).
+- `switches`: every switch declared in `d3d12.dll`, by name, with its value now: a bool as `on` or `off`, a number as
+  its digits.
+- `env`: every `MULLION_*`, `DXMT_*` and `MTL_*` variable set (names of letters, digits and `_`), by name.
+- `cache`: the shader cache's file below the user's cache directory (`off` with `MULLION_SHADER_CACHE=0`); `entries`
+  its rows, `n/a` until private ticket 18 counts them (the cache is a SQLite WAL database, and a connection to one
+  rewrites its `-shm`, while reading the file alone races a writer in another process); and the file's size in MiB
+  (0 without it), from a `stat`.
+
+`build`, `family`, `masked`, `ram`, `arch`'s `-rosetta` and the cache's size come from the bridge
+(`WMTGetSessionFacts`), which only reads: it keeps no state and makes no Metal object. A value it can't read is `n/a`.
+
+Rules every fork log line keeps, this header first:
+
+- `key=value` fields with a space before each key, and no line of 900 bytes or more, so Wine (1018 bytes) never splits
+  one. A longer line goes on as `Mullion: <line>+ …` from the field that doesn't fit.
+- No absolute host path, user name or home folder. A value from outside Mullion (a variable's, a switch's string)
+  follows the app's rule for its own header: one with `/` or `\` prints as `(a path)`, the rest keeps only
+  `A-Za-z0-9,.;:_+=-`, cut to 80 characters. The cache's directory prints relative to the user's cache directory,
+  and as `(a path)` when `MULLION_SHADER_CACHE_PATH` makes it absolute.
+- No user's or computer's name. A value with one in it, in any case, prints as `(a name)`, and a variable whose name
+  has one isn't listed. The names are the environment's `USER`, `LOGNAME`, `USERNAME`, `COMPUTERNAME` and `HOSTNAME`
+  and the last folder of `HOME` and `USERPROFILE`, their names in any case as Windows reads them; one of 2 or 3
+  characters counts only as a whole word, as in the app's leak check. The Mac's full name and other names the app redacts aren't known here: the app's log bundle
+  still redacts them.
+- No field named `session`, `token`, `account`, `user`, `user_name` or `email`: the app's log bundle blanks such a
+  value and drops a file that still names the user. The header's first word is `session` and a space, never
+  `session=`.
+- One write per line, and a header-only formatter with a host test whose control was seen failing.
 
 ## CI
 

@@ -1,0 +1,12 @@
+# a value that has the user's login in it prints as it is
+--- a/src/mullion/mullion_session.hpp
++++ b/src/mullion/mullion_session.hpp
+@@ -73,7 +73,7 @@
+   for (char c : raw)
+     if (Kept(c) && kept.size() < kValueLimit)
+       kept += c;
+-  return Names(raw, names) || Names(kept, names) ? "(a name)" : kept;
++  return kept;
+ }
+ 
+ // a line's text after "Mullion: <head> ": `name=value`, or the value alone when it has no name

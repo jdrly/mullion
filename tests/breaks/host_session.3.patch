@@ -1,0 +1,12 @@
+# a Windows path prints as it is: only / makes a value a path
+--- a/src/mullion/mullion_session.hpp
++++ b/src/mullion/mullion_session.hpp
+@@ -67,7 +67,7 @@
+ // has one of `names` in it, before or after, is "(a name)"
+ inline std::string
+ Value(std::string_view raw, const std::vector<std::string> &names = {}) {
+-  if (raw.find_first_of("/\\") != std::string_view::npos)
++  if (raw.find_first_of("/") != std::string_view::npos)
+     return "(a path)";
+   std::string kept;
+   for (char c : raw)

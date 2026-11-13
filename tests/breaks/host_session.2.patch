@@ -1,0 +1,12 @@
+# a line never wraps: the env line passes 900 bytes
+--- a/src/mullion/mullion_session.hpp
++++ b/src/mullion/mullion_session.hpp
+@@ -90,7 +90,7 @@
+   std::vector<std::string> lines{first + (fields.empty() && !empty.empty() ? " " + std::string(empty) : "")};
+   for (auto &field : fields) {
+     std::string text = " " + (field.name.empty() ? field.value : field.name + "=" + field.value);
+-    if (lines.back().size() + text.size() >= kLineLimit && lines.back().size() > next.size())
++    if (false && lines.back().size() > next.size())
+       lines.push_back(next);
+     lines.back() += text.substr(0, kLineLimit - 1 - lines.back().size());
+   }
