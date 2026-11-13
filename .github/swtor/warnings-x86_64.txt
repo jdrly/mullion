@@ -153,7 +153,5 @@ src/d3d12/d3d12_pipeline_graphics.cpp: warning: 'GetDepthStencilState' overrides
 src/d3d12/d3d12_pipeline_graphics.cpp: warning: 'QueryInterface' overrides a member function but is not marked 'override' [-Winconsistent-missing-override]
 src/d3d12/d3d12_pipeline_graphics.cpp: warning: conditional expression between different enumeration types ('(unnamed enum at ../src/airconv/airconv_public.h:424:1)' and '(unnamed enum at ../src/airconv/airconv_public.h:720:1)') is deprecated [-Wdeprecated-anon-enum-enum-conversion]
 src/d3d12/d3d12_sampler.cpp: warning: case value not in enumerated type 'D3D12_STATIC_BORDER_COLOR' (aka 'enum D3D12_STATIC_BORDER_COLOR') [-Wswitch]
-src/winemetal/unix/winemetal_unix.c: warning: & has lower precedence than ==; == will be evaluated first [-Wparentheses]
-src/winemetal/unix/winemetal_unix.c: warning: comparison of integers of different signs: 'BOOL' (aka 'signed char') and 'enum WMTColorSpace' [-Wsign-compare]
 src/winemetal/unix/winemetal_unix.c: warning: enumeration value 'SM50_SHADER_LIBRARIES' not handled in switch [-Wswitch]
 src/winemetal/unix/winemetal_unix.c: warning: missing field 'ret' initializer [-Wmissing-field-initializers]
