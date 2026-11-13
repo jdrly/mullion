@@ -9,14 +9,21 @@
 static _Atomic uint64_t sent, applied;
 // when the main thread last applied a change, or was sent one with none waiting
 static _Atomic uint64_t since_ns;
-// how many of the watch's lines this wait has written
-static _Atomic int said;
+// `applied` when the main thread last applied a change, shifted left by 2, and how many `applied=no` lines the wait
+// after it has written: a line of a wait that has just ended can't be written after that change's `applied=yes`
+static _Atomic uint64_t said;
 static atomic_bool watching;
 static const uint64_t marks_ms[] = {1000, 5000, 30000};
 
 static uint64_t
 now_ns(void) {
   return clock_gettime_nsec_np(CLOCK_UPTIME_RAW);
+}
+
+// ms from `since` to `now`, 0 when another thread's `since` came later
+static uint64_t
+since_ms(uint64_t since, uint64_t now) {
+  return now > since ? (now - since) / NSEC_PER_MSEC : 0;
 }
 
 static void watch(void);
@@ -43,11 +50,13 @@ watch(void) {
     if (atomic_load(&applied) == atomic_load(&sent) || atomic_exchange(&watching, true))
       return;
   }
-  uint64_t ms = (now_ns() - atomic_load(&since_ns)) / NSEC_PER_MSEC;
-  int was = atomic_load(&said), due = was;
+  uint64_t done = atomic_load(&applied);
+  uint64_t ms = since_ms(atomic_load(&since_ns), now_ns());
+  uint64_t was = atomic_load(&said), due = was & 3;
   while (due < 3 && ms >= marks_ms[due])
     due++;
-  if (due > was && atomic_compare_exchange_strong(&said, &was, due))
+  // not while the main thread is between applying a change and saying so
+  if (was >> 2 == done && due > (was & 3) && atomic_compare_exchange_strong(&said, &was, done << 2 | due))
     fprintf(stderr, "mullion: layer mainThreadWaitMs=%llu applied=no\n", (unsigned long long)ms);
   watch_later();
 }
@@ -56,9 +65,9 @@ watch(void) {
 static void
 applied_one(void) {
   uint64_t now = now_ns();
-  uint64_t ms = (now - atomic_exchange(&since_ns, now)) / NSEC_PER_MSEC;
-  atomic_fetch_add(&applied, 1);
-  if (atomic_exchange(&said, 0))
+  uint64_t ms = since_ms(atomic_exchange(&since_ns, now), now);
+  uint64_t done = atomic_fetch_add(&applied, 1) + 1;
+  if (atomic_exchange(&said, done << 2) & 3)
     fprintf(stderr, "mullion: layer mainThreadWaitMs=%llu applied=yes\n", (unsigned long long)ms);
 }
 
@@ -88,8 +97,8 @@ to_main(bool wait, dispatch_block_t set) {
 }
 
 // the newest change of each kind sent without waiting, and its number: it waits while that is above `applied`, and
-// the layer ends with it. `name` is a constant (kCGColorSpace...). a present whose layer holds what it asks, with no
-// change waiting, reads neither
+// the layer ends with it. `name` is a constant (kCGColorSpace...). a present whose layer holds what it asks reads
+// neither and takes no lock, unless a change to any layer is still waiting: the counters are the process's
 static pthread_mutex_t asked_lock = PTHREAD_MUTEX_INITIALIZER;
 static struct {
   CAMetalLayer *layer;
@@ -125,9 +134,10 @@ layer_set_props(CAMetalLayer *layer, const struct WMTLayerProps *asked, bool wai
   // a copy: without `wait` the main thread sets it after the caller has returned
   struct WMTLayerProps props = *asked;
   // a present asks each frame, and only a change goes to the main thread. without `wait`, while changes are on their
-  // way the layer isn't what it will hold
-  bool held = holds_props(layer, &props);
-  if (held && (wait || atomic_load(&applied) == atomic_load(&sent)))
+  // way the layer isn't what it will hold. the counters are read before the layer: a change the main thread applies
+  // after them has to be one sent after them
+  bool idle = atomic_load(&applied) == atomic_load(&sent);
+  if ((wait || idle) && holds_props(layer, &props))
     return;
   dispatch_block_t set = ^{
     layer.device = (id<MTLDevice>)props.device;
@@ -146,7 +156,7 @@ layer_set_props(CAMetalLayer *layer, const struct WMTLayerProps *asked, bool wai
   // the newest change still waiting is what the layer will hold when it is this layer's. another layer's may have one
   // of this layer's behind it
   bool waiting = asked_props.number > atomic_load(&applied);
-  if (waiting ? asked_props.layer != layer || !same_props(&asked_props.props, &props) : !held) {
+  if (waiting ? asked_props.layer != layer || !same_props(&asked_props.props, &props) : !holds_props(layer, &props)) {
     asked_props.layer = layer;
     asked_props.props = props;
     asked_props.number = to_main(false, set);
@@ -154,19 +164,24 @@ layer_set_props(CAMetalLayer *layer, const struct WMTLayerProps *asked, bool wai
   pthread_mutex_unlock(&asked_lock);
 }
 
-bool
-layer_set_colorspace(CAMetalLayer *layer, CFStringRef name, bool hdr, bool wait) {
+static bool
+holds_colorspace(CAMetalLayer *layer, CFStringRef name, bool hdr) {
   CFStringRef current = layer.colorspace ? CGColorSpaceGetName(layer.colorspace) : NULL;
   // compared as bools: the layer may hold a 4, from WMT_COLORSPACE_IS_HDR's `x & 0b100`
-  bool held = current && CFEqual(current, name) && (bool)layer.wantsExtendedDynamicRangeContent == hdr;
-  if (held && (wait || atomic_load(&applied) == atomic_load(&sent)))
+  return current && CFEqual(current, name) && (bool)layer.wantsExtendedDynamicRangeContent == hdr;
+}
+
+bool
+layer_set_colorspace(CAMetalLayer *layer, CFStringRef name, bool hdr, bool wait) {
+  // as layer_set_props
+  bool idle = atomic_load(&applied) == atomic_load(&sent);
+  if ((wait || idle) && holds_colorspace(layer, name, hdr))
     return true;
   if (!wait) {
-    // as layer_set_props
     pthread_mutex_lock(&asked_lock);
     bool waiting = asked_colorspace.number > atomic_load(&applied);
     bool same = asked_colorspace.layer == layer && CFEqual(asked_colorspace.name, name) && asked_colorspace.hdr == hdr;
-    if (waiting ? same : held) {
+    if (waiting ? same : holds_colorspace(layer, name, hdr)) {
       pthread_mutex_unlock(&asked_lock);
       return true;
     }

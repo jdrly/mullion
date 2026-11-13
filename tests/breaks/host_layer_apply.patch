@@ -1,7 +1,7 @@
 # MULLION_LAYER_WAIT=0 waits for the main thread again: dispatch_sync, as upstream
 --- a/src/winemetal/unix/layer.c
 +++ b/src/winemetal/unix/layer.c
-@@ -83,7 +83,7 @@
+@@ -92,7 +92,7 @@
    if (wait)
      dispatch_sync(dispatch_get_main_queue(), block);
    else

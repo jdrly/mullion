@@ -1,12 +1,12 @@
 # a change compared only with the layer, not with the change still on its way: an older size lands last
 --- a/src/winemetal/unix/layer.c
 +++ b/src/winemetal/unix/layer.c
-@@ -146,7 +146,7 @@
+@@ -156,7 +156,7 @@
    // the newest change still waiting is what the layer will hold when it is this layer's. another layer's may have one
    // of this layer's behind it
    bool waiting = asked_props.number > atomic_load(&applied);
--  if (waiting ? asked_props.layer != layer || !same_props(&asked_props.props, &props) : !held) {
-+  if (!held) {
+-  if (waiting ? asked_props.layer != layer || !same_props(&asked_props.props, &props) : !holds_props(layer, &props)) {
++  if (!holds_props(layer, &props)) {
      asked_props.layer = layer;
      asked_props.props = props;
      asked_props.number = to_main(false, set);

@@ -74,13 +74,16 @@ change(CAMetalLayer *layer, bool wait, double width, double height, CFStringRef 
   // how long the calls took, -1 until they return
   static _Atomic int64_t took;
   atomic_store(&took, -1);
-  dispatch_semaphore_t held = dispatch_semaphore_create(0);
+  dispatch_semaphore_t started = dispatch_semaphore_create(0), held = dispatch_semaphore_create(0);
   dispatch_async(dispatch_get_global_queue(QOS_CLASS_USER_INITIATED, 0), ^{
+    dispatch_semaphore_signal(started);
     uint64_t start = now_ms();
     layer_set_props(layer, &props, wait);
     CHECK(layer_set_colorspace(layer, colorspace, false, wait));
     atomic_store(&took, (int64_t)(now_ms() - start));
   });
+  // the hold starts with the calls, so that the 1 s line has come by its end
+  dispatch_semaphore_wait(started, DISPATCH_TIME_FOREVER);
   dispatch_semaphore_wait(held, dispatch_time(DISPATCH_TIME_NOW, 2 * NSEC_PER_SEC));
   int64_t returned = atomic_load(&took);
   printf("wait=%d: the calls took %lld ms while the main thread was held\n", wait, (long long)returned);

@@ -22,6 +22,10 @@ Presenter::Presenter(WMT::Device device, WMT::MetalLayer layer, InternalCommandL
     layer_wait_(kLayerWait()),
     sample_count_(sample_count),
     window_(window) {
+  // MULLION_LAYER_WAIT=0 is new behaviour: the log says so, once per process
+  static std::atomic_bool said;
+  if (!layer_wait_ && !said.exchange(true))
+    Logger::info("Mullion: layer wait=0");
   layer_.getProps(layer_props_);
   native_contents_scale_ = layer_props_.contents_scale;
   layer_props_.device = device;
