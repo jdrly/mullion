@@ -131,14 +131,14 @@ Rules every fork log line keeps, this header first:
   macOS 26 Mac in d9mt); bytes 12 to 15, the macOS version, 15.0; and each function's `VERS` tag, AIR 2.7 and Metal
   3.2. The library isn't in the shader cache, so the change reconverts nothing.
 
+  The fourth break, for the build checks, is a copy of the staged files with a file the archive doesn't ship and
+  without `SOURCE`, its `winemetal.so` unsigned, with an LLVM source path appended and `minos` 26.0, and
+  `d3d12core.dll`'s internal library tagged 2.9 with its first function AIR 2.9. Each of the seven has to fail.
+
   The fifth break guards `host_layer_apply`, which runs the bridge's layer setters (`src/winemetal/unix/layer.c`) on
   a `CAMetalLayer` without a device while the test's main thread is held for 2 s without its run loop. Its two patches
   in `tests/breaks/` put `dispatch_sync` back on `MULLION_LAYER_WAIT=0`'s path, and compare a change only with the
   layer, not with the change still on its way to the main thread. The test has to fail on each.
-
-  The fourth break, for the build checks, is a copy of the staged files with a file the archive doesn't ship and
-  without `SOURCE`, its `winemetal.so` unsigned, with an LLVM source path appended and `minos` 26.0, and
-  `d3d12core.dll`'s internal library tagged 2.9 with its first function AIR 2.9. Each of the seven has to fail.
 - **Publish** (`ubuntu-24.04`, after the other jobs): packs the artifact into `mullion-swtor-<commit>.tar.xz` and
   checks that it unpacks to the same files, hash for hash. Only for a push to `swtor-on-mac` does it upload the archive
   (§ Releases). It is the only job with `contents: write`.
