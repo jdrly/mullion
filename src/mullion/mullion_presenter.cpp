@@ -6,16 +6,26 @@
 #include "mullion_diag.hpp"
 #include "util_likely.hpp"
 #include "util_math.hpp"
+#include "util_switch.hpp"
 
 
 namespace mullion {
+
+// 1: a present that changes its layer waits for the main thread to set it, as upstream does. 0: it goes on, and the
+// main thread sets it later, in the order asked (src/winemetal/unix/layer.c)
+static sw::Switch<bool> kLayerWait{"MULLION_LAYER_WAIT", true, sw::notZero};
 
 Presenter::Presenter(WMT::Device device, WMT::MetalLayer layer, InternalCommandLibrary &lib, float scale_factor, uint8_t sample_count, HWND window) :
     device_(device),
     layer_(layer),
     lib_(lib),
+    layer_wait_(kLayerWait()),
     sample_count_(sample_count),
     window_(window) {
+  // MULLION_LAYER_WAIT=0 is new behaviour: the log says so, once per process
+  static std::atomic_bool said;
+  if (!layer_wait_ && !said.exchange(true))
+    Logger::info("Mullion: layer wait=0");
   layer_.getProps(layer_props_);
   native_contents_scale_ = layer_props_.contents_scale;
   layer_props_.device = device;
@@ -178,8 +188,8 @@ Presenter::encodeCommands(
   const auto &metadata = state.metadata;
   double width = state.layer_props.drawable_width;
   double height = state.layer_props.drawable_height;
-  layer_.setProps(state.layer_props);
-  layer_.setColorSpace(state.colorspace);
+  layer_.setProps(state.layer_props, layer_wait_);
+  layer_.setColorSpace(state.colorspace, layer_wait_);
 
   auto drawable = layer_ ? layer_.nextDrawable() : WMT::MetalDrawable{};
   auto number = ++frames_;
@@ -200,6 +210,11 @@ Presenter::encodeCommands(
     window_target_ = device_.newTexture(texture_info);
   }
   WMT::Texture target = drawable ? drawable.texture() : window_target_;
+  // a size the main thread hasn't set yet isn't the drawable's: draw to the size it has
+  if (!layer_wait_ && drawable) {
+    width = target.width();
+    height = target.height();
+  }
 
   WMTRenderPassInfo info;
   WMT::InitializeRenderPassInfo(info);

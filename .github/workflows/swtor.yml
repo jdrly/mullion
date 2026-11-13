@@ -220,7 +220,7 @@ jobs:
           { echo '### The build'; echo '```'; cat "$RUNNER_TEMP/check.txt"; echo '```'; } >>"$GITHUB_STEP_SUMMARY"
           exit "$status"
 
-      # tests/host/meson.build: thirteen tests, each with meson's 30 s timeout but host_tessellator's
+      # tests/host/meson.build: fourteen tests, each with meson's 30 s timeout but host_tessellator's
       # 300 s; none builds the tree or waits on a GPU
       - name: Host tests
         if: github.event_name == 'pull_request'
@@ -235,7 +235,8 @@ jobs:
           # reads the machine's real memory pressure; on this runner they ran one after the other (run
           # 43498464580)
           skip=(--exclude host_mutate)
-          # host_tessellator takes about 200 s here (x86_64 under Rosetta), the other ten about 18 s: it runs
+          # host_tessellator takes about 200 s here (x86_64 under Rosetta), the other ten before
+          # host_layer_apply about 18 s, and host_layer_apply holds its main thread for 2 s twice: it runs
           # when the pull request changes what it compiles or how, or when that can't be told. all of
           # src/airconv, so that a header it comes to include there can't slip past
           if git fetch -q origin "$BASE" && git diff --quiet "$BASE" HEAD -- \
@@ -313,7 +314,21 @@ jobs:
           grep -q '^FAIL  x86_64-unix/winemetal\.so: no ad hoc signature that verifies' "$RUNNER_TEMP/broken.txt"
           grep -qE '^FAIL  x86_64-windows/d3d12core\.dll: internal metallib at 0x[0-9a-f]+: container 2\.9 ' "$RUNNER_TEMP/broken.txt"
           grep -qE '^FAIL  x86_64-windows/d3d12core\.dll: internal metallib at 0x[0-9a-f]+: [0-9]+ of [0-9]+ functions AIR 2\.7 Metal 3\.2, 1 AIR 2\.9 Metal 3\.2$' "$RUNNER_TEMP/broken.txt"
-          echo "all four checks failed on their break"
+          # the layer's setters (tests/breaks/host_layer_apply*.patch): with MULLION_LAYER_WAIT=0 waiting for the main
+          # thread again, and with a change compared only with the layer. host_layer_apply has to fail on each, at
+          # the call that waited and at the size that landed last
+          for n in "" .2; do
+            git apply "tests/breaks/host_layer_apply$n.patch"
+            status=0
+            meson test -C build host_layer_apply --print-errorlogs >"$RUNNER_TEMP/layer$n.txt" 2>&1 || status=$?
+            git apply -R "tests/breaks/host_layer_apply$n.patch"
+            cat "$RUNNER_TEMP/layer$n.txt"
+            [[ $status != 0 ]]
+          done
+          [[ -z $(git status --porcelain -- src/winemetal) ]]
+          grep -qF 'failed: returned >= 0 && returned < 100' "$RUNNER_TEMP/layer.txt"
+          grep -qF 'failed: CGSizeEqualToSize(layer.drawableSize, CGSizeMake(800, 600))' "$RUNNER_TEMP/layer.2.txt"
+          echo "all five checks failed on their break"
 
       # last, so that a run that only adds a warning still shows everything above
       - name: No new warnings

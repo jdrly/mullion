@@ -1072,10 +1072,11 @@ MTLDevice_supportsFXTemporalScaler(obj_handle_t device) {
 };
 
 WINEMETAL_API void
-MetalLayer_setProps(obj_handle_t layer, const struct WMTLayerProps *props) {
-  struct unixcall_generic_obj_constptr_noret params;
-  params.handle = layer;
-  WMT_MEMPTR_SET(params.arg, props);
+MetalLayer_setProps(obj_handle_t layer, const struct WMTLayerProps *props, bool wait) {
+  struct unixcall_metal_layer_set_props params;
+  params.layer = layer;
+  WMT_MEMPTR_SET(params.props, props);
+  params.wait = wait;
   UNIX_CALL(70, &params);
 }
 
@@ -1175,10 +1176,11 @@ CGColorSpace_checkColorSpaceSupported(enum WMTColorSpace colorspace) {
 }
 
 WINEMETAL_API bool
-MetalLayer_setColorSpace(obj_handle_t layer, enum WMTColorSpace colorspace) {
-  struct unixcall_generic_obj_uint64_uint64_ret params;
-  params.handle = layer;
-  params.arg = colorspace;
+MetalLayer_setColorSpace(obj_handle_t layer, enum WMTColorSpace colorspace, bool wait) {
+  struct unixcall_metal_layer_set_colorspace params;
+  params.layer = layer;
+  params.colorspace = colorspace;
+  params.wait = wait;
   params.ret = 0;
   UNIX_CALL(93, &params);
   return params.ret;

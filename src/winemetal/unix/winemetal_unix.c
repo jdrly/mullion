@@ -19,6 +19,7 @@
 #define WINEMETAL_API
 #include "../winemetal_thunks.h"
 #include "../airconv_thunks.h"
+#include "layer.h"
 
 typedef int NTSTATUS;
 #define STATUS_SUCCESS 0
@@ -2350,25 +2351,8 @@ _MTLDevice_supportsFXDenoisedScaler(void *obj) {
 
 static NTSTATUS
 _MetalLayer_setProps(void *obj) {
-  struct unixcall_generic_obj_constptr_noret *params = obj;
-  CAMetalLayer *layer = (CAMetalLayer *)params->handle;
-  const struct WMTLayerProps *props = params->arg.ptr;
-  // a present sets them all each frame, and each setting waits for the main thread: only a change is set
-  if (layer.device == (id<MTLDevice>)props->device && layer.opaque == props->opaque &&
-      layer.framebufferOnly == props->framebuffer_only && layer.contentsScale == props->contents_scale &&
-      layer.displaySyncEnabled == props->display_sync_enabled &&
-      CGSizeEqualToSize(layer.drawableSize, CGSizeMake(props->drawable_width, props->drawable_height)) &&
-      layer.pixelFormat == to_metal_pixel_format(props->pixel_format))
-    return STATUS_SUCCESS;
-  execute_on_main(^{
-    layer.device = (id<MTLDevice>)props->device;
-    layer.opaque = props->opaque;
-    layer.framebufferOnly = props->framebuffer_only;
-    layer.contentsScale = props->contents_scale;
-    layer.displaySyncEnabled = props->display_sync_enabled;
-    layer.drawableSize = CGSizeMake(props->drawable_width, props->drawable_height);
-    layer.pixelFormat = to_metal_pixel_format(props->pixel_format);
-  });
+  struct unixcall_metal_layer_set_props *params = obj;
+  layer_set_props((CAMetalLayer *)params->layer, params->props.ptr, params->wait);
   return STATUS_SUCCESS;
 }
 
@@ -3217,30 +3201,12 @@ _CGColorSpace_checkColorSpaceSupported(void *obj) {
 
 static NTSTATUS
 _MetalLayer_setColorSpace(void *obj) {
-  struct unixcall_generic_obj_uint64_uint64_ret *params = obj;
-  CAMetalLayer *layer = (CAMetalLayer *)params->handle;
-  enum WMTColorSpace colorspace = params->arg;
+  struct unixcall_metal_layer_set_colorspace *params = obj;
+  enum WMTColorSpace colorspace = params->colorspace;
   CFStringRef name = GetColorSpaceName(colorspace);
-  params->ret = false;
-  if (!name)
-    return STATUS_SUCCESS;
-  CFStringRef current = layer.colorspace ? CGColorSpaceGetName(layer.colorspace) : NULL;
-  // a present sets it each frame, and setting it waits for the main thread: an unchanged one is not set. both sides
-  // are bools: the macro's `x & 0b100` is 0 or 4, and the layer may hold the 4 it was set to
-  if (current && CFEqual(current, name) &&
-      (bool)layer.wantsExtendedDynamicRangeContent == (bool)(WMT_COLORSPACE_IS_HDR(colorspace))) {
-    params->ret = true;
-    return STATUS_SUCCESS;
-  }
-  CGColorSpaceRef ref = CGColorSpaceCreateWithName(name);
-  if (!ref)
-    return STATUS_SUCCESS;
-  execute_on_main(^{
-    layer.colorspace = ref;
-    layer.wantsExtendedDynamicRangeContent = WMT_COLORSPACE_IS_HDR(colorspace);
-    CGColorSpaceRelease(ref);
-  });
-  params->ret = true;
+  params->ret = name && layer_set_colorspace(
+                            (CAMetalLayer *)params->layer, name, WMT_COLORSPACE_IS_HDR(colorspace), params->wait
+                        );
   return STATUS_SUCCESS;
 }
 

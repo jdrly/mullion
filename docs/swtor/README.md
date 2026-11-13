@@ -22,6 +22,7 @@ are set.
 
 | Variable | Default | What it does | Off restores |
 |---|---|---|---|
+| `MULLION_LAYER_WAIT` | `1` | `1`: a present that changes its layer (size, pixel format, scale, colour space) waits for the main thread to set the change, as upstream does. `0`: it goes on, the main thread sets the change later in the order asked (`src/winemetal/unix/layer.c`), and the present draws to the size of the drawable it got. Read once per swap chain. | `1` is upstream's behaviour |
 | `MULLION_SESSION_HEADER` | off (`1` turns it on) | Writes the session header (below) when the first Direct3D 12 device is created, with one read-only bridge call for what the Windows side can't read. Off until the Mac run shows the header right on an M1 and an M5 Max; SWTOR on Mac's DX12 dev build turns it on | No header and no bridge call for it |
 
 ## Log lines
@@ -33,6 +34,9 @@ are set.
 | `Mullion: switches <NAME=value …>` or `none` | With the session line | The same | The same |
 | `Mullion: env <NAME=value …>` or `none` | With the session line | The same | The same |
 | `Mullion: cache shaders= entries= sizeMiB=` | With the session line | The same | The same |
+| `Mullion: layer wait=0` | The first swap chain made with `MULLION_LAYER_WAIT=0`, once per process | `d3d12.log` (Wine's output, `wine.log` in the app), at `info` | Me: the session's presents didn't wait for the main thread |
+| `mullion: layer mainThreadWaitMs=<N> applied=no` | A change to a layer has waited 1 s, 5 s and 30 s without the main thread applying one: once at each, with either value of `MULLION_LAYER_WAIT`. `<N>`: ms since the main thread last applied a change, or was sent one with none waiting | The process's stderr (`wine.log` in the app), not `MULLION_LOG_PATH`: the bridge's watch thread writes it | Me, on a freeze: the main thread stopped answering |
+| `mullion: layer mainThreadWaitMs=<N> applied=yes` | The main thread applies a change after an `applied=no` line | The same, from the main thread | The same |
 
 ### The session header
 
@@ -98,7 +102,7 @@ Rules every fork log line keeps, this header first:
   `winemetal.so` without LLVM assertion text, built for macOS 15.0 (`minos`), with an ad hoc signature that `codesign`
   verifies; and the internal Metal library (below). The job uploads `mullion-swtor-<commit>` (7 days). For a pull
   request it also runs the host tests in `tests/host` (`meson test 'host_*'`; `host_tessellator` and `host_mutate`
-  below), breaks four checks on purpose and requires each to fail, and fails on a compiler warning that
+  below), breaks five checks on purpose and requires each to fail, and fails on a compiler warning that
   `.github/swtor/warnings-x86_64.txt` doesn't list. A push run builds, checks and uploads only: the pull request's run
   of the same tree has already passed the rest.
 
@@ -130,6 +134,11 @@ Rules every fork log line keeps, this header first:
   The fourth break, for the build checks, is a copy of the staged files with a file the archive doesn't ship and
   without `SOURCE`, its `winemetal.so` unsigned, with an LLVM source path appended and `minos` 26.0, and
   `d3d12core.dll`'s internal library tagged 2.9 with its first function AIR 2.9. Each of the seven has to fail.
+
+  The fifth break guards `host_layer_apply`, which runs the bridge's layer setters (`src/winemetal/unix/layer.c`) on
+  a `CAMetalLayer` without a device while the test's main thread is held for 2 s without its run loop. Its two patches
+  in `tests/breaks/` put `dispatch_sync` back on `MULLION_LAYER_WAIT=0`'s path, and compare a change only with the
+  layer, not with the change still on its way to the main thread. The test has to fail on each.
 - **Publish** (`ubuntu-24.04`, after the other jobs): packs the artifact into `mullion-swtor-<commit>.tar.xz` and
   checks that it unpacks to the same files, hash for hash. Only for a push to `swtor-on-mac` does it upload the archive
   (§ Releases). It is the only job with `contents: write`.

@@ -741,8 +741,8 @@ public:
   };
 
   void
-  setProps(const WMTLayerProps &props) {
-    MetalLayer_setProps(handle, &props);
+  setProps(const WMTLayerProps &props, bool wait) {
+    MetalLayer_setProps(handle, &props, wait);
   };
 
   void
@@ -751,8 +751,8 @@ public:
   };
 
   bool
-  setColorSpace(WMTColorSpace colorspace) {
-    return MetalLayer_setColorSpace(handle, colorspace);
+  setColorSpace(WMTColorSpace colorspace, bool wait) {
+    return MetalLayer_setColorSpace(handle, colorspace, wait);
   };
 };
 
