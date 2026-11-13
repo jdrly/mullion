@@ -19,7 +19,9 @@ Wars: The Old Republic on Apple Silicon through Wine. AI agents write its change
 Upstream's [`CONTRIBUTING.md`](CONTRIBUTING.md) governs contributions to upstream, not to this fork; ignore where it
 says to report or where a change starts. Its [`docs/CODE.md`](docs/CODE.md), [`docs/TESTING.md`](docs/TESTING.md)
 and [`docs/DEBUGGING.md`](docs/DEBUGGING.md) still describe how the code and its tests are written. I leave all of
-upstream's files as they are, so that upstream's changes merge without conflicts. The fork's own files are new.
+upstream's files as they are, so that upstream's changes merge without conflicts. The fork's own files are new. One
+exception: upstream's workflows `ci.yml` and `game-reports.yml` are deleted here, so they can never run in the fork
+([docs/swtor/README.md](docs/swtor/README.md) § CI).
 
 The fork's rules:
 
