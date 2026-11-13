@@ -84,7 +84,12 @@ PassLabel(const char *kind, const EncoderData *pass) {
 static gpu_error::Limiter gpu_error_limiter;
 static std::atomic_uint64_t presents{0};
 
-static const std::vector<std::string> &
+uint64_t
+PresentsSoFar() {
+  return presents.load(std::memory_order_relaxed);
+}
+
+const std::vector<std::string> &
 UserNames() {
   static const std::vector<std::string> names = [] {
     std::vector<std::pair<std::string, std::string>> env;
@@ -671,7 +676,7 @@ class MTLD3D12CommandQueueImpl : public MTLD3D12Pageable<MTLD3D12CommandQueue, I
         return false;
       if (status == WMTCommandBufferStatusError) {
         ReportGPUError(seq, cmdbuf, SUCCEEDED(device_->RemovedReason()));
-        device_->LoseDevice();
+        device_->LoseDevice(RemovalCause::GPUError);
       }
       return true;
     });
@@ -937,15 +942,24 @@ private:
       if (watch_changed_.wait_for(lock, StuckTime(), [&] { return watch_stop_ || watched_seq_ != seq; }) || !seq)
         continue;
       auto &inflight = inflight_cmdbuf_pool_[seq % kCommandQueueSize];
-      std::string encoders;
-      for (auto count : inflight.encoders)
-        encoders += std::to_string(count) + " ";
-      WARN("command buffer ", seq, " of queue ", this, " has not completed for ", StuckTime().count(),
-          " ms; Metal's status of it is ", uint64_t(inflight.cmdbuf.status()), " (2 committed, 3 scheduled); encoders by kind: ",
-          encoders, inflight.presents ? "and a present" : "");
+      const auto status = uint64_t(inflight.cmdbuf.status());
       FLIGHT_IN(Gpu, "queue %p: command buffer %llu has not completed in %lld ms, status %llu", this, seq,
-             int64_t(StuckTime().count()), uint64_t(inflight.cmdbuf.status()));
-      WMTFlightDump("a stuck command buffer");
+             int64_t(StuckTime().count()), status);
+      char file[MAX_PATH] = "";
+      WMTFlightDumpFile("a stuck command buffer", file, sizeof(file));
+      // MULLION-GPU-HUNG (mullion_device_lines.hpp): the queue goes on waiting, and the device stays
+      device_lines::Hang hang;
+      SYSTEMTIME time;
+      GetLocalTime(&time);
+      hang.at = {time.wHour, time.wMinute, time.wSecond, time.wMilliseconds};
+      hang.queue = ordinal_, hang.cmdbuf = seq, hang.waited_ms = StuckTime().count(), hang.status = status;
+      auto &kinds = inflight.encoders;
+      hang.render = kinds[size_t(EncoderType::Render)] + kinds[size_t(EncoderType::Clear)];
+      hang.compute = kinds[size_t(EncoderType::Compute)] + kinds[size_t(EncoderType::ComputeParts)];
+      hang.blit = kinds[size_t(EncoderType::Blit)];
+      hang.present = inflight.presents;
+      hang.flight = file, hang.names = UserNames();
+      WARN(device_lines::Hung(hang));
       watch_changed_.wait(lock, [&] { return watch_stop_ || watched_seq_ != seq; });
     }
   }
@@ -1049,7 +1063,7 @@ private:
                                most->words[0], ", vertices or indices ", most->words[1], ", start ", most->words[2],
                                ", base vertex ", most->words[3], ", start instance ", most->words[4]));
         }
-        device_->LoseDevice();
+        device_->LoseDevice(RemovalCause::GPUError);
       }
 
       std::vector<uint64_t> clock(profile_ && profile_->buffers[internal_seq % kCommandQueueSize].samples
@@ -1208,7 +1222,7 @@ private:
       if constexpr (Metal4) {
         inflight->cmdbuf = encoded ? std::move(encoded) : queue->NewCommandBuffer(seq);
         if (!inflight->cmdbuf)
-          queue->device_->LoseDevice();
+          queue->device_->LoseDevice(RemovalCause::NoCommandBuffer);
         else if (!encoded && queue->order_aliases_)
           inflight->cmdbuf.orderAliases();
       } else {
@@ -1630,7 +1644,7 @@ public:
     for (UINT i = 0; i < Count; i++)
       if (static_cast<MTLD3D12GraphicsCommandList *>(ppCommandLists[i])->encoder_count ==
           std::numeric_limits<size_t>::max()) {
-        device_->LoseDevice(DXGI_ERROR_INVALID_CALL);
+        device_->LoseDevice(RemovalCause::OpenListExecuted, DXGI_ERROR_INVALID_CALL);
         return;
       }
     // what the lists recorded, which is theirs no longer: the application may record them again at once
@@ -1686,7 +1700,7 @@ public:
       WMTBufferInfo info{mappings.size() * sizeof(mappings[0]), WMTResourceStorageModeShared};
       sparse_mappings = device_->GetMTLDevice().newBuffer(info);
       if (!sparse_mappings) {
-        device_->LoseDevice();
+        device_->LoseDevice(RemovalCause::BufferAllocation);
         return;
       }
       sparse_mappings.updateContents(0, mappings.data(), info.length);
@@ -2224,7 +2238,7 @@ public:
           WMTBufferInfo info{count * sizeof(uint32_t), WMTResourceStorageModeShared};
           auto buffer = device_->GetMTLDevice().newBuffer(info);
           if (!buffer) {
-            device_->LoseDevice();
+            device_->LoseDevice(RemovalCause::BufferAllocation);
             return false;
           }
           // a replay may overwrite the resolver's words before the completion thread runs
@@ -2485,7 +2499,7 @@ public:
         buffers[k] = queue_.commandBuffer();
       }
       if (!buffers[k]) {
-        device_->LoseDevice();
+        device_->LoseDevice(RemovalCause::NoCommandBuffer);
         return false;
       }
     }

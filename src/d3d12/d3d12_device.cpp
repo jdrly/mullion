@@ -485,8 +485,7 @@ public:
   void
   CheckAtomicLocks() {
     if (__atomic_exchange_n(atomic_locks_given_up_, 0u, __ATOMIC_RELAXED)) {
-      ERR("A 64-bit atomic gave up waiting for its lock; removing the device");
-      LoseDevice(DXGI_ERROR_DEVICE_HUNG);
+      LoseDevice(RemovalCause::AtomicLock, DXGI_ERROR_DEVICE_HUNG);
     }
   }
 
@@ -1807,7 +1806,7 @@ public:
   }
 
   void
-  LoseDevice(HRESULT Reason) {
+  LoseDevice(RemovalCause cause, HRESULT Reason) {
     decltype(fences.values) pending;
     {
       std::lock_guard lock(fences.mutex);
@@ -1817,7 +1816,17 @@ public:
       pending.swap(fences.values);
     }
     FLIGHT_IN(Gpu, "device %p is removed: %#llx", this, uint64_t(uint32_t(Reason)));
-    WMTFlightDump("a removed device");
+    char file[MAX_PATH] = "";
+    WMTFlightDumpFile("a removed device", file, sizeof(file));
+    // MULLION-DEVICE-REMOVED (mullion_device_lines.hpp): once, by the call that removed it, whatever MULLION_LOG_LEVEL is
+    // short of none
+    device_lines::Removal removal;
+    SYSTEMTIME time;
+    GetLocalTime(&time);
+    removal.at = {time.wHour, time.wMinute, time.wSecond, time.wMilliseconds};
+    removal.reason = uint32_t(Reason), removal.cause = cause, removal.frame = PresentsSoFar();
+    removal.flight = file, removal.names = UserNames();
+    Logger::err(device_lines::Removed(removal));
     // RemoveDevice signals all fences to UINT64_MAX; late queue signals must not take them back.
     for (auto &fence : pending)
       fence->Reach(UINT64_MAX, true);
@@ -2187,7 +2196,7 @@ public:
 
   void STDMETHODCALLTYPE
   RemoveDevice() {
-    LoseDevice(DXGI_ERROR_DEVICE_REMOVED);
+    LoseDevice(RemovalCause::AppRemoveDevice, DXGI_ERROR_DEVICE_REMOVED);
   }
 
   HRESULT STDMETHODCALLTYPE

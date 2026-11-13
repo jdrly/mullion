@@ -1,9 +1,11 @@
-# a lock give-up is logged but does not remove the device
+# a lock give-up does not remove the device
 --- a/src/d3d12/d3d12_device.cpp
 +++ b/src/d3d12/d3d12_device.cpp
-@@ -237,5 +237,4 @@
+@@ -484,7 +484,6 @@
+   void
+   CheckAtomicLocks() {
      if (__atomic_exchange_n(atomic_locks_given_up_, 0u, __ATOMIC_RELAXED)) {
-       ERR("A 64-bit atomic gave up waiting for its lock; removing the device");
--      LoseDevice(DXGI_ERROR_DEVICE_HUNG);
+-      LoseDevice(RemovalCause::AtomicLock, DXGI_ERROR_DEVICE_HUNG);
      }
    }
+ 

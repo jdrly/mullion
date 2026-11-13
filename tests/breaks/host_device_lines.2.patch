@@ -1,0 +1,12 @@
+# waitedMs= renamed waited=: the hang line no longer matches the fixture
+--- a/src/mullion/mullion_device_lines.hpp
++++ b/src/mullion/mullion_device_lines.hpp
+@@ -118,7 +118,7 @@
+ inline std::string
+ Hung(const Hang &hang) {
+   return "MULLION-GPU-HUNG at=" + At(hang.at) + " queue=" + std::to_string(hang.queue) +
+-         " cmdbuf=" + std::to_string(hang.cmdbuf) + " waitedMs=" + std::to_string(hang.waited_ms) +
++         " cmdbuf=" + std::to_string(hang.cmdbuf) + " waited=" + std::to_string(hang.waited_ms) +
+          " status=" + StatusName(hang.status) + "(" + std::to_string(hang.status) + ")" +
+          " encoders=" + std::to_string(hang.render) + "/" + std::to_string(hang.compute) + "/" +
+          std::to_string(hang.blit) + " present=" + (hang.present ? "yes" : "no") +

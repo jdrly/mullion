@@ -2,10 +2,10 @@
 # family native
 --- a/src/d3d12/d3d12_command_queue.cpp
 +++ b/src/d3d12/d3d12_command_queue.cpp
-@@ -851,7 +851,7 @@
+@@ -1203,7 +1203,7 @@
          inflight->cmdbuf = encoded ? std::move(encoded) : queue->NewCommandBuffer(seq);
          if (!inflight->cmdbuf)
-           queue->device_->LoseDevice();
+           queue->device_->LoseDevice(RemovalCause::NoCommandBuffer);
 -        else if (!encoded && queue->order_aliases_)
 +        else if (false)
            inflight->cmdbuf.orderAliases();

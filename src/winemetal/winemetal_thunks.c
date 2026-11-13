@@ -159,6 +159,11 @@ flight_kept(int64_t written) {
 
 WINEMETAL_API void
 WMTFlightDump(const char *reason) {
+  WMTFlightDumpFile(reason, NULL, 0);
+}
+
+WINEMETAL_API void
+WMTFlightDumpFile(const char *reason, char *file, uint32_t size) {
   AcquireSRWLockExclusive(&flight_dump_lock);
   uint64_t count = 0, overwritten = 0;
   struct flight_ring *rings = __atomic_load_n(&flight_rings, __ATOMIC_ACQUIRE), *ring;
@@ -200,7 +205,15 @@ WMTFlightDump(const char *reason) {
   params.now = ticks;
   params.lost = __atomic_load_n(&flight_lost, __ATOMIC_RELAXED);
   params.overwritten = overwritten;
+  params.ret = 0;
   UNIX_CALL(WMTUnixFlightWrite, &params);
+  size_t bytes = strlen(executable);
+  if (file && size)
+    file[0] = 0;
+  if (file && params.ret && bytes + sizeof(".flight") <= size) {
+    memcpy(file, executable, bytes);
+    memcpy(file + bytes, ".flight", sizeof(".flight"));
+  }
   flight_dumps++;
   if (entries)
     VirtualFree(entries, 0, MEM_RELEASE);

@@ -28,6 +28,7 @@
 #include "airconv_public.h"
 #include "mullion_buffer.hpp"
 #include "mullion_command.hpp"
+#include "mullion_device_lines.hpp"
 #include "mullion_diag.hpp"
 #include "mullion_fence.hpp"
 #include "mullion_format.hpp"
@@ -825,8 +826,9 @@ public:
 
   // the width of the GPU's SIMD groups, which run D3D12's waves
   virtual uint32_t GetSIMDWidth() = 0;
-  // later GPU errors must not replace the original removal reason (ID3D12Device::GetDeviceRemovedReason)
-  virtual void LoseDevice(HRESULT Reason = DXGI_ERROR_DEVICE_HUNG) = 0;
+  // later GPU errors must not replace the original removal reason (ID3D12Device::GetDeviceRemovedReason). the first
+  // call writes MULLION-DEVICE-REMOVED with `cause`, which every caller names
+  virtual void LoseDevice(RemovalCause cause, HRESULT Reason = DXGI_ERROR_DEVICE_HUNG) = 0;
   // the removal reason as it is, for Mullion's own checks. GetDeviceRemovedReason first reads what Metal said of the
   // command buffers whose work has finished (SettleCommandQueueFeedback): their fences are signalled before that comes
   virtual HRESULT RemovedReason() = 0;
@@ -1218,6 +1220,10 @@ Sha1Digest ShaderDigest(const void *code, size_t size);
 // MULLION_GPU_ERROR_DETAIL=1, or MULLION_D3D12_GPU_ERRORS or MULLION_TRACE_GPU=heavy: passes record their first
 // pipeline and their targets for their encoders' labels (d3d12_command_queue.cpp)
 bool GPUErrorDetail();
+// the process's Presents so far, and the user's and the computer's names (session::UserNames), for the fork's lines
+// (d3d12_command_queue.cpp)
+uint64_t PresentsSoFar();
+const std::vector<std::string> &UserNames();
 
 // whether `device` has the features a shader container requires: the low bits of its feature info part (SFI0,
 // DxilContainer.h), which DxilConstants.h calls feature requirements

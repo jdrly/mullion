@@ -37,6 +37,11 @@ test('host_gpu_error', executable('host_gpu_error', 'gpu_error.cpp', override_op
 # the HITCH and COMPILE lines, their scopes, the MULLION-PIPELINE line and its limiter, and the fixture's lines
 test('host_hitch', executable('host_hitch', 'hitch.cpp', override_options : ['cpp_std=c++20'], native : true),
      args : files('../swtor/fixtures/session.log'))
+# the lines a removed device, a command buffer that hasn't completed and a refused feature level write, against the
+# same fixture
+test('host_device_lines', executable('host_device_lines', 'device_lines.cpp', override_options : ['cpp_std=c++20'],
+                                     native : true),
+     args : files('../swtor/fixtures/session.log'))
 test('host_rc_self_move', executable('host_rc_self_move', 'rc.cpp',
                                     override_options : ['cpp_std=c++20'], native : true))
 test('host_denorm', executable('host_denorm', 'denorm.cpp', include_directories : include_directories('metal'),
