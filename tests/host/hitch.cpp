@@ -126,6 +126,13 @@ main(int argc, char **argv) {
           "the frame it ended in has a COMPILE line");
     equal(across.CompileLine(), "COMPILE frame=3 dtMs=16.0 shaders=0/0.0ms psos=1/24.0ms renderWait=0/0.0ms cache=0/0"
                                 " queued=0");
+    // a Present that read the count before a compile ended and its time after: the time is written then, the count
+    // next
+    counters.pipeline_ns += 5 * kMs;
+    check(across.End(clock_ns += 16 * kMs, {}, {}, hitch::Read(counters), hitch::kDefaultMs) && across.Compile(),
+          "a time without its count has a COMPILE line");
+    equal(across.CompileLine(), "COMPILE frame=4 dtMs=16.0 shaders=0/0.0ms psos=0/5.0ms renderWait=0/0.0ms cache=0/0"
+                                " queued=0");
   }
 
   // the largest numbers stay under 900 bytes

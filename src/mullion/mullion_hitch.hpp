@@ -103,8 +103,8 @@ private:
   uint64_t start_;
 };
 
-// at its end, with MULLION_STATS on, adds one to `count` and the time from here to `ns`: together, so that a frame
-// that sees the one sees the other
+// at its end, with MULLION_STATS on, adds the time from here to `ns` and one to `count`, so that a frame mostly sees
+// both or neither. A Present that reads between the two sees the time alone, which Frames writes too
 template <uint64_t (*Now)() = SteadyNs> class Timed {
 public:
   Timed(std::atomic<uint64_t> &count, std::atomic<uint64_t> &ns)
@@ -175,7 +175,8 @@ public:
     last_stats_ = stats;
     last_totals_ = totals;
     hitch_ = !first && dt_ms_ >= hitch_ms;
-    compile_ = !first && (shaders_ || psos_ || waits_ || dt_ms_ >= kCompileSlowMs);
+    // a time without its count is a compile that ended as the counters were read: written, not lost
+    compile_ = !first && (shaders_ || psos_ || waits_ || shader_ns_ || pipeline_ns_ || dt_ms_ >= kCompileSlowMs);
     return hitch_ || compile_;
   }
 
