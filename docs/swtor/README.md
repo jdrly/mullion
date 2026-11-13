@@ -36,8 +36,10 @@ How a switch is declared: [ADR 0001](adr/0001-switches.md).
 
 **Runner time.** One run at a time for the whole repository: a run in progress is never cancelled, and GitHub keeps one
 more waiting. No schedule, no manual trigger. Toolchain caches are saved only on a miss. On a miss LLVM takes about 25
-minutes to build; push nothing else while that runs. When `.github/swtor/toolchain.zsh` builds LLVM differently, raise
-`LLVM_BUILD` in the workflow so the old cache isn't used.
+minutes to build; push nothing else while that runs. GitHub lets a pull request's run read only its own caches and
+`swtor-on-mac`'s, so after a toolchain change LLVM builds twice: once in that pull request, once in the first push to
+`swtor-on-mac`. When `.github/swtor/toolchain.zsh` builds LLVM differently, raise `LLVM_BUILD` in the workflow so the
+old cache isn't used.
 
 **Warnings.** The step prints every distinct warning of the build. When a change removes a warning or has to keep a new
 one, copy that list into `.github/swtor/warnings-x86_64.txt` in the same pull request.
