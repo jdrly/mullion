@@ -1,0 +1,12 @@
+# the wait removed: a Reset gives back the recording of lists still pending, as upstream's does
+--- a/src/mullion/mullion_reset_wait.hpp
++++ b/src/mullion/mullion_reset_wait.hpp
+@@ -53,7 +53,7 @@
+ Wait(const std::atomic<uint32_t> &pending, Wakes &wakes, Removed removed) {
+   for (;;) {
+     auto seen = wakes.count.load(std::memory_order_acquire);
+-    if (!pending.load(std::memory_order_acquire) || removed())
++    if (true)
+       return;
+     wakes.count.wait(seen, std::memory_order_acquire);
+   }

@@ -19,6 +19,7 @@
 #include "d3d12_command_allocator.hpp"
 #include "com/com_pointer.hpp"
 #include "mullion_diag.hpp"
+#include "util_switch.hpp"
 #include <map>
 #include <bit>
 
@@ -389,10 +390,48 @@ MTLD3D12CommandAllocatorImpl::QueryInterface(REFIID riid, void **ppvObject) {
   return MTLD3D12DeviceChild::QueryInterface(riid, ppvObject);
 }
 
+// jdrly/mullion: a Reset with lists still pending waits for them (docs/swtor/README.md). Read once, at the first such
+// Reset of the process
+static sw::Switch<bool> kResetWaits{"MULLION_D3D12_RESET_WAITS", false, sw::exactlyOne};
+
+static bool
+ResetWaits() {
+  static const bool waits = kResetWaits();
+  return waits;
+}
+
+// RESETWAIT after STATS (docs/swtor/README.md): the Resets that waited in the second
+static stats::SectionRegistrar kResetWaitSection{"RESETWAIT", [](double, uint64_t) {
+  static uint64_t waits = 0, ns = 0;
+  return reset_wait::Section(reset_wait::counters, waits, ns);
+}};
+
+void
+MTLD3D12CommandAllocatorImpl::WaitForLists() {
+  if (!std::exchange(waited_, true)) {
+    static std::atomic<uint64_t> allocators{0};
+    constexpr const char *types[] = {"direct", "bundle", "compute", "copy"};
+    SYSTEMTIME time;
+    GetLocalTime(&time);
+    reset_wait::First first;
+    first.at = {time.wHour, time.wMinute, time.wSecond, time.wMilliseconds};
+    first.type = unsigned(type_) < std::size(types) ? types[type_] : "other";
+    first.lists = pending.load(), first.frame = PresentsSoFar(), first.allocator = ++allocators;
+    Logger::warn(reset_wait::FirstLine(first));
+  }
+  hitch::Scope waiting(hitch::AllocReset);
+  auto began = stats::on ? hitch::SteadyNs() : 0;
+  reset_wait::Wait(pending, device_->reset_wakes, [this] { return FAILED(device_->RemovedReason()); });
+  if (stats::on)
+    reset_wait::counters.Add(hitch::SteadyNs() - began);
+}
+
 HRESULT STDMETHODCALLTYPE
 MTLD3D12CommandAllocatorImpl::Reset() {
   if (encoder_last)
     return FAIL(E_FAIL);
+  if (pending && ResetWaits())
+    WaitForLists();
   // "the runtime will not allow a reset while a command list is still being executed": the lists' recording is what
   // the GPU still reads
   if (pending)

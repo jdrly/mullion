@@ -37,9 +37,12 @@ enum Category : unsigned {
                  // for a variant at draw time
   Present,       // the Present call, up to the point its frame ends
   FenceWait,     // SetEventOnCompletion and SetEventOnMultipleFenceCompletion without an event: the call waits
+  AllocReset,    // a command allocator's Reset waiting for its lists (MULLION_D3D12_RESET_WAITS)
   kCategories
 };
-inline constexpr const char *kNames[kCategories] = {"pipelineWait", "shaderConvert", "present", "fenceWait"};
+inline constexpr const char *kNames[kCategories] = {
+    "pipelineWait", "shaderConvert", "present", "fenceWait", "allocReset"
+};
 
 // a thread's scopes since its last frame ended: the outermost ones only
 struct Frame {

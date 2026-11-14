@@ -34,6 +34,7 @@
 #include "mullion_format.hpp"
 #include "mullion_info.hpp"
 #include "mullion_presenter.hpp"
+#include "mullion_reset_wait.hpp"
 #include "mullion_ring_bump_allocator.hpp"
 #include "mullion_texture.hpp"
 #include "com/com_pointer.hpp"
@@ -832,6 +833,9 @@ public:
   // the removal reason as it is, for Mullion's own checks. GetDeviceRemovedReason first reads what Metal said of the
   // command buffers whose work has finished (SettleCommandQueueFeedback): their fences are signalled before that comes
   virtual HRESULT RemovedReason() = 0;
+  // jdrly/mullion: what a command allocator's Reset waiting for its lists wakes on (MULLION_D3D12_RESET_WAITS): raised
+  // by the queues as an allocator's last pending list completes, and by LoseDevice
+  reset_wait::Wakes reset_wakes;
   // how many threadgroups of `threads` each of a compute pipeline go to the GPU at once when they wait for one
   // another: those its cores keep (an Apple GPU takes turns among the ones it does not keep, which a group that waits
   // makes take seconds), or with `kept` false those its SIMD groups run at once, the estimate behind TotalLaneCount

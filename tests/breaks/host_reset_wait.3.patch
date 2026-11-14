@@ -1,0 +1,12 @@
+# the last list's completion raises nothing: the wait sleeps through it
+--- a/src/mullion/mullion_reset_wait.hpp
++++ b/src/mullion/mullion_reset_wait.hpp
+@@ -43,7 +43,7 @@
+ inline void
+ Completed(std::atomic<uint32_t> &pending, Wakes &wakes) {
+   if (pending.fetch_sub(1, std::memory_order_acq_rel) == 1)
+-    wakes.Raise();
++    (void)wakes;
+ }
+ 
+ // returns once `pending` is 0 or `removed()` is true. The count of the Wakes is read before each test, so a list that
