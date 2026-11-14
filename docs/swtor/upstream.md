@@ -153,7 +153,9 @@ gh api repos/jdrly/mullion/actions/workflows --jq '.workflows[] | "\(.name) \(.s
 **No remote for upstream.** `git remote -v` in every checkout on the machine lists no `dttdrv/mullion`.
 
 **The build.** The `SWTOR` workflow is green on the pull request's head. Its host tests run by name (`'host_*'`): if
-the batch renamed or added a host test, `swtor.yml` follows in the commit after the merge.
+the batch renamed or added a host test, `swtor.yml` follows in the commit after the merge. Every
+`tests/breaks/host_*.patch` runs there too, upstream's included, so a host break the batch added that its test doesn't
+notice, or one the batch made stale, fails the run ([README.md](README.md) § CI).
 
 ## 6. The pull request
 
