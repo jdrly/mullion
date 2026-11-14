@@ -782,10 +782,10 @@ Every push to `swtor-on-mac` whose run is green publishes its build as one asset
   `releases/latest` is `swtor-builds`.
 - **The archive.** `x86_64-windows/{d3d10core,d3d11,d3d12,d3d12core,dxgi,winemetal}.dll`, `x86_64-unix/winemetal.so`,
   `VERSION`, `SOURCE`, `LICENSE`, `licenses/` with llvm-mingw's MinGW-w64 runtime notices in `licenses/mingw-w64/`
-  (the DLLs link that runtime statically), and `LICENSE-LLVM.txt` (LLVM 15.0.7's, checked by hash: airconv links LLVM
-  into `winemetal.so`; llvm-mingw's licence for the libc++ in the DLLs is the same file). Names sorted, owner 0, the
-  commit's time on every file, one xz thread: the same files give the same archive. The DLLs are llvm-mingw's
-  (clang), not the gcc build upstream's releases ship.
+  (the DLLs link that runtime statically), and `LICENSE-LLVM.txt` (LLVM 15.0.7's, copied from `.github/swtor/` and
+  checked by hash: airconv links LLVM into `winemetal.so`; llvm-mingw's licence for the libc++ in the DLLs is the same
+  file). Names sorted, owner 0, the commit's time on every file, one xz thread: the same files give the same archive.
+  The DLLs are llvm-mingw's (clang), not the gcc build upstream's releases ship.
 - **`VERSION`.** Line 1 is `git describe` (`v0.5-alpha.3-<n>-g<hash>`), then `commit:` (the full sha), `codegen:`
   (the first 12 hex digits of the codegen id that keys the shader cache, then `(airconv <AIRCONV_VERSION>)`), `toolchain:` (Xcode, macOS SDK, `metal --version`, LLVM,
   llvm-mingw and its clang) and `built:` (the run's URL).

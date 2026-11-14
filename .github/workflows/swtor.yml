@@ -40,8 +40,9 @@ env:
   NINJA_VERSION: 1.13.0
   LLVM_VERSION: 15.0.7
   LLVM_SHA256: 8b5fcb24b4128cf04df1b0b9410ce8b1a729cb3c544e6da885d234280dedeac6
-  # llvm/LICENSE.TXT at llvmorg-$LLVM_VERSION: airconv links LLVM into winemetal.so. llvm-mingw's LICENSE.TXT, for the
-  # libc++ linked into the DLLs, is the same file
+  # .github/swtor/LICENSE-LLVM.txt, a copy of llvm/LICENSE.TXT at llvmorg-$LLVM_VERSION: airconv links LLVM into
+  # winemetal.so. llvm-mingw's LICENSE.TXT, for the libc++ linked into the DLLs, is the same file. a new LLVM_VERSION
+  # replaces the copy and this hash
   LLVM_LICENSE_SHA256: 8d85c1057d742e597985c7d4e6320b015a9139385cff4cbae06ffc0ebe89afee
   # raise it when toolchain.zsh builds LLVM differently, so the cache doesn't keep the old build
   LLVM_BUILD: 1
@@ -219,8 +220,7 @@ jobs:
           cp -R docs/licenses install/licenses
           # the DLLs link the MinGW-w64 runtime statically (meson.build's -static); its notices travel with it
           cp -R toolchains/llvm-mingw/x86_64-w64-mingw32/share/mingw32 install/licenses/mingw-w64
-          curl -fsSL --retry 3 -o install/LICENSE-LLVM.txt \
-            "https://raw.githubusercontent.com/llvm/llvm-project/llvmorg-$LLVM_VERSION/llvm/LICENSE.TXT"
+          cp .github/swtor/LICENSE-LLVM.txt install/
           echo "$LLVM_LICENSE_SHA256  install/LICENSE-LLVM.txt" | shasum -a 256 -c
           cat install/VERSION
           find install -type f | sort
