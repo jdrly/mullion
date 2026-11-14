@@ -308,7 +308,7 @@ public:
     auto HeapPointer = GetArgument(Builder, RootSignatureArgumentIndex, SRV.arg_index);
     if (DescriptorOffset == ~0u) {
       if (auto Length = RootViewLength(Builder, D3D12_DESCRIPTOR_RANGE_TYPE_SRV, Range))
-        return BufferDescriptor{HeapPointer, Length, SRV.structure_stride, false, true};
+        return BufferDescriptor{HeapPointer, Length, SRV.structure_stride, false, true, GetAtomicLocks(Builder)};
       return BufferDescriptor{HeapPointer, Builder.builder.getInt64(0xffffffff), SRV.structure_stride, false, false};
     }
     auto [Pointer, Metadata] = GetBufferDescriptor(
@@ -334,7 +334,9 @@ public:
     auto HeapPointer = GetArgument(Builder, RootSignatureArgumentIndex, UAV.arg_index);
     if (DescriptorOffset == ~0u) {
       if (auto Length = RootViewLength(Builder, D3D12_DESCRIPTOR_RANGE_TYPE_UAV, Range))
-        return BufferDescriptor{HeapPointer, Length, UAV.structure_stride, UAV.global_coherent, true};
+        return BufferDescriptor{
+            HeapPointer, Length, UAV.structure_stride, UAV.global_coherent, true, GetAtomicLocks(Builder)
+        };
       return BufferDescriptor{
           HeapPointer, Builder.builder.getInt64(0xffffffff), UAV.structure_stride, UAV.global_coherent, false
       };
@@ -393,7 +395,9 @@ public:
   // the table ranges whose descriptors root signature 1.1 says are static, by range type (BufferDescriptor::Bounded)
   std::set<std::pair<D3D12_DESCRIPTOR_RANGE_TYPE, RangeId>> Unbounded;
   // jdrly/mullion: a root CBV, SRV or UAV's length in the root arguments (SM50_SHADER_FLAG_CHECK_ROOT_RANGES); a root
-  // view not in it carries none, as upstream's never do
+  // view not in it carries none, as upstream's never do. A load past a root SRV or UAV reads its dropped value from
+  // the lock table of 64-bit atomics, which every root signature binds, instead of the view's start, which may have
+  // fewer bytes than one load: a root view keeps its own address, however few bytes its buffer has left
   std::map<std::pair<D3D12_DESCRIPTOR_RANGE_TYPE, RangeId>, uint32_t> RootViewLengths;
 
   // the length a root view of `Type` is checked against, or null

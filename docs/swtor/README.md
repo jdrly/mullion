@@ -482,7 +482,7 @@ and a size whose sum passes 2^64 run past, as they should.
 | `IASetIndexBuffer` | The view is bound as no view when its `BufferLocation` lies in no live buffer (`viewAddress`, `limit` 0) or its `SizeInBytes` runs past that buffer's end from there (`viewSize`). Draws then read zeros for its indices, as with no index buffer (D3D11.3 8.19.2). A view of no size, or at address 0, isn't checked |
 | `IASetVertexBuffers` | The same for each view it sets: that slot is bound as no view, which the vertex fetch reads as zeros |
 | `CreateConstantBufferView` | The same for the view's `BufferLocation` and `SizeInBytes`: the slot gets a null view, which shaders read as zeros, as for `BufferLocation` 0. Views are made on any thread, so each thread keeps four ranges of its own, as a command list does |
-| `SetGraphicsRoot*View`, `SetComputeRoot*View` | Nothing is dropped. The root view is bound as given, and its shaders check every access against what the live buffer holding its address has from there, up to 4 GiB: a row or element past it reads 0, a store there writes nothing, as through a descriptor table's bounded view. One at an address no live buffer holds (`SetRootView`, `viewAddress`), or with less than 32 bytes left in its buffer (`viewSize`, `limit=32`), is bound as the device's zero-filled null buffer with a length of 0, `action=clamped`: an access whose check fails still loads up to 32 bytes from the view's start and drops them, as through a heap's null view, so that address has to be memory that is there. Such a view reads 0 even inside its last bytes |
+| `SetGraphicsRoot*View`, `SetComputeRoot*View` | Nothing is dropped. The root view is bound as given, and its shaders check every access against what the live buffer holding its address has from there, up to 4 GiB: a row or element past it reads 0, a store there writes nothing, as through a descriptor table's bounded view. One at an address no live buffer holds (`SetRootView`, `viewAddress`, `action=clamped`) is bound as the device's zero-filled null buffer with a length of 0. A load whose check fails reads its dropped value from the lock table of 64-bit atomics, which every root signature binds, not from the view's start as a heap view's does: a root view may have fewer bytes left than one load reads (up to 32) |
 | `WriteBufferImmediate` | Each write whose 4 bytes at `Dest` lie in no live buffer, or run past its end (`destAddress`, `destSize`), is dropped, a marker's too; the call's other writes go on. Through the command list's ranges, as views are |
 
 `MULLION-RANGE call=CopyBufferRegion what=srcSize given=4096 limit=256 action=dropped`: `call` the Direct3D call,
@@ -548,7 +548,7 @@ and writes immediates to a released buffer's address before one inside a buffer;
 `tests/breaks/d3d12_cbv_ranges.patch`, takes both as given.
 
 `tests/d3d12/d3d12_root_view_ranges.cpp` reads a row of a root CBV, an element of a root SRV and of a root UAV past
-their 256-byte buffers, and stores past the UAV's, then reads a root SRV 16 bytes before its buffer's end as 0; its control, `tests/breaks/d3d12_root_view_ranges.patch`, converts
+their 256-byte buffers, and stores past the UAV's, then reads a root SRV 16 bytes before its buffer's end inside those bytes and past them; its control, `tests/breaks/d3d12_root_view_ranges.patch`, converts
 without the checks.
 
 `tests/d3d12/d3d12_copy_ranges.cpp` runs every kind of drop above and one copy in range after each, and the planes of

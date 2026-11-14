@@ -7,6 +7,6 @@
      if (DescriptorOffset == ~0u) {
 -      if (auto Length = RootViewLength(Builder, D3D12_DESCRIPTOR_RANGE_TYPE_SRV, Range))
 +      if (auto Length = (llvm::Value *)nullptr)
-         return BufferDescriptor{HeapPointer, Length, SRV.structure_stride, false, true};
+         return BufferDescriptor{HeapPointer, Length, SRV.structure_stride, false, true, GetAtomicLocks(Builder)};
        return BufferDescriptor{HeapPointer, Builder.builder.getInt64(0xffffffff), SRV.structure_stride, false, false};
      }

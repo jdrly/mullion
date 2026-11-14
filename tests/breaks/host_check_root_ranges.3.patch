@@ -7,6 +7,6 @@
      if (DescriptorOffset == ~0u) {
 -      if (auto Length = RootViewLength(Builder, D3D12_DESCRIPTOR_RANGE_TYPE_UAV, Range))
 +      if (auto Length = (llvm::Value *)nullptr)
-         return BufferDescriptor{HeapPointer, Length, UAV.structure_stride, UAV.global_coherent, true};
-       return BufferDescriptor{
-           HeapPointer, Builder.builder.getInt64(0xffffffff), UAV.structure_stride, UAV.global_coherent, false
+         return BufferDescriptor{
+             HeapPointer, Length, UAV.structure_stride, UAV.global_coherent, true, GetAtomicLocks(Builder)
+         };

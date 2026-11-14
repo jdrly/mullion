@@ -3368,7 +3368,11 @@ convert_dxil(
         auto at = ir.CreateUDiv(ir.CreateAdd(ir.CreateMul(a(2), ir.getInt32(stride)), inner), ir.getInt32(unit_bytes));
         auto within =
             ir.CreateICmpULT(a(2), ir.CreateUDiv(dxbc.DecodeRawBufferByteLength(b.Metadata), ir.getInt32(stride)));
+        // units reads through `b`: with a fallback, the start it reads from when not within is that
+        auto start = b.Pointer;
+        b.Pointer = dxbc.FallingBack(b, within).Pointer;
         auto v = units(ir.CreateZExt(ir.CreateSelect(within, at, ir.getInt32(0)), ir.getInt64Ty()), true);
+        b.Pointer = start;
         ret = to_struct(ty, ir.CreateSelect(within, v, Constant::getNullValue(v->getType())), residency);
         break;
       }

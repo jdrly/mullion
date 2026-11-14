@@ -21,8 +21,8 @@
 //
 // A view that runs past its buffer is bound as no view, which Direct3D reads as zeros; its line says dropped too. A
 // root CBV, SRV or UAV is bound as given, and its shaders check it against what its buffer has from its address
-// (RootViewBinding): one at an address no live buffer holds, or with less than one load's bytes left, is bound as the
-// null buffer of length 0, and its line says clamped.
+// (RootViewBinding): one at an address no live buffer holds is bound as the null buffer of length 0, and its line says
+// clamped.
 //
 // Pure C++ (no Windows, no Metal): tests/host/ranges.cpp builds it natively.
 
@@ -110,23 +110,18 @@ View(uint64_t address, uint64_t size, bool held, uint64_t end) {
 // reads a generation the other's ranges were kept at. This DLL's
 inline std::atomic<uint64_t> buffer_generation{0};
 
-// the most one load from a buffer reads: four 64-bit components. a load whose bounds check fails still reads that much
-// from the view's start, and drops it (Converter::LoadBufferValue, LoadBufferUnits), which a heap view's null
-// descriptor points at the device's zero-filled null buffer for
-constexpr uint64_t kRootViewLoad = 32;
-
 // how a root CBV, SRV or UAV is bound under SM50_SHADER_FLAG_CHECK_ROOT_RANGES: the address its shaders read through,
 // and the length they check every access against, what the live buffer holding `address` has from it up to the 32
-// bits a buffer descriptor's length keeps. A view with less than one load's bytes from its address, or in no live
-// buffer, is bound as `null_buffer` of length 0: every access reads 0 and writes nothing, and even the load a failed
-// check drops reads memory that is there
+// bits a buffer descriptor's length keeps. A view in no live buffer is bound as `null_buffer`, the device's zero-filled
+// one, of length 0: every access reads 0 and writes nothing. (A load whose check fails reads its dropped value from
+// the lock table the root arguments carry, not from the view: the converter's BufferDescriptor::Fallback)
 struct RootView {
   uint64_t address, length;
 };
 
 inline RootView
 RootViewBinding(uint64_t address, bool held, uint64_t end, uint64_t null_buffer) {
-  if (!held || end - address < kRootViewLoad)
+  if (!held)
     return {null_buffer, 0};
   return {address, std::min<uint64_t>(end - address, UINT32_MAX)};
 }

@@ -1,9 +1,9 @@
 # a root view's bound is its buffer's whole length, which a descriptor's 32 bits cut to its low bits
 --- a/src/mullion/mullion_ranges.hpp
 +++ b/src/mullion/mullion_ranges.hpp
-@@ -127,7 +127,7 @@
+@@ -122,7 +122,7 @@
  RootViewBinding(uint64_t address, bool held, uint64_t end, uint64_t null_buffer) {
-   if (!held || end - address < kRootViewLoad)
+   if (!held)
      return {null_buffer, 0};
 -  return {address, std::min<uint64_t>(end - address, UINT32_MAX)};
 +  return {address, end - address};

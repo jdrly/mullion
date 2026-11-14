@@ -196,8 +196,7 @@ static ranges::Site kBufferCopySrc{ranges::Call::CopyBufferRegion, "src"},
     kTextureCopyDstRegion{ranges::Call::CopyTextureRegion, "dst"},
     kIndexView{ranges::Call::IASetIndexBuffer, "view"}, kVertexView{ranges::Call::IASetVertexBuffers, "view"},
     kImmediate{ranges::Call::WriteBufferImmediate, "dest"},
-    kRootViewAddress{ranges::Call::SetRootView, "view", "clamped"},
-    kRootViewShort{ranges::Call::SetRootView, "view", "clamped"};
+    kRootViewAddress{ranges::Call::SetRootView, "view", "clamped"};
 
 // a check fired at `site`: counted, and its line written the first time
 static void
@@ -3220,8 +3219,6 @@ public:
     auto view = ranges::RootViewBinding(VA, end != 0, end, device_->GetNullBuffer());
     if (VA && !end)
       RangeFired(kRootViewAddress, ranges::View(VA, 1, false, 0));
-    else if (VA && !view.length)
-      RangeFired(kRootViewShort, ranges::Overrun{"Size", end - VA, ranges::kRootViewLoad});
     if (staging[qword] != view.length) {
       staging[qword] = view.length;
       dirty_state_.set(dirty);

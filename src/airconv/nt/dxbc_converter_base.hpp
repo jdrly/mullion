@@ -64,6 +64,7 @@ struct BufferResourceHandle {
   Swizzle Swizzle;
   bool GlobalCoherent;
   bool Bounded = true; // BufferDescriptor::Bounded
+  llvm::Value *Fallback = nullptr; // BufferDescriptor::Fallback
   // the metadata an access is checked against, where it has to be
   llvm::Value *Bounds() const { return Bounded ? Metadata : nullptr; }
 };
@@ -651,8 +652,18 @@ public:
   MakeBufferHandle(const BufferDescriptor &Descriptor, Swizzle Swizzle) {
     return {
         Descriptor.Pointer, Descriptor.Metadata, Descriptor.StructureStride, Swizzle,
-        Descriptor.GlobalCoherent && SupportsMemoryCoherency(), Descriptor.Bounded
+        Descriptor.GlobalCoherent && SupportsMemoryCoherency(), Descriptor.Bounded, Descriptor.Fallback
     };
+  }
+
+  // jdrly/mullion: `Buffer` read through its fallback where `Within` is false, for a load that reads from the view's
+  // start when out of bounds and drops it; `Buffer` itself without a fallback
+  BufferResourceHandle
+  FallingBack(const BufferResourceHandle &Buffer, llvm::Value *Within) {
+    auto Handle = Buffer;
+    if (Buffer.Fallback)
+      Handle.Pointer = ir.CreateSelect(Within, Buffer.Pointer, ir.CreatePointerCast(Buffer.Fallback, Buffer.Pointer->getType()));
+    return Handle;
   }
 
   TextureResourceHandle
