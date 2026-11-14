@@ -286,9 +286,9 @@ ExtractMTLInputLayoutElements(
   return S_OK;
 }
 
-void
-MTLD3D12PipelineState::DumpShaders(std::initializer_list<D3D12_SHADER_BYTECODE> Shaders) {
-  // MULLION_TRACE_SHADER=heavy: into shaders/ next to the trace log
+// MULLION_SHADER_DUMP_PATH, or with MULLION_TRACE_SHADER=heavy shaders/ next to the trace log; "" for none
+static const std::string &
+DumpFolder() {
   static const auto dir = [] {
     auto given = env::getEnvVar("MULLION_SHADER_DUMP_PATH");
     if (!given.empty() || !trace::Heavy(trace::Shader) || trace::WindowsDirectory().empty())
@@ -297,6 +297,12 @@ MTLD3D12PipelineState::DumpShaders(std::initializer_list<D3D12_SHADER_BYTECODE> 
     env::createDirectory(shaders);
     return shaders;
   }();
+  return dir;
+}
+
+void
+MTLD3D12PipelineState::DumpShaders(std::initializer_list<D3D12_SHADER_BYTECODE> Shaders) {
+  auto &dir = DumpFolder();
   if (dir.empty())
     return;
   // a shader shared by many pipelines is written once
@@ -317,11 +323,122 @@ MTLD3D12PipelineState::DumpShaders(std::initializer_list<D3D12_SHADER_BYTECODE> 
   }
 }
 
+const char *const kNotHeld = "the container's layout or hash doesn't hold";
+
+// the process's MULLION-SHADER lines: at most 30 in 10 s, as MULLION-GPU-ERROR's, and its dumped shaders
+static mullion::mutex shader_lines_lock;
+static gpu_error::Limiter shader_lines_limit;
+static shader_lines::Dumps shader_dumps;
+
+static stats::Clock
+LocalTime() {
+  SYSTEMTIME local;
+  GetLocalTime(&local);
+  return {local.wHour, local.wMinute, local.wSecond, local.wMilliseconds};
+}
+
+void
+ShaderFailed(
+    shader_lines::Step step, const char *kind, std::span<const D3D12_SHADER_BYTECODE> shaders,
+    std::string_view message, const std::string &name
+) {
+  using namespace shader_lines;
+  totals.steps[unsigned(step)].fetch_add(1, std::memory_order_relaxed);
+  Failure failure;
+  failure.step = step, failure.kind = kind, failure.message = message;
+  // a stored shader Metal refuses is converted again, and isn't dumped
+  Dumped dumped = Dumped::Yes;
+  unsigned given = 0;
+  int type = -1;
+  for (auto &shader : shaders) {
+    if (!shader.pShaderBytecode)
+      continue;
+    // the bytes' own: ShaderDigest takes a container's hash at its word, and one that failed may not hold
+    auto sha1 = Sha1HashState::compute(shader.pShaderBytecode, shader.BytecodeLength).string();
+    failure.sha1 += sha1 + " ";
+    given++;
+    type = ShaderProgramType(shader.pShaderBytecode, shader.BytecodeLength);
+    if (step != Step::CacheBlob)
+      dumped = Worse(dumped, shader_dumps.Write(DumpFolder(), '\\', sha1, shader.pShaderBytecode, shader.BytecodeLength));
+  }
+  if (!given)
+    failure.sha1 = name;
+  failure.stage = given == 1 ? Stage(type) : "-";
+  failure.dumped = given && step != Step::CacheBlob ? dumped : Dumped::No;
+  failure.names = UserNames();
+  std::lock_guard lock(shader_lines_lock);
+  if (!shader_lines_limit.Allow(hitch::SteadyNs(), failure.suppressed))
+    return;
+  failure.at = LocalTime();
+  if (step == Step::CacheBlob)
+    Logger::warn(Line(failure));
+  else
+    Logger::err(Line(failure));
+}
+
+void
+MTLD3D12PipelineState::Failed(
+    shader_lines::Step step, std::span<const D3D12_SHADER_BYTECODE> shaders, std::string_view message
+) {
+  // none given: the copies it kept, when there is a folder to dump them in
+  std::vector<D3D12_SHADER_BYTECODE> kept;
+  if (shaders.empty())
+    for (auto &shader : kept_shaders)
+      kept.push_back({shader->data(), shader->size()});
+  ShaderFailed(step, kind, shaders.empty() ? std::span<const D3D12_SHADER_BYTECODE>(kept) : shaders, message, name);
+}
+
+// a shader refused before it is read: a container without a program the parser can read, or a whole one of another
+// stage than the one it is given for
+void
+MTLD3D12PipelineState::StageRefused(D3D12_SHADER_BYTECODE Bytecode, int Type) {
+  int type = ShaderProgramType(Bytecode.pShaderBytecode, Bytecode.BytecodeLength);
+  Failed(shader_lines::Step::Container, {&Bytecode, 1},
+         type < 0 ? std::string(kNotHeld)
+                  : std::string("a ") + shader_lines::Stage(type) + " shader given for the " + shader_lines::Stage(Type) +
+                        " stage");
+}
+
+void
+MTLD3D12PipelineState::Skipped() {
+  auto skipped = shader_lines::totals.skipped.fetch_add(1, std::memory_order_relaxed) + 1;
+  if (skip_said.exchange(true, std::memory_order_relaxed))
+    return;
+  std::lock_guard lock(shader_lines_lock);
+  uint64_t suppressed = 0;
+  if (shader_lines_limit.Allow(hitch::SteadyNs(), suppressed))
+    Logger::warn(shader_lines::SkipLine(LocalTime(), name, kind, skipped, suppressed));
+}
+
+std::string
+ShaderTotalsLine() {
+  using namespace shader_lines;
+  uint64_t steps[unsigned(Step::Count)];
+  for (unsigned i = 0; i < unsigned(Step::Count); i++)
+    steps[i] = totals.steps[i].load(std::memory_order_relaxed);
+  return TotalsLine(steps, totals.skipped.load(std::memory_order_relaxed), shader_dumps.Written());
+}
+
 void
 MTLD3D12PipelineState::Name(std::initializer_list<D3D12_SHADER_BYTECODE> Shaders) {
-  for (auto &Shader : Shaders)
-    if (Shader.pShaderBytecode)
-      name += ShaderDigest(Shader.pShaderBytecode, Shader.BytecodeLength).string() + " ";
+  // the copies kept_shaders shares, by SHA-1
+  static mullion::mutex kept_mutex;
+  static std::unordered_map<std::string, std::weak_ptr<const std::string>> kept;
+  for (auto &Shader : Shaders) {
+    if (!Shader.pShaderBytecode)
+      continue;
+    auto sha1 = ShaderDigest(Shader.pShaderBytecode, Shader.BytecodeLength).string();
+    name += sha1 + " ";
+    if (DumpFolder().empty())
+      continue;
+    // a copy shared only with the same bytes: ShaderDigest takes a container's hash at its word, before it is checked
+    std::string_view bytes((const char *)Shader.pShaderBytecode, Shader.BytecodeLength);
+    std::lock_guard lock(kept_mutex);
+    auto shared = kept[sha1].lock();
+    if (!shared || *shared != bytes)
+      kept[sha1] = shared = std::make_shared<const std::string>(bytes);
+    kept_shaders.push_back(std::move(shared));
+  }
   static const bool dump_all = env::getEnvVar("MULLION_SHADER_DUMP_ALL") == "1";
   if (dump_all || Logger::logLevel() == LogLevel::Trace || trace::Heavy(trace::Shader))
     DumpShaders(Shaders);
@@ -332,17 +449,19 @@ MTLD3D12PipelineState::InitializeShader(
     MTLD3D12Device *Device, D3D12_SHADER_BYTECODE Bytecode, sm50_shader_t *ppShader, struct MTL_SHADER_REFLECTION *pRefl
 ) {
   using namespace microsoft;
-  if (!ShaderContainerHolds(Bytecode.pShaderBytecode, Bytecode.BytecodeLength) ||
-      !ShaderFeaturesSupported(Device, Bytecode.pShaderBytecode, Bytecode.BytecodeLength))
+  using shader_lines::Step;
+  if (!ShaderContainerHolds(Bytecode.pShaderBytecode, Bytecode.BytecodeLength)) {
+    Failed(Step::Container, {&Bytecode, 1}, kNotHeld);
     return FAIL(E_INVALIDARG);
+  }
+  if (!ShaderFeaturesSupported(Device, Bytecode.pShaderBytecode, Bytecode.BytecodeLength)) {
+    Failed(Step::Features, {&Bytecode, 1}, "it needs a feature the device doesn't have");
+    return FAIL(E_INVALIDARG);
+  }
 
   SM50Error error;
   if (SM50Initialize(Bytecode.pShaderBytecode, Bytecode.BytecodeLength, ppShader, pRefl, &error)) {
-    ERR(
-        "Failed to initialize shader ", Sha1HashState::compute(Bytecode.pShaderBytecode, Bytecode.BytecodeLength).string(),
-        ": ", SM50GetErrorMessageString(error)
-    );
-    DumpShaders({Bytecode});
+    Failed(Step::Parse, {&Bytecode, 1}, SM50GetErrorMessageString(error));
     return FAIL(E_INVALIDARG);
   }
 
@@ -444,6 +563,12 @@ HRESULT
 PipelineKey(const D3D12_GRAPHICS_PIPELINE_STATE_DESC &Desc, Sha1Digest &Key, bool DepthBounds,
             D3D12_SHADER_BYTECODE AS, D3D12_SHADER_BYTECODE MS, const D3D12_DEPTH_STENCIL_DESC2 *DepthStencil2) {
   return GetPipelineKey(Desc, Key, DepthBounds, AS, MS, DepthStencil2);
+}
+
+// Metal's text of `error`, or that the library has no function `name`
+static std::string
+Described(WMT::Reference<WMT::Error> &error, const char *name) {
+  return error ? error.description().getUTF8String() : std::string("no function ") + name;
 }
 
 // CACHE after STATS (docs/swtor/README.md): the stored shaders Metal refused in the window
@@ -595,7 +720,7 @@ CompileFunction(
     WMT::Reference<WMT::Error> error;
     auto function = load(stored, error);
     if (!function)
-      ERR("Failed to load library shader ", name, ": ", error ? error.description().getUTF8String() : "no such function");
+      pipeline->Failed(shader_lines::Step::PipelineLibrary, shaders, Described(error, name));
     return function;
   }
   WMT::Reference<WMT::Error> error;
@@ -611,6 +736,16 @@ CompileFunction(
       }
       if (stats::on)
         stats::counters.cache_rejected.fetch_add(1, std::memory_order_relaxed);
+      // once a blob: a cache without a writer keeps it
+      static mullion::mutex rejected_mutex;
+      static std::unordered_set<Sha1Digest> rejected;
+      bool first;
+      {
+        std::lock_guard lock(rejected_mutex);
+        first = rejected.insert(key).second;
+      }
+      if (first)
+        pipeline->Failed(shader_lines::Step::CacheBlob, shaders, Described(error, name));
       if (auto writer = cache.getWriter())
         writer->set(key, {});
     }
@@ -652,9 +787,7 @@ CompileFunction(
   SM50ShaderBitcode bitcode;
   SM50Error sm50_error;
   if (compile(arguments, name, &bitcode, &sm50_error)) {
-    ERR("Failed to compile ", name, ": ", SM50GetErrorMessageString(sm50_error));
-    for (auto shader : shaders)
-      MTLD3D12PipelineState::DumpShaders({shader});
+    pipeline->Failed(shader_lines::Step::Convert, shaders, SM50GetErrorMessageString(sm50_error));
     return {};
   }
   if (stats::on)
@@ -664,7 +797,7 @@ CompileFunction(
   auto data = WMT::MakeDispatchData(compiled.Data, compiled.Size);
   auto function = load(data, error);
   if (!function) {
-    ERR("Failed to load ", name, ": ", error ? error.description().getUTF8String() : "no such function");
+    pipeline->Failed(shader_lines::Step::Library, shaders, Described(error, name));
     return {};
   }
   if (auto writer = cache.getWriter())
@@ -960,14 +1093,16 @@ protected:
       later->push_back([this, target, inputs, info, vs_func, gs_func, statistics = std::move(statistics)]() mutable {
         WMT::Reference<WMT::Error> err;
         if (!(*target = CreatePipeline(info, err, std::move(statistics))))
-          ERR("Failed to create geometry PSO of shaders ", name, ": ", err.description().getUTF8String());
+          Failed(shader_lines::Step::Pipeline, {}, err.description().getUTF8String());
       });
       status = S_OK;
       return variant;
     }
     if (!(variant = CreatePipeline(info, err, std::move(statistics)))) {
-      ERR("Failed to create geometry PSO of shaders ", name, ": ", err.description().getUTF8String());
-      DumpShaders({VS, GS});
+      // a topology's variant has no target: it is made at its first draw (TopologyPipeline)
+      auto shaders = std::array{VS, GS};
+      Failed(target ? shader_lines::Step::Pipeline : shader_lines::Step::Variant, shaders,
+             err.description().getUTF8String());
     } else {
       status = S_OK;
     }
@@ -1388,9 +1523,12 @@ public:
         {pDesc->VS, D3D10_SB_VERTEX_SHADER}, {pDesc->PS, D3D10_SB_PIXEL_SHADER},        {pDesc->DS, D3D11_SB_DOMAIN_SHADER},
         {pDesc->HS, D3D11_SB_HULL_SHADER},   {pDesc->GS, D3D10_SB_GEOMETRY_SHADER},     {AS, D3D12_SB_AMPLIFICATION_SHADER},
         {MS, D3D12_SB_MESH_SHADER}};
-    for (auto &[code, kind] : stages)
-      if (code.pShaderBytecode && ShaderProgramType(code.pShaderBytecode, code.BytecodeLength) != kind)
+    kind = MS.pShaderBytecode ? "mesh" : "graphics";
+    for (auto &[code, type] : stages)
+      if (code.pShaderBytecode && ShaderProgramType(code.pShaderBytecode, code.BytecodeLength) != type) {
+        StageRefused(code, type);
         return E_INVALIDARG;
+      }
     // RTVFormats has eight. Windows refuses a format given for a render target past NumRenderTargets, and stream
     // output with a root signature that does not allow it (vkd3d-proton, test_create_graphics_pipeline_state)
     if (pDesc->NumRenderTargets > std::size(pDesc->RTVFormats))
@@ -1817,10 +1955,8 @@ public:
       amplified.pixel_shader_bytecode = nullptr;
       WMT::Reference<WMT::Function> as_func, ms_func = compile(shader_ms, MS, &link, "ms_main", pDesc->PS);
       if (!ms_func ||
-          (AS.pShaderBytecode && !(as_func = compile(shader_as, AS, conservative ? (void *)&amplified : &common, "as_main")))) {
-        DumpShaders({AS, MS});
+          (AS.pShaderBytecode && !(as_func = compile(shader_as, AS, conservative ? (void *)&amplified : &common, "as_main"))))
         return FAIL(E_INVALIDARG);
-      }
       if (conservative && !AS.pShaderBytecode && !(as_func = ConservativeObject(link.slices)))
         return E_FAIL;
       mesh_info.object_function = as_func.handle;
@@ -1830,8 +1966,8 @@ public:
       // the most a payload may be (D3D12 mesh shader specification, "Amplification shader output payload")
       mesh_info.payload_memory_length = 16384;
       if (!(pso = CreatePipeline(mesh_info, err))) {
-        ERR("Failed to create mesh shader PSO of shaders ", name, ": ", err.description().getUTF8String());
-        DumpShaders({AS, MS, pDesc->PS});
+        auto shaders = std::array{AS, MS, pDesc->PS};
+        Failed(shader_lines::Step::Pipeline, shaders, err.description().getUTF8String());
         return E_FAIL;
       }
       mesh_grid_limit = pso.maxTotalThreadgroupsPerMeshGrid();
@@ -1906,12 +2042,12 @@ public:
         deferred = std::make_shared<DeferredPipeline>([self = this, info, vs_func, ps_func]() {
           WMT::Reference<WMT::Error> error;
           if (!(self->pso = self->CreatePipeline(info, error)))
-            ERR("Failed to create PSO of shaders ", self->name, ": ", error.description().getUTF8String());
+            self->Failed(shader_lines::Step::Pipeline, {}, error.description().getUTF8String());
         });
         DeferredPipeline::Queue(deferred);
       } else if (!(pso = CreatePipeline(info, err))) {
-        ERR("Failed to create PSO of shaders ", name, ": ", err.description().getUTF8String());
-        DumpShaders({pDesc->VS, pDesc->PS});
+        auto shaders = std::array{pDesc->VS, pDesc->PS};
+        Failed(shader_lines::Step::Pipeline, shaders, err.description().getUTF8String());
         return E_FAIL;
       }
       if (adjacency && !(topology_inputs_ = geometry_inputs()))
@@ -1985,8 +2121,8 @@ public:
         mesh_info.object_function = vshs_func.handle;
         pipeline_descriptors_.erase(pso.handle);
         if (!(pso = CreatePipeline(mesh_info, err))) {
-          ERR("Failed to create tessellation PSO of shaders ", name, ": ", err.description().getUTF8String());
-          DumpShaders({pDesc->VS, pDesc->HS, pDesc->DS, pDesc->GS, pDesc->PS});
+          auto shaders = std::array{pDesc->VS, pDesc->HS, pDesc->DS, pDesc->GS, pDesc->PS};
+          Failed(shader_lines::Step::Pipeline, shaders, err.description().getUTF8String());
           return E_FAIL;
         }
         return S_OK;
@@ -2109,7 +2245,7 @@ public:
         descriptor.info
     );
     if (!pipeline) {
-      ERR("Failed to create attachment PSO of shaders ", name, ": ", error.description().getUTF8String());
+      Failed(shader_lines::Step::Variant, {}, error.description().getUTF8String());
       return {};
     }
     device_->PipelineMade(name, mesh_shader ? "mesh" : "graphics", start, "targets");
@@ -2162,8 +2298,10 @@ CreateGraphicsPipelineState(
     for (auto code : {desc.VS, desc.HS, desc.DS, desc.GS, desc.PS, AS, MS}) {
       if (!code.pShaderBytecode)
         continue;
-      if (!ShaderContainerHolds(code.pShaderBytecode, code.BytecodeLength))
+      if (!ShaderContainerHolds(code.pShaderBytecode, code.BytecodeLength)) {
+        ShaderFailed(shader_lines::Step::Container, MS.pShaderBytecode ? "mesh" : "graphics", {&code, 1}, kNotHeld);
         return FAIL(E_INVALIDARG);
+      }
       const void *part;
       UINT size;
       if (FAILED(microsoft::DXBCGetRootSignature(code.pShaderBytecode, &part, &size)))
@@ -2260,7 +2398,7 @@ MTLD3D12PipelineState::Fuller(MTLD3D12Device *Device) {
   if (!fuller) {
     Variant variant;
     if (FAILED(lean->Create(Device, __uuidof(ID3D12PipelineState), (void **)&fuller)))
-      ERR("pipeline ", name, ": the variant that emulates its samplers failed");
+      Failed(shader_lines::Step::Variant, {}, "the variant that emulates its samplers failed");
   }
   return fuller.ptr();
 }

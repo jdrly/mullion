@@ -1313,8 +1313,10 @@ public:
     if (dirty_state_.test(DirtyState::GraphicsPipelineState)) {
       // a pipeline for a topology with adjacency is made here, and may fail
       auto pipeline = Pipeline();
-      if (!pipeline || (pso_graphics_->stream_output && !SinglePass() && !Pipeline(true)))
+      if (!pipeline || (pso_graphics_->stream_output && !SinglePass() && !Pipeline(true))) {
+        pso_graphics_->Skipped();
         return DrawCallStatus::Invalid;
+      }
       auto &cmd_setpso = allocator_->EncodeRenderCommand<wmtcmd_render_setpso>();
       cmd_setpso.type = WMTRenderCommandSetPSO;
       cmd_setpso.pso = pipeline;
@@ -2068,8 +2070,10 @@ public:
         return false;
     // a pipeline whose Metal compile failed on a compile thread dispatches nothing
     pso_compute_->WaitPipeline();
-    if (!pso_compute_->pso)
+    if (!pso_compute_->pso) {
+      pso_compute_->Skipped();
       return false;
+    }
 
     if (dirty_state_.test(DirtyState::ComputePipelineState)) {
       auto &cmd_setpso = allocator_->EncodeComputeCommand<wmtcmd_compute_setpso>();

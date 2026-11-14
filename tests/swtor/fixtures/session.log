@@ -4,6 +4,10 @@ info:  Mullion: switches MULLION_SAMPLE_LIMIT=4096 MULLION_SAMPLE_SWITCH=on
 info:  Mullion: env DXMT_LOG_LEVEL=info MTL_HUD_ENABLED=1 MULLION_LOG_PATH=(a path) MULLION_SHADER_FLAGS=0x10
 info:  Mullion: cache shaders=mullion/swtor_RC2.exe/shaders_400.db entries=48211 sizeMiB=700
 warn:  MULLION-FEATURE-LEVEL asked=12_2 reaches=12_1 tiledResourcesTier=2 macOS=26.1
+err:   MULLION-SHADER at=20:00:04.512 step=parse stage=ps sha1=9f2c4e1a7b3d5f60718293a4b5c6d7e8f9012345 kind=graphics dumped=yes | Invalid DXBC bytecode: input signature not found
+err:   MULLION-SHADER at=20:00:04.530 step=pipeline stage=- sha1=1a2b3c4d5e6f708192a3b4c5d6e7f80910a1b2c3,3c4d5e6f708192a3b4c5d6e7f80910a1b2c3d4e5 kind=graphics dumped=no | Fragment input(s) `user(locn1)` mismatching vertex shader output type(s) or not written by vertex shader
+warn:  MULLION-SHADER at=20:00:04.611 step=cache-blob stage=cs sha1=e5d4c3b2a1f0e9d8c7b6a5f4e3d2c1b0a9f8e7d6 kind=compute dumped=no | Invalid library file
+warn:  MULLION-SHADER at=20:00:04.990 step=draw-skipped stage=- sha1=1a2b3c4d5e6f708192a3b4c5d6e7f80910a1b2c3,3c4d5e6f708192a3b4c5d6e7f80910a1b2c3d4e5 kind=graphics skipped=1
 warn:  STATS t=1 fps=25.0 ms=40.0/40.0/40.0 slow33=25 slow50=0 | cb=3.4 rp=12.0 cp=2.0 draws=850 | sh=120 pso=44 wait=5/71.5ms cache=80/120 | allocMiB=1820 | at=20:00:05.001
 warn:  STATS t=2 fps=25.0 ms=40.0/40.0/40.0 slow33=25 slow50=0 | cb=3.4 rp=12.1 cp=2.0 draws=851 | sh=100 pso=38 wait=4/57.2ms cache=70/100 | allocMiB=1840 | at=20:00:06.002
 warn:  STATS t=3 fps=25.0 ms=40.0/40.0/40.0 slow33=25 slow50=0 | cb=3.4 rp=12.0 cp=2.0 draws=851 | sh=80 pso=32 wait=3/42.9ms cache=60/80 | allocMiB=1860 | at=20:00:07.003
@@ -84,3 +88,4 @@ warn:  DIAG MEM frame=3426 allocatedMiB=2385 footprintMiB=3995 footprintPeakMiB=
 warn:  MULLION-GPU-HUNG at=21:03:55.120 queue=1 cmdbuf=4812 waitedMs=10000 status=scheduled(3) encoders=2/0/0 present=yes flight=swtor_RC2.exe.flight
 err:   MULLION-GPU-ERROR at=21:04:05.123 queue=1 cmdbuf=4812 frame=3601 error=PageFault(3) first=yes gpu=4512345.678-4512361.012ms encoders=2 #1 faulted 'render 5e6f7a8b rt0=1920x1080 RGBA8' | Caused GPU Address Fault Error (0000000b:kIOGPUCommandBufferCallbackErrorPageFault)
 err:   MULLION-DEVICE-REMOVED at=21:04:05.124 reason=DXGI_ERROR_DEVICE_HUNG(0x887a0006) cause=gpu-error frame=3601 flight=swtor_RC2.exe.flight
+info:  MULLION-SHADER-TOTALS failed=2 byStep=parse:1,pipeline:1,cache-blob:1 skippedDraws=212 dumped=1

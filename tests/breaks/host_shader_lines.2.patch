@@ -1,0 +1,12 @@
+# one shader past the limit: a process writes 33
+--- a/src/mullion/mullion_shader_lines.hpp
++++ b/src/mullion/mullion_shader_lines.hpp
+@@ -187,7 +187,7 @@
+     std::lock_guard lock(mutex_);
+     if (written_.contains(sha1))
+       return Dumped::Yes;
+-    if (written_.size() >= kDumpLimit)
++    if (written_.size() > kDumpLimit)
+       return Dumped::Limit;
+     std::ofstream file(folder + separator + sha1 + ".dxbc", std::ios::binary);
+     if (!file.write(static_cast<const char *>(data), size) || (file.close(), file.fail()))

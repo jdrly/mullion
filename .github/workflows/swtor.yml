@@ -228,7 +228,7 @@ jobs:
           { echo '### The build'; echo '```'; cat "$RUNNER_TEMP/check.txt"; echo '```'; } >>"$GITHUB_STEP_SUMMARY"
           exit "$status"
 
-      # tests/host/meson.build: twenty-six tests, each with meson's 30 s timeout but host_tessellator's
+      # tests/host/meson.build: twenty-eight tests, each with meson's 30 s timeout but host_tessellator's
       # 300 s; none builds the tree or waits on a GPU
       - name: Host tests
         if: github.event_name == 'pull_request'

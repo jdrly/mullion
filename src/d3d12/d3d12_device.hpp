@@ -36,6 +36,7 @@
 #include "mullion_presenter.hpp"
 #include "mullion_reset_wait.hpp"
 #include "mullion_ring_bump_allocator.hpp"
+#include "mullion_shader_lines.hpp"
 #include "mullion_texture.hpp"
 #include "com/com_pointer.hpp"
 #include "log/log.hpp"
@@ -529,12 +530,26 @@ public:
   virtual void AddRefPrivate() = 0;
   virtual void ReleasePrivate() = 0;
 
-  static HRESULT
+  // what its MULLION-SHADER lines call it: graphics, compute or mesh
+  const char *kind = "graphics";
+
+  // a shader it is made of: Direct3D's checks, then the converter's reading of it, each failure a MULLION-SHADER line
+  HRESULT
   InitializeShader(
       MTLD3D12Device *Device, D3D12_SHADER_BYTECODE Bytecode, sm50_shader_t *ppShader, struct MTL_SHADER_REFLECTION *pRefl
   );
 
-  // writes shaders that failed to compile to MULLION_SHADER_DUMP_PATH, when set, as <sha1>.dxbc for airconv's CLI
+  // MULLION-SHADER (docs/swtor/README.md): `shaders` failed at `step`, each dumped as <sha1>.dxbc when
+  // MULLION_SHADER_DUMP_PATH names a folder (at most 32 a process). none: the pipeline's (a compile thread's, a
+  // variant's), from kept_shaders with a folder, else by `name` alone
+  void Failed(shader_lines::Step step, std::span<const D3D12_SHADER_BYTECODE> shaders, std::string_view message);
+  // Failed's line for a shader refused before it is read: its container, or its stage against `Type`'s
+  void StageRefused(D3D12_SHADER_BYTECODE Bytecode, int Type);
+  // a draw or dispatch dropped for want of a Metal pipeline: counted, and the first of the pipeline's said
+  void Skipped();
+  std::atomic<bool> skip_said{false};
+
+  // MULLION_SHADER_DUMP_ALL=1 and the trace's dumps: every shader, as <sha1>.dxbc for airconv's CLI, without a limit
   static void DumpShaders(std::initializer_list<D3D12_SHADER_BYTECODE> Shaders);
 
   // the SHA-1 of each of its shaders, which is what logs call the pipeline. with MULLION_LOG_LEVEL=trace or
@@ -542,6 +557,9 @@ public:
   // profile names can be looked at
   std::string name;
   void Name(std::initializer_list<D3D12_SHADER_BYTECODE> Shaders);
+  // with MULLION_SHADER_DUMP_PATH, its shaders' bytes, one copy of each shader for the process, for a failure that
+  // comes when the application may have freed them (a compile thread's, a variant's at draw time)
+  std::vector<std::shared_ptr<const std::string>> kept_shaders;
 };
 
 // the variant the pipelines this thread makes now are, for their MULLION-PIPELINE line (MTLD3D12PipelineState::Fuller)
@@ -1235,6 +1253,15 @@ bool GPUErrorDetail();
 // (d3d12_command_queue.cpp)
 uint64_t PresentsSoFar();
 const std::vector<std::string> &UserNames();
+// MULLION-SHADER-TOTALS: the process's shader failures so far (d3d12_pipeline_graphics.cpp)
+std::string ShaderTotalsLine();
+// MULLION-SHADER for shaders of no pipeline yet (MTLD3D12PipelineState::Failed), named by `name` when none is given
+void ShaderFailed(
+    shader_lines::Step step, const char *kind, std::span<const D3D12_SHADER_BYTECODE> shaders,
+    std::string_view message, const std::string &name = {}
+);
+// the text of a container that doesn't hold (ShaderContainerHolds)
+extern const char *const kNotHeld;
 
 // whether `device` has the features a shader container requires: the low bits of its feature info part (SFI0,
 // DxilContainer.h), which DxilConstants.h calls feature requirements
