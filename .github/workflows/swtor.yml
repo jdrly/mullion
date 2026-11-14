@@ -40,8 +40,9 @@ env:
   NINJA_VERSION: 1.13.0
   LLVM_VERSION: 15.0.7
   LLVM_SHA256: 8b5fcb24b4128cf04df1b0b9410ce8b1a729cb3c544e6da885d234280dedeac6
-  # llvm/LICENSE.TXT at llvmorg-$LLVM_VERSION: airconv links LLVM into winemetal.so. llvm-mingw's LICENSE.TXT, for the
-  # libc++ linked into the DLLs, is the same file
+  # .github/swtor/LICENSE-LLVM.txt, a copy of llvm/LICENSE.TXT at llvmorg-$LLVM_VERSION: airconv links LLVM into
+  # winemetal.so. llvm-mingw's LICENSE.TXT, for the libc++ linked into the DLLs, is the same file. a new LLVM_VERSION
+  # replaces the copy and this hash
   LLVM_LICENSE_SHA256: 8d85c1057d742e597985c7d4e6320b015a9139385cff4cbae06ffc0ebe89afee
   # raise it when toolchain.zsh builds LLVM differently, so the cache doesn't keep the old build
   LLVM_BUILD: 1
@@ -75,6 +76,16 @@ jobs:
           echo "$ACTIONLINT_SHA256  $RUNNER_TEMP/$f" | sha256sum -c
           tar -xzf "$RUNNER_TEMP/$f" -C "$RUNNER_TEMP" actionlint
           "$RUNNER_TEMP/actionlint" -color .github/workflows/swtor.yml
+      # Build x86_64's /bin/bash is 3.2, whose -e doesn't stop on a false [[ ]] or (( )): a line of that job that starts
+      # with one has to go on with ||, or the check it makes never fails the step
+      - name: No bare [[ ]] or (( )) in Build x86_64
+        run: |
+          awk '/^  build:$/ { on = 1; next } /^  [a-z_-]+:$/ { on = 0 }
+            on && /^[[:space:]]*(run:[[:space:]]*)?(\[\[|\(\()/ && !/(\]\]|\)\))[[:space:]]*\|\|/ {
+              printf "::error file=%s,line=%d::bash 3.2 on the macOS runner ignores this check failing: end it in || { echo ::error::...; exit 1; }\n", FILENAME, FNR
+              bad = 1
+            }
+            END { exit bad }' .github/workflows/swtor.yml
 
   build:
     name: Build x86_64
@@ -155,7 +166,8 @@ jobs:
           # appended: llvm-mingw's unprefixed clang mustn't replace Apple's, which builds the native side
           export PATH="$PATH:$PWD/toolchains/llvm-mingw/bin"
           # and no other mingw on the image may build the DLLs instead
-          [[ $(command -v x86_64-w64-mingw32-gcc) == "$PWD/toolchains/llvm-mingw/bin/x86_64-w64-mingw32-gcc" ]]
+          [[ $(command -v x86_64-w64-mingw32-gcc) == "$PWD/toolchains/llvm-mingw/bin/x86_64-w64-mingw32-gcc" ]] ||
+            { echo "::error::x86_64-w64-mingw32-gcc is $(command -v x86_64-w64-mingw32-gcc), not llvm-mingw's"; exit 1; }
           {
             echo '### Toolchain'
             echo '```'
@@ -208,8 +220,7 @@ jobs:
           cp -R docs/licenses install/licenses
           # the DLLs link the MinGW-w64 runtime statically (meson.build's -static); its notices travel with it
           cp -R toolchains/llvm-mingw/x86_64-w64-mingw32/share/mingw32 install/licenses/mingw-w64
-          curl -fsSL --retry 3 -o install/LICENSE-LLVM.txt \
-            "https://raw.githubusercontent.com/llvm/llvm-project/llvmorg-$LLVM_VERSION/llvm/LICENSE.TXT"
+          cp .github/swtor/LICENSE-LLVM.txt install/
           echo "$LLVM_LICENSE_SHA256  install/LICENSE-LLVM.txt" | shasum -a 256 -c
           cat install/VERSION
           find install -type f | sort
@@ -272,19 +283,19 @@ jobs:
           # host_rc_self_move has to fail, and on that check
           rc=src/util/rc/util_rc_ptr.hpp
           perl -pi -e 's/if \(this != &other\) \{/if (true) {/' "$rc"
-          [[ $(git diff --numstat -- "$rc") == $'1\t1\t'"$rc" ]]
+          [[ $(git diff --numstat -- "$rc") == $'1\t1\t'"$rc" ]] || { echo "::error::the edit of $rc didn't apply"; exit 1; }
           status=0
           meson test -C build host_rc_self_move --print-errorlogs >"$RUNNER_TEMP/control.txt" 2>&1 || status=$?
           git checkout -- "$rc"
           cat "$RUNNER_TEMP/control.txt"
-          [[ $status != 0 ]]
+          [[ $status != 0 ]] || { echo "::error::host_rc_self_move passed on its break"; exit 1; }
           grep -qF 'failed: owner.ptr() == &object' "$RUNNER_TEMP/control.txt"
           # the warnings check, given this build's log with one warning more
           cp build.log "$RUNNER_TEMP/warned.log"
           echo '../src/d3d12/control.cpp:1:1: warning: a warning no baseline lists [-Wcontrol]' >>"$RUNNER_TEMP/warned.log"
           status=0
           .github/swtor/warnings.zsh "$RUNNER_TEMP/warned.log" .github/swtor/warnings-x86_64.txt >"$RUNNER_TEMP/warned.txt" || status=$?
-          [[ $status == 1 ]]
+          [[ $status == 1 ]] || { echo "::error::the warnings check exited $status on a new warning, not 1"; exit 1; }
           grep -qxF '::error::New warning: src/d3d12/control.cpp: warning: a warning no baseline lists [-Wcontrol]' "$RUNNER_TEMP/warned.txt"
           # the bridge's availability guards: winemetal_unix.c with sparseResidencyInTiles' macOS 26.4 guard lowered
           # to 26.0 and a macOS 26 type used outside any guard, compiled alone for the build's target (15.0). the
@@ -292,9 +303,9 @@ jobs:
           wm=src/winemetal/unix/winemetal_unix.c
           perl -pi -e 's/if \(\@available\(macOS 26\.4, \*\)\) \{/if (\@available(macOS 26.0, *)) {/' "$wm"
           echo '_Static_assert(sizeof(MTL4CopySparseTextureMappingOperation) != 0, "");' >>"$wm"
-          [[ $(git diff --numstat -- "$wm") == $'2\t1\t'"$wm" ]]
+          [[ $(git diff --numstat -- "$wm") == $'2\t1\t'"$wm" ]] || { echo "::error::the edits of $wm didn't apply"; exit 1; }
           obj=$(ninja -C build -t targets all | sed -n 's/^\([^:]*winemetal_unix\.c\.o\): .*/\1/p')
-          [[ $obj == *.o && $obj != *$'\n'* ]]
+          [[ $obj == *.o && $obj != *$'\n'* ]] || { echo "::error::no single object of winemetal_unix.c: $obj"; exit 1; }
           ninja -C build "$obj" >"$RUNNER_TEMP/unguarded.log" 2>&1 || true
           git checkout -- "$wm"
           status=0
@@ -302,7 +313,7 @@ jobs:
           # only its new warnings, and not as workflow commands: GitHub would annotate every pull request with them,
           # and with a "Gone" notice for each baseline warning of the files this compile left out
           sed -n 's/^::error::New warning: /control, new warning: /p' "$RUNNER_TEMP/unguarded.txt"
-          [[ $status == 1 ]]
+          [[ $status == 1 ]] || { echo "::error::the warnings check exited $status on the unguarded compile, not 1"; exit 1; }
           grep -qxF "::error::New warning: $wm: warning: 'supportsPlacementSparse' is only available on macOS 26.4 or newer [-Wunguarded-availability-new]" "$RUNNER_TEMP/unguarded.txt"
           grep -qxF "::error::New warning: $wm: warning: 'MTL4CopySparseTextureMappingOperation' is only available on macOS 26.0 or newer [-Wunguarded-availability-new]" "$RUNNER_TEMP/unguarded.txt"
           # the build checks, given a copy of the build with a file it doesn't ship and without SOURCE, its
@@ -321,7 +332,8 @@ jobs:
           status=0
           python3 -I .github/swtor/check-build.py "$b" >"$RUNNER_TEMP/broken.txt" || status=$?
           cat "$RUNNER_TEMP/broken.txt"
-          [[ $status == 1 ]] && [[ $(grep -c '^FAIL' "$RUNNER_TEMP/broken.txt") == 7 ]]
+          [[ $status == 1 && $(grep -c '^FAIL' "$RUNNER_TEMP/broken.txt") == 7 ]] ||
+            { echo "::error::check-build.py exited $status on the broken copy, not 1 with 7 FAIL lines"; exit 1; }
           grep -qxF 'FAIL  missing file: SOURCE' "$RUNNER_TEMP/broken.txt"
           grep -qxF 'FAIL  unexpected file: x86_64-windows/d3d9.dll' "$RUNNER_TEMP/broken.txt"
           grep -qxF 'FAIL  x86_64-unix/winemetal.so: 1 LLVM source paths (assertion text)' "$RUNNER_TEMP/broken.txt"
@@ -450,8 +462,8 @@ jobs:
           status=0
           python3 -I .github/swtor/check-build.py install "$changed" >"$RUNNER_TEMP/codegen.txt" || status=$?
           cat "$RUNNER_TEMP/codegen.txt"
-          [[ $status == 1 ]]
-          [[ $(grep -c '^FAIL' "$RUNNER_TEMP/codegen.txt") == 3 ]]
+          [[ $status == 1 && $(grep -c '^FAIL' "$RUNNER_TEMP/codegen.txt") == 3 ]] ||
+            { echo "::error::check-build.py exited $status on the changed codegen id, not 1 with 3 FAIL lines"; exit 1; }
           for f in d3d11.dll d3d12core.dll; do
             grep -qxF "FAIL  x86_64-windows/$f: carries the codegen id ${changed:0:12}" "$RUNNER_TEMP/codegen.txt"
           done
