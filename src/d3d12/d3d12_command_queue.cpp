@@ -2969,6 +2969,7 @@ public:
     }
 
     unsigned present_encoders = 0;
+    uint64_t drawable_ns = 0;
     auto drawable = presenter->encodeCommands(
         MetalCommandBuffer(cmdbuf), source, state,
         [&](auto encoder) {
@@ -2977,8 +2978,11 @@ public:
             encoder.waitForFence(scaler->fence(), WMTRenderStageFragment);
         },
         [&](auto encoder) { encoder.updateFence(fence_, WMTRenderStageFragment); }, inflight_cmdbuf_seq_.load(),
-        diag::trace_encoders ? &present_encoders : nullptr
+        diag::trace_encoders ? &present_encoders : nullptr, &drawable_ns
     );
+    // MULLION_STATS: the bridge's time in nextDrawable (HITCH's drawableMs)
+    if (stats::on)
+      hitch::counters.drawable_ns.fetch_add(drawable_ns, std::memory_order_relaxed);
     if (diag::trace_encoders) {
       scope.inflight->physical[WMTMetal4Render]++;
       scope.inflight->physical[WMTMetal4Blit] += present_encoders - 1;

@@ -1967,7 +1967,8 @@ WINEMETAL_API void DeveloperHUDProperties_remove(obj_handle_t obj, obj_handle_t 
 
 WINEMETAL_API obj_handle_t MetalDrawable_texture(obj_handle_t drawable);
 
-WINEMETAL_API obj_handle_t MetalLayer_nextDrawable(obj_handle_t layer);
+// `waited_ns`, unless null: how long the Mac's call took (docs/swtor/README.md § The nextDrawable line)
+WINEMETAL_API obj_handle_t MetalLayer_nextDrawable(obj_handle_t layer, uint64_t *waited_ns);
 
 WINEMETAL_API bool MTLDevice_supportsFXSpatialScaler(obj_handle_t device);
 

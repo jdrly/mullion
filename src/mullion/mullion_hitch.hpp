@@ -5,7 +5,7 @@
 // (d3d12_swapchain.cpp), in the shape of d9mt's (driver/d3d9/d3d9_hitch.h, driver/mtl/mtl_compile.h):
 //
 //   HITCH frame=2228 dtMs=70.0 inDriverMs=40.0 (57%) | pipelineWait=1/38.6ms present=1/1.4ms
-//     | queue: gpuMs=9.8 encodeMs=2.3 behind=2 | at=20:00:44.142
+//     | queue: gpuMs=9.8 encodeMs=2.3 drawableMs=0.1 behind=2 | at=20:00:44.142
 //   COMPILE frame=2228 dtMs=70.0 shaders=2/18.2ms psos=1/31.0ms renderWait=1/38.6ms cache=0/2 queued=0
 //
 // And always, whatever MULLION_STATS is, a line for each pipeline that took 20 ms or more or was made after the first
@@ -132,9 +132,9 @@ struct Counters {
   // shaders converted (or tried) and Metal pipelines compiled, each counted with its time when it ends (Timed): a
   // shader's with its Metal function made and stored in the cache. STATS's sh and pso count them as they begin
   std::atomic<uint64_t> shaders{0}, shader_ns{0}, pipelines{0}, pipeline_ns{0};
-  // time spent by the GPU on the command buffers completed (as Metal gave it by their completion), and encoding command
-  // buffers (from a slot taken to its commit)
-  std::atomic<uint64_t> gpu_ns{0}, encode_ns{0};
+  // time spent by the GPU on the command buffers completed (as Metal gave it by their completion), encoding command
+  // buffers (from a slot taken to its commit), and in the bridge's nextDrawable for a present (part of encoding)
+  std::atomic<uint64_t> gpu_ns{0}, encode_ns{0}, drawable_ns{0};
   // command buffers completed (or cancelled), against ticket 07's committed
   std::atomic<uint64_t> completed{0};
   // Metal pipelines left to the compile threads or to their first draw, not made yet
@@ -145,7 +145,8 @@ struct Counters {
 inline Counters counters;
 
 struct Totals {
-  uint64_t shaders = 0, shader_ns = 0, pipelines = 0, pipeline_ns = 0, gpu_ns = 0, encode_ns = 0, completed = 0;
+  uint64_t shaders = 0, shader_ns = 0, pipelines = 0, pipeline_ns = 0, gpu_ns = 0, encode_ns = 0, drawable_ns = 0,
+           completed = 0;
   int64_t compiling = 0;
 };
 
@@ -153,7 +154,7 @@ inline Totals
 Read(const Counters &from = counters) {
   auto get = [](const auto &counter) { return counter.load(std::memory_order_relaxed); };
   return {get(from.shaders), get(from.shader_ns), get(from.pipelines), get(from.pipeline_ns),
-          get(from.gpu_ns),  get(from.encode_ns), get(from.completed), get(from.compiling)};
+          get(from.gpu_ns),  get(from.encode_ns), get(from.drawable_ns), get(from.completed), get(from.compiling)};
 }
 
 // the frames of the counted swap chain: Present to Present
@@ -173,6 +174,7 @@ public:
     misses_ = in(&stats::Totals::cache_misses);
     shaders_ = of(&Totals::shaders), shader_ns_ = of(&Totals::shader_ns), psos_ = of(&Totals::pipelines);
     pipeline_ns_ = of(&Totals::pipeline_ns), gpu_ns_ = of(&Totals::gpu_ns), encode_ns_ = of(&Totals::encode_ns);
+    drawable_ns_ = of(&Totals::drawable_ns);
     behind_ = stats.command_buffers > totals.completed ? stats.command_buffers - totals.completed : 0;
     compiling_ = totals.compiling > 0 ? uint64_t(totals.compiling) : 0;
     last_stats_ = stats;
@@ -213,8 +215,10 @@ public:
       }
     if (!any)
       line += " none";
-    std::snprintf(text, sizeof(text), " | queue: gpuMs=%.1f encodeMs=%.1f behind=%llu | at=%02u:%02u:%02u.%03u",
-                  double(gpu_ns_) / 1e6, double(encode_ns_) / 1e6, (unsigned long long)behind_, at.hour % 100,
+    std::snprintf(text, sizeof(text),
+                  " | queue: gpuMs=%.1f encodeMs=%.1f drawableMs=%.1f behind=%llu | at=%02u:%02u:%02u.%03u",
+                  double(gpu_ns_) / 1e6, double(encode_ns_) / 1e6, double(drawable_ns_) / 1e6,
+                  (unsigned long long)behind_, at.hour % 100,
                   at.minute % 100, at.second % 100, at.millisecond % 1000);
     return (line + text).substr(0, stats::kLineLimit - 1);
   }
@@ -238,7 +242,8 @@ private:
   double dt_ms_ = 0;
   Frame frame_data_;
   uint64_t shaders_ = 0, psos_ = 0, waits_ = 0, wait_ns_ = 0, hits_ = 0, misses_ = 0;
-  uint64_t shader_ns_ = 0, pipeline_ns_ = 0, gpu_ns_ = 0, encode_ns_ = 0, behind_ = 0, compiling_ = 0;
+  uint64_t shader_ns_ = 0, pipeline_ns_ = 0, gpu_ns_ = 0, encode_ns_ = 0, drawable_ns_ = 0, behind_ = 0,
+           compiling_ = 0;
   stats::Totals last_stats_;
   Totals last_totals_;
   bool hitch_ = false, compile_ = false;

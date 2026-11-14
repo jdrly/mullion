@@ -126,6 +126,36 @@ main(int argc, char **argv) {
           "MtlPresenter: 20:00:10.200 visibility 0x1 -> 0x3 visible=1 activeSpace=1 miniaturized=0 active=0 why=space");
   }
 
+  // the nextDrawable line: from 50 ms, with the watched view's visibility or unknown, and its own limit
+  {
+    const uint64_t ms = 1000000ull, s = 1000 * ms;
+    window_limit limit{};
+    auto line = [&](uint64_t waited_ns, bool got, uint32_t visibility, uint64_t now_ns) {
+      char buf[160];
+      int length = drawable_line(&limit, waited_ns, got, visibility, now_ns, "20:00:34.700", buf, sizeof buf);
+      check(length == 0 || buf[length - 1] == '\n', "a whole nextDrawable line");
+      return length ? std::string(buf, length - 1) : std::string();
+    };
+    equal(line(49 * ms + 999999, true, kShown, 0), "");
+    check(limit.lines == 0, "a call under 50 ms takes nothing of the limit");
+    equal(line(50 * ms, true, kShown, 0), "mullion: nextDrawable blocked 50 ms got=1 visibility=0x3 at=20:00:34.700");
+    // a Space switch away: the window off the active Space, the drawable returned after the block
+    equal(line(1149 * ms + 400000, true, WINDOW_VISIBLE, s),
+          "mullion: nextDrawable blocked 1149 ms got=1 visibility=0x1 at=20:00:34.700");
+    // the drawable timeout's nil, on a layer that isn't the watched view's
+    equal(line(1000 * ms, false, DRAWABLE_VISIBILITY_UNKNOWN, 2 * s),
+          "mullion: nextDrawable blocked 1000 ms got=0 visibility=unknown at=20:00:34.700");
+    // 30 lines in 10 s; the first after them says how many were left out, and the next doesn't again
+    limit = {};
+    unsigned written = 0;
+    for (unsigned i = 0; i < 35; i++)
+      written += !line(60 * ms, true, 0, i * s / 10).empty();
+    check(written == 30, "30 nextDrawable lines in 10 s, not " + std::to_string(written));
+    equal(line(70 * ms, true, 0, 10 * s),
+          "mullion: nextDrawable blocked 70 ms got=1 visibility=0x0 at=20:00:34.700 [5 earlier lines suppressed]");
+    equal(line(80 * ms, true, 0, 10 * s), "mullion: nextDrawable blocked 80 ms got=1 visibility=0x0 at=20:00:34.700");
+  }
+
   // the fixture: its window lines are a Cmd-Tab to an app on another Space and back, between STATS t=30 and t=31,
   // and t=33 and t=34
   {

@@ -2404,8 +2404,15 @@ _MetalDrawable_texture(void *obj) {
 
 static NTSTATUS
 _MetalLayer_nextDrawable(void *obj) {
-  struct unixcall_generic_obj_obj_ret *params = obj;
-  params->ret = (obj_handle_t)[(CAMetalLayer *)params->handle nextDrawable];
+  struct unixcall_metal_layer_next_drawable *params = obj;
+  CAMetalLayer *layer = (CAMetalLayer *)params->layer;
+  // the Mac's call alone, timed here so that a Space switch's block is its own (docs/swtor/README.md § The
+  // nextDrawable line)
+  uint64_t start = clock_gettime_nsec_np(CLOCK_UPTIME_RAW);
+  id<CAMetalDrawable> drawable = [layer nextDrawable];
+  params->waited_ns = clock_gettime_nsec_np(CLOCK_UPTIME_RAW) - start;
+  params->ret = (obj_handle_t)drawable;
+  window_lines_drawable(layer, params->waited_ns, drawable != nil);
   return STATUS_SUCCESS;
 }
 
@@ -2537,7 +2544,7 @@ MullionPlace(MullionMetalHost *host, struct WMTWindowPlacement placement) {
     if (host->view.superview != content)
       [content addSubview:host->view positioned:NSWindowAbove relativeTo:nil];
     host->view.frame = area;
-    window_lines_watch(host->view);
+    window_lines_watch(host->view, host->layer);
     return;
   }
   NSLog(@"winemetal: no window to present %#llx in", placement.top_level);
@@ -2572,10 +2579,11 @@ _CreateMetalViewFromHWND(void *obj) {
         pfn_macdrv_view_create_metal_view(win_data->client_cocoa_view, (macdrv_metal_device)params->device);
     params->ret_view = (obj_handle_t)view;
     if (view) {
-      params->ret_layer = (obj_handle_t)pfn_macdrv_view_get_metal_layer(view);
+      CAMetalLayer *layer = (CAMetalLayer *)pfn_macdrv_view_get_metal_layer(view);
+      params->ret_layer = (obj_handle_t)layer;
       // winemac.drv's metal view is an NSView in the window
       dispatch_async(dispatch_get_main_queue(), ^{
-        window_lines_watch((NSView *)view);
+        window_lines_watch((NSView *)view, layer);
       });
     }
     pfn_release_win_data(win_data);

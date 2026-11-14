@@ -3,7 +3,9 @@
 // prints inDriverMs=40.0 (57%) and the category, one with nothing inside prints none, and a frame under
 // MULLION_HITCH_MS prints no HITCH; COMPILE comes for a frame with compile work or of 33.4 ms or more; nested scopes
 // count once; the MULLION-PIPELINE line joins its shaders' names and ends with the lines its limit left out; no line
-// reaches 900 bytes, the suppressed count kept; and the HITCH and COMPILE lines of tests/swtor/fixtures/session.log are what the frames write
+// reaches 900 bytes, the suppressed count kept; a present behind a blocked nextDrawable prints the bridge's time in
+// it as drawableMs, the frame's own and not the session's; and the HITCH and COMPILE lines of
+// tests/swtor/fixtures/session.log are what the frames write
 #include "../../src/mullion/mullion_hitch.hpp"
 #include <cstdio>
 #include <fstream>
@@ -72,7 +74,7 @@ main(int argc, char **argv) {
         "a 70 ms frame has a line");
   check(frames.Hitch(), "a 70 ms frame is a hitch");
   equal(frames.HitchLine(at), "HITCH frame=2 dtMs=70.0 inDriverMs=40.0 (57%) | pipelineWait=1/40.0ms"
-                              " | queue: gpuMs=0.0 encodeMs=0.0 behind=0 | at=20:01:04.120");
+                              " | queue: gpuMs=0.0 encodeMs=0.0 drawableMs=0.0 behind=0 | at=20:01:04.120");
   check(frames.Compile(), "a 70 ms frame has a COMPILE line too");
   equal(frames.CompileLine(), "COMPILE frame=2 dtMs=70.0 shaders=0/0.0ms psos=0/0.0ms renderWait=0/0.0ms cache=0/0"
                               " queued=0");
@@ -80,7 +82,7 @@ main(int argc, char **argv) {
   // 70 ms with nothing inside: the game's
   check(frames.End(now += 70 * kMs, {}, stats, totals, hitch::kDefaultMs) && frames.Hitch(), "a second hitch");
   equal(frames.HitchLine(at), "HITCH frame=3 dtMs=70.0 inDriverMs=0.0 (0%) | none"
-                              " | queue: gpuMs=0.0 encodeMs=0.0 behind=0 | at=20:01:04.120");
+                              " | queue: gpuMs=0.0 encodeMs=0.0 drawableMs=0.0 behind=0 | at=20:01:04.120");
 
   // at the threshold is a hitch, under it not; MULLION_HITCH_MS moves it
   check(frames.End(now += 50 * kMs, {}, stats, totals, hitch::kDefaultMs) && frames.Hitch(), "50.0 ms is a hitch");
@@ -106,9 +108,30 @@ main(int argc, char **argv) {
                    stats, totals, hitch::kDefaultMs),
         "a 60 ms frame");
   equal(frames.HitchLine(at), "HITCH frame=10 dtMs=60.0 inDriverMs=6.0 (10%) | shaderConvert=1/3.0ms present=1/1.0ms"
-                              " fenceWait=1/2.0ms | queue: gpuMs=0.0 encodeMs=0.0 behind=3 | at=20:01:04.120");
+                              " fenceWait=1/2.0ms | queue: gpuMs=0.0 encodeMs=0.0 drawableMs=0.0 behind=3 | at=20:01:04.120");
   equal(frames.CompileLine(), "COMPILE frame=10 dtMs=60.0 shaders=0/0.0ms psos=0/0.0ms renderWait=0/0.0ms cache=0/0"
                               " queued=6");
+
+  // a present whose nextDrawable blocked, as at a Space switch: drawableMs is the bridge's time in it, part of
+  // encodeMs, in the frame the queue's buffer ended in
+  {
+    hitch::Frames blocked;
+    hitch::Counters counters;
+    stats::Totals none;
+    blocked.End(0, {}, none, hitch::Read(counters), hitch::kDefaultMs);
+    counters.encode_ns += 1'199'800'000, counters.drawable_ns += 1'149'300'000;
+    check(blocked.End(1'201'500'000, With({{hitch::Present, 0.2}}), none, hitch::Read(counters), hitch::kDefaultMs) &&
+              blocked.Hitch(),
+          "a frame behind a blocked drawable is a hitch");
+    equal(blocked.HitchLine(at), "HITCH frame=2 dtMs=1201.5 inDriverMs=0.2 (0%) | present=1/0.2ms"
+                                 " | queue: gpuMs=0.0 encodeMs=1199.8 drawableMs=1149.3 behind=0 | at=20:01:04.120");
+    // the next frame took its drawable at once: only what it added
+    counters.encode_ns += 2'000'000, counters.drawable_ns += 40'000;
+    check(blocked.End(1'261'500'000, {}, none, hitch::Read(counters), hitch::kDefaultMs) && blocked.Hitch(),
+          "a 60 ms frame");
+    equal(blocked.HitchLine(at), "HITCH frame=3 dtMs=60.0 inDriverMs=0.0 (0%) | none"
+                                 " | queue: gpuMs=0.0 encodeMs=2.0 drawableMs=0.0 behind=0 | at=20:01:04.120");
+  }
 
   // a pipeline compiled across a frame's end counts, with its time, in the frame it ends in
   {
@@ -144,7 +167,7 @@ main(int argc, char **argv) {
     stats::Totals most;
     most.command_buffers = most.waits = most.wait_ns = most.cache_hits = most.cache_misses =
         std::numeric_limits<uint64_t>::max();
-    hitch::Totals all{~0ull, ~0ull, ~0ull, ~0ull, ~0ull, ~0ull, 0, std::numeric_limits<int64_t>::max()};
+    hitch::Totals all{~0ull, ~0ull, ~0ull, ~0ull, ~0ull, ~0ull, ~0ull, 0, std::numeric_limits<int64_t>::max()};
     big.End(0, {}, {}, {}, hitch::kDefaultMs);
     big.End(~0ull, full, most, all, hitch::kDefaultMs);
     check(big.HitchLine({99, 99, 99, 999}).size() < stats::kLineLimit, "HITCH under 900 bytes");
@@ -214,7 +237,7 @@ main(int argc, char **argv) {
     totals_now.shaders += 2, totals_now.pipelines += 1, stats_now.waits += 1, stats_now.wait_ns += 38'600'000;
     stats_now.cache_misses += 2, stats_now.command_buffers += 5;
     totals_now.shader_ns += 18'200'000, totals_now.pipeline_ns += 31'000'000, totals_now.gpu_ns += 10'400'000;
-    totals_now.encode_ns += 2'100'000, totals_now.completed += 3;
+    totals_now.encode_ns += 2'100'000, totals_now.drawable_ns += 100'000, totals_now.completed += 3;
     session.End(t += 120 * kMs, With({{hitch::Present, 0.4}}), stats_now, totals_now, hitch::kDefaultMs);
     write({20, 0, 23, 125});
     Quiet(session, t, 1259, stats_now, totals_now);
@@ -224,7 +247,7 @@ main(int argc, char **argv) {
     totals_now.shaders += 2, totals_now.pipelines += 1, stats_now.waits += 1, stats_now.wait_ns += 38'600'000;
     stats_now.cache_misses += 2, stats_now.command_buffers += 5;
     totals_now.shader_ns += 18'200'000, totals_now.pipeline_ns += 31'000'000, totals_now.gpu_ns += 9'800'000;
-    totals_now.encode_ns += 2'300'000, totals_now.completed += 5;
+    totals_now.encode_ns += 2'300'000, totals_now.drawable_ns += 200'000, totals_now.completed += 5;
     session.End(t += 70 * kMs, With({{hitch::PipelineWait, 38.6}, {hitch::Present, 1.4}}), stats_now, totals_now,
                 hitch::kDefaultMs);
     write({20, 0, 44, 142});

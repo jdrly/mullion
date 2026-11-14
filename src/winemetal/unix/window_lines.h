@@ -1,7 +1,8 @@
 #pragma once
 
-// The window lines (docs/swtor/README.md § The window lines), for the bridge's window watch (window.c) and
-// tests/host/window_lines.cpp. C and C++, no AppKit.
+// The window lines (docs/swtor/README.md § The window lines), for the bridge's window watch (window.c), and the
+// nextDrawable line (§ The nextDrawable line), for its -nextDrawable; and for tests/host/window_lines.cpp. C and C++,
+// no AppKit.
 //
 // A change of the window's visibility is d9mt's line, which SWTOR on Mac's session report reads for its hidden seconds
 // and its --mark:
@@ -91,5 +92,39 @@ window_look(struct window_watch *watch, struct window_state now, uint64_t now_ns
   } else
     length = snprintf(buf, size, "mullion: window at=%s active=%d visibility=0x%x why=%s%s\n", at, now.active,
                       (unsigned)now.visibility, why, tail);
+  return length > 0 && (size_t)length < size ? length : 0;
+}
+
+// The nextDrawable line (docs/swtor/README.md § The nextDrawable line), for the bridge's -nextDrawable, on whichever
+// thread presents:
+//     mullion: nextDrawable blocked <ms> ms got=<0|1> visibility=0x<flags>|unknown at=<HH:MM:SS.mmm>
+// ending with " [<n> earlier lines suppressed]" after its own limit left lines out
+
+// a call this long or longer has a line, as d9mt's
+#define DRAWABLE_BLOCKED_NS 50000000ull
+// the visibility of a layer that isn't the watched view's
+#define DRAWABLE_VISIBILITY_UNKNOWN UINT32_MAX
+
+static inline bool
+drawable_blocked(uint64_t waited_ns) {
+  return waited_ns >= DRAWABLE_BLOCKED_NS;
+}
+
+// a call that took `waited_ns` and returned a drawable or not, `visibility` the watched view's last state or
+// DRAWABLE_VISIBILITY_UNKNOWN, `at` the local time. writes the line into `buf`, newline included, and returns its
+// length: 0 under the threshold or when the limit leaves it out. the caller keeps `limit` to one thread at a time
+static inline int
+drawable_line(struct window_limit *limit, uint64_t waited_ns, bool got, uint32_t visibility, uint64_t now_ns,
+              const char *at, char *buf, size_t size) {
+  if (!drawable_blocked(waited_ns) || !window_limit_take(limit, now_ns))
+    return 0;
+  char tail[48] = "", shown[16] = "unknown";
+  if (limit->dropped)
+    snprintf(tail, sizeof tail, " [%u earlier lines suppressed]", limit->dropped);
+  limit->dropped = 0;
+  if (visibility != DRAWABLE_VISIBILITY_UNKNOWN)
+    snprintf(shown, sizeof shown, "0x%x", (unsigned)visibility);
+  int length = snprintf(buf, size, "mullion: nextDrawable blocked %llu ms got=%d visibility=%s at=%s%s\n",
+                        (unsigned long long)(waited_ns / 1000000), got, shown, at, tail);
   return length > 0 && (size_t)length < size ? length : 0;
 }

@@ -60,11 +60,12 @@ removed with `DXGI_ERROR_DEVICE_HUNG`. A release build doesn't have it.
 | `mullion: layer mainThreadWaitMs=<N> applied=yes` | The main thread applies a change after an `applied=no` line | The same, from the main thread | The same |
 | `MtlPresenter: <HH:MM:SS.mmm> visibility 0x<before> -> 0x<now> visible= activeSpace= miniaturized= active= why= [[n earlier lines suppressed]]` | Always, each time the game window's visibility changes: hidden, shown, another Space, the Dock ([§ The window lines](#the-window-lines)). At most 30 lines in 10 s with the line below | The process's stderr (`wine.log` in the app): the bridge writes it from the main thread, as the change happens | The app's session report, which reads d9mt's line of that name for its hidden seconds and its `--mark`; me, on a freeze after Cmd-Tab or a Space switch |
 | `mullion: window at= active= visibility=0x<now> why= [[n earlier lines suppressed]]` | Always, each time the app becomes active or stops being active while the window's visibility stays as it was | The same | Me: the last activation change before a freeze |
+| `mullion: nextDrawable blocked <ms> ms got=<0\|1> visibility=0x<flags>\|unknown at=<HH:MM:SS.mmm> [[n earlier lines suppressed]]` | Always, each time the Mac's `-[CAMetalLayer nextDrawable]` takes 50 ms or more, Direct3D 11's and 12's presents alike ([§ The nextDrawable line](#the-nextdrawable-line)). At most 30 lines in 10 s, a limit of its own | The process's stderr (`wine.log` in the app): the bridge writes it from the thread that took the drawable, as the call returns | Me: a frame or a fence late because the Mac held the drawable, as at a switch to another Space |
 | `STATS t= fps= ms=avg/p99/max slow33= slow50= \| cb= rp= cp= draws= \| sh= pso= wait=n/ms cache=hits/misses \| allocMiB= \| mainWaitMaxMs= \| at=` | With `MULLION_STATS=1`, at the Present that ends each second of presenting; none for a second without a Present | `d3d12.log` (`wine.log`), at `warn` | The app's session report, which reads d9mt's line of that name; me |
 | `<NAME> k=v …` | Right after `STATS`, one line for each registered section that has something to say | The same | The tickets that register one |
 | `CACHE rejected=` | The `STATS` section of a window in which Metal refused stored shaders, each then deleted from the cache and converted again | The same | Me: a damaged cache, or one a macOS update made stale |
 | `RESETWAIT waits= ms= longestMs=` | The `STATS` section of a window in which a command allocator's `Reset` waited for its lists (`MULLION_D3D12_RESET_WAITS=1`): the waits, their total ms and the longest | The same | Me: how often the game resets an allocator in flight, and what the waits cost |
-| `HITCH frame= dtMs= inDriverMs= (pct%) \| <category>=n/ms … or none \| queue: gpuMs= encodeMs= behind= \| at=` | With `MULLION_STATS=1`, at the Present that ends a frame of `MULLION_HITCH_MS` or longer, before that second's `STATS` line | `d3d12.log` (`wine.log`), at `warn` | The app's session report (its ticket 13 reads `inDriverMs` and `pipelineWait`); me, after a stutter |
+| `HITCH frame= dtMs= inDriverMs= (pct%) \| <category>=n/ms … or none \| queue: gpuMs= encodeMs= drawableMs= behind= \| at=` | With `MULLION_STATS=1`, at the Present that ends a frame of `MULLION_HITCH_MS` or longer, before that second's `STATS` line | `d3d12.log` (`wine.log`), at `warn` | The app's session report (its ticket 13 reads `inDriverMs` and `pipelineWait`); me, after a stutter |
 | `COMPILE frame= dtMs= shaders=n/ms psos=n/ms renderWait=n/ms cache=hits/misses queued=` | With `MULLION_STATS=1`, at the Present that ends a frame in which a shader was converted, a Metal pipeline compiled or a draw waited, or that took 33.4 ms or more; right after its `HITCH` line | The same, at `warn` with a `HITCH` line, else `info` | The app's session report, which reads d9mt's line of that name |
 | `MULLION-PIPELINE at= kind= ms= late= variant= name= [[n earlier lines suppressed]]` | Always, for each pipeline made that took 20 ms or more, or was made after the first Present, at most 30 lines in 10 s. Replaces `D3D12 pipeline made: <kind>; <name>; <ms> ms`, which only `MULLION_D3D12_GPU_ERRORS` wrote, and only for late pipelines | `d3d12.log` (`wine.log`), at `info` | Me, after a stutter: which pipeline, and which variant |
 | `MULLION-PIPELINE-TOTALS late= ms= longestMs=` | With `MULLION_D3D12_GPU_ERRORS`, at each queue's release: the pipelines made after the first Present, their total and longest ms. Replaces `D3D12 pipeline totals: …` | The same | Me |
@@ -226,7 +227,9 @@ d9mt's `HITCH` and `COMPILE` lines in Mullion, at the Present that ends a frame,
 Both come before the `STATS` line of their second, which is where the report looks for them.
 [`tests/swtor/fixtures/session.log`](../../tests/swtor/fixtures/session.log) has three frames of them: a 120 ms frame
 the presenting thread spent outside the driver (the game's), a 45 ms one, and a 70 ms one it spent 40 ms of in the
-driver, waiting for a pipeline. `host_hitch` fails when the frames stop writing them.
+driver, waiting for a pipeline. `host_hitch` fails when the frames stop writing them. It also writes a frame behind a
+present whose `nextDrawable` blocked 1149.3 ms of its 1199.8 ms `encodeMs`; `tests/breaks/host_hitch.2.patch` gives
+`drawableMs` the encoding time instead, and it fails there.
 
 `HITCH`:
 
@@ -238,6 +241,7 @@ driver, waiting for a pipeline. `host_hitch` fails when the frames stop writing 
 | categories | `name=n/ms`, in this order, each with the calls and their ms: `pipelineWait`, a draw or dispatch waiting for its Metal pipeline (compiled on a compile thread, or made now); `shaderConvert`, `CreateGraphicsPipelineState`, `CreateComputePipelineState` and `CreatePipelineState`, and a shader converted for a variant at draw time; `present`, the Present call up to the end of its frame; `fenceWait`, `SetEventOnCompletion` and `SetEventOnMultipleFenceCompletion` without an event; `allocReset`, a command allocator's `Reset` waiting for its lists (`MULLION_D3D12_RESET_WAITS=1`). One with nothing in it is left out; `none` when all are. A call inside another counts in the outer one only, so the categories add up to `inDriverMs` |
 | `gpuMs` | GPU time of the command buffers the queues saw complete during the frame, as far as Metal had given it by then: a Metal 3 buffer whose completion was read from its event before Metal completed it counts nothing |
 | `encodeMs` | Time the queues spent on command buffers ended during the frame, from taking a buffer's slot to committing it. A buffer encoded on the parallel encode threads counts from the slot on |
+| `drawableMs` | Time the queues' presents spent in the Mac's `nextDrawable` during the frame, as the bridge timed the call ([§ The nextDrawable line](#the-nextdrawable-line)). Part of `encodeMs`: a present takes its drawable while its command buffer is encoded, on the thread that commits it. `0.0` when no present took a drawable. The report doesn't split the `queue:` group into categories, so it reads the line as before |
 | `behind` | Command buffers committed and not yet complete at the line, of all queues |
 | `at` | The local time of the line, `HH:MM:SS.mmm` |
 
@@ -467,6 +471,39 @@ watched view retained until it is released, so a notification never reads a view
 
 Needs the Mac: AppKit's notifications can't run on GitHub's runner. That a Cmd-Tab and a Space switch each write their
 lines, and in which order, has not been seen on a Mac yet.
+
+### The nextDrawable line
+
+`mullion: nextDrawable blocked 1149 ms got=1 visibility=0x1 at=20:00:34.700`: the Mac's `-[CAMetalLayer nextDrawable]`
+took 50 ms or more (d9mt's threshold for its own line of this kind). At a switch away from the game window's Space,
+macOS holds the layer's drawables for about 1.15 s (a native program, without Wine, on an M1 with macOS 27.0). A
+present takes its drawable on the thread that encodes and commits the queue's command buffer, so every fence signalled
+after that present comes as late. Before this line, the log showed it only as a `HITCH` whose `encodeMs` had no GPU
+time in it.
+
+| Field | What it is |
+|---|---|
+| ms | The call's time in whole ms, read around the call alone in the bridge (`CLOCK_UPTIME_RAW`), not around the Windows side's thunk |
+| `got` | 1 when the call returned a drawable, 0 when it returned none (the layer's 1 s drawable timeout) |
+| `visibility` | The watched view's last state in the window lines' bits ([§ The window lines](#the-window-lines)), as AppKit's last notification left it: `0x3` shown, without `0x1` none of the window can be seen, without `0x2` it is off the active Space, `0x4` in the Dock. At a switch away AppKit's occlusion notification comes first (`0x2`), then the Space's. `unknown` when the layer isn't the watched view's (a second swap chain's window, or one not watched yet) |
+| `at` | The local time as the call returned, `HH:MM:SS.mmm` |
+
+At most 30 lines in 10 s, a limit of its own; the first line after it ends with ` [<n> earlier lines suppressed]`.
+The formatter and its limit are in [`window_lines.h`](../../src/winemetal/unix/window_lines.h); `host_window_lines`
+tests them.
+
+The watched view's layer and visibility are two atomics the main thread stores (the visibility at each look, the layer
+when a view is watched or unwatched); the presenting thread only loads them, and never asks AppKit. The same call
+gives Direct3D 12's `HITCH` its `drawableMs` ([§ The HITCH and COMPILE lines](#the-hitch-and-compile-lines)).
+Direct3D 11 has no `HITCH` line, so it has only this one.
+
+Always on, with no switch: it changes no behaviour ([ADR 0001](adr/0001-switches.md)). Cost for a call under 50 ms:
+two reads of the clock (`clock_gettime_nsec_np`, no lock), a compare, and a call into `window.c` that returns at
+once. A slow call loads the two atomics, reads the local time, takes a mutex that only slow calls take, and writes
+one line with one `write`.
+
+Needs the Mac: that the line comes once per switch away, with the window off the active Space, and none without a
+switch, is a check on a Mac.
 
 ### Ranges
 
@@ -737,7 +774,9 @@ past a buffer and 4 texels past a texture. Both run on the rented M1 under Metal
   `tests/breaks/host_window_lines.patch` writes an activation alone as d9mt's visibility line, which the report would
   count as a switch, `host_window_lines.2.patch` updates the watch's last state only for the lines it writes, so the
   line after the limit starts from the wrong state, and `host_window_lines.3.patch` lets an activation line clear the
-  count of lines left out, so the visibility line after it doesn't carry it.
+  count of lines left out, so the visibility line after it doesn't carry it. It also checks the nextDrawable line: 49
+  ms writes nothing, 50 ms writes it, its limit and its count of lines left out, and `unknown` for a layer that isn't
+  the watched view's. `host_window_lines.4.patch` moves its threshold to 5000 ms.
 
   The root views' checks in the converter: `host_check_root_ranges` has the native `airconv`
   convert `host_guard_static_ranges`' compute shader for root signatures that bind its constant buffer, its SRV or its
