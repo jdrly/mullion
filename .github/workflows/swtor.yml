@@ -427,14 +427,15 @@ jobs:
                 lines=('FAILED: every descriptor load through the sampler table is clamped with the flag') ;;
               # and a failed check left uncounted at a constant buffer's row, a raw load, a load of several units, a
               # load at a constant offset or a store, at the root views' count; a clamp or a static range's checks
-              # uncounted, at that kind's; each check counted where it fails instead of once at the return, or every
-              # check counted, failed or not, at the one atomic (private ticket 33)
+              # uncounted, at that kind's; each check counted where it fails instead of once at the return, every
+              # check counted, failed or not, or a check counted where it passes, at the one atomic no passing check
+              # reaches (private ticket 33)
               host_check_root_ranges.1[5-9])
                 lines=('FAILED: every check of a root view counts where it fails') ;;
               host_check_root_ranges.20) lines=("FAILED: a descriptor index's clamps count where they clamp") ;;
               host_check_root_ranges.21)
                 lines=("FAILED: every check of a static range counts where it fails, as a root view's do") ;;
-              host_check_root_ranges.2[23])
+              host_check_root_ranges.2[234])
                 lines=("FAILED: a root view's checks count in one atomic, which no check that passes reaches") ;;
               # #7's fixes undone: a pixel shader's unhandled dcl_input_ps_siv or dcl_input_ps_sgv copying v1 from an
               # argument never chosen, and a DXIL typed resource of doubles converted instead of refused

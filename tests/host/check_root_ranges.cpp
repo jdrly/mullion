@@ -25,6 +25,7 @@
 #include <cstring>
 #include <functional>
 #include <map>
+#include <optional>
 #include <set>
 #include <sstream>
 #include <tuple>
@@ -523,11 +524,13 @@ descriptors(const std::string &ir, int table, int count) {
 // its condition through the logic that gathers a function's checks (select, and, or, the test of a kind's bit),
 // stopping at an ordering compare (`icmp ult` and the like), which is a bounds check's. `bounds` lists, for the fields
 // given, every ordering compare that depends on a load of one of them: the checks against a root view's length or a
-// table's count. All by name, as the trace above
+// table's count. A guard is then evaluated: with every bounds compare passing its branch has to go the other way than
+// the atomic, and with any one of its leaves failing alone, the atomic's way. All by name, as the trace above
 struct Counted {
   std::map<int, unsigned> atomics;              // per kind
   std::map<int, std::set<std::string>> leaves;  // per kind, of every atomic's guard
   std::map<int, unsigned> unguarded;            // per kind: atomics no conditional branch leads to
+  std::map<int, unsigned> misread;              // per kind: atomics a passing check reaches or a failing one doesn't
   std::set<std::string> bounds;
 };
 
@@ -539,10 +542,12 @@ counted(const std::string &ir, int locks, std::initializer_list<int> fields = {}
     std::vector<long long> constants; // integer constants among its operands
     int field = -1;
     bool from_i1 = false; // a zext of an i1, which is bit 0 only
+    std::vector<std::string> values; // its operands in order, names and literals (true, false, integers)
   };
   struct Block {
     std::vector<std::string> preds;
     std::string condition; // of its conditional branch, else ""
+    std::string taken;     // the block its conditional branch goes to when the condition holds
   };
   std::map<std::string, Definition> defs;
   std::map<std::string, Block> blocks;
@@ -583,7 +588,7 @@ counted(const std::string &ir, int locks, std::initializer_list<int> fields = {}
       for (auto &target : targets)
         blocks[target].preds.push_back(block);
       if (targets.size() == 2)
-        blocks[block].condition = condition;
+        blocks[block].condition = condition, blocks[block].taken = targets[0];
       continue;
     }
     if (line.find("@air.atomic.global.add.u.i32(") != std::string::npos) {
@@ -602,15 +607,17 @@ counted(const std::string &ir, int locks, std::initializer_list<int> fields = {}
     words >> def.op;
     if (def.op == "icmp")
       words >> def.predicate;
-    def.from_i1 = def.op == "zext" && line.find("zext i1 ") != std::string::npos;
+    def.from_i1 = (def.op == "zext" || def.op == "sext") && line.find(def.op + " i1 ") != std::string::npos;
     for (std::string word; words >> word;) {
       while (!word.empty() && (word.back() == ',' || word.back() == ')' || word.back() == ']'))
         word.pop_back();
       if (word.size() > 1 && word[0] == '%' && word.find("argument_buffer_struct") == std::string::npos &&
           word.rfind("%struct.", 0) != 0)
-        def.operands.push_back(word);
+        def.operands.push_back(word), def.values.push_back(word);
       else if (!word.empty() && (std::isdigit((unsigned char)word[0]) || (word[0] == '-' && word.size() > 1)))
-        def.constants.push_back(std::atoll(word.c_str()));
+        def.constants.push_back(std::atoll(word.c_str())), def.values.push_back(word);
+      else if (word == "true" || word == "false")
+        def.values.push_back(word);
     }
     if (def.op == "getelementptr" && line.find("%argument_buffer_struct, ") != std::string::npos)
       def.field = std::stoi(line.substr(line.rfind("i32 ") + 4));
@@ -655,7 +662,7 @@ counted(const std::string &ir, int locks, std::initializer_list<int> fields = {}
           out.insert(value);
           return;
         }
-        if (d->from_i1) {
+        if (d->from_i1 && d->op == "zext") {
           if (mask & 1)
             leaves_of(d->operands[0], ~0ull, out);
         } else if (d->op == "icmp" || d->op == "freeze" || d->op == "zext" || d->op == "sext" || d->op == "trunc") {
@@ -681,6 +688,47 @@ counted(const std::string &ir, int locks, std::initializer_list<int> fields = {}
           out.insert(values.begin(), values.end());
         }
       };
+  // a value of the logic that gathers the checks, with each bounds compare passing but those in `failing`; none for a
+  // value it can't tell
+  std::function<std::optional<uint64_t>(const std::string &, const std::set<std::string> &)> eval =
+      [&](const std::string &value, const std::set<std::string> &failing) -> std::optional<uint64_t> {
+    if (value == "true" || value == "false")
+      return value == "true";
+    if (!value.empty() && value[0] != '%')
+      return uint64_t(std::atoll(value.c_str()));
+    auto d = def_of(value);
+    if (!d)
+      return std::nullopt;
+    if (d->op == "icmp" && d->predicate != "eq" && d->predicate != "ne")
+      return !failing.count(value);
+    std::vector<uint64_t> v;
+    for (auto &operand : d->values)
+      if (auto got = eval(operand, failing))
+        v.push_back(*got);
+      else
+        return std::nullopt;
+    if (d->op == "icmp" && v.size() == 2)
+      return (v[0] == v[1]) == (d->predicate == "eq");
+    if (d->op == "select" && v.size() == 3)
+      return v[0] & 1 ? v[1] : v[2];
+    if ((d->op == "zext" || d->op == "trunc" || d->op == "freeze") && v.size() == 1)
+      return v[0];
+    if (d->op == "sext" && v.size() == 1)
+      return d->from_i1 ? (v[0] & 1 ? ~0ull : 0) : v[0];
+    if (v.size() == 2) {
+      if (d->op == "and")
+        return v[0] & v[1];
+      if (d->op == "or")
+        return v[0] | v[1];
+      if (d->op == "xor")
+        return v[0] ^ v[1];
+      if (d->op == "shl")
+        return v[0] << v[1];
+      if (d->op == "lshr")
+        return v[0] >> v[1];
+    }
+    return std::nullopt;
+  };
   Counted out;
   for (auto &[pointer, at] : adds) {
     int kind = kind_of(pointer);
@@ -689,10 +737,13 @@ counted(const std::string &ir, int locks, std::initializer_list<int> fields = {}
     out.atomics[kind]++;
     // the nearest conditional branch on the way to it, through blocks of one predecessor
     std::string guard;
+    bool toward = false; // the guard's value on the way to the atomic
     for (auto b = at; blocks[b].preds.size() == 1;) {
+      auto from = b;
       b = blocks[b].preds[0];
       if (!blocks[b].condition.empty()) {
         guard = blocks[b].condition;
+        toward = blocks[b].taken == from;
         break;
       }
     }
@@ -702,6 +753,15 @@ counted(const std::string &ir, int locks, std::initializer_list<int> fields = {}
       leaves_of(guard, ~0ull, leaves);
     out.unguarded[kind] += leaves.empty();
     out.leaves[kind].insert(leaves.begin(), leaves.end());
+    // every check passing goes the other way; any one of them failing goes the atomic's
+    bool right = !leaves.empty();
+    auto all_pass = eval(guard, {});
+    right = right && all_pass && bool(*all_pass & 1) != toward;
+    for (auto &leaf : leaves) {
+      auto one_fails = eval(guard, {leaf});
+      right = right && one_fails && bool(*one_fails & 1) == toward;
+    }
+    out.misread[kind] += !right;
   }
   // the ordering compares that depend on a load of one of `fields`
   std::function<bool(const std::string &)> depends = [&](const std::string &value) -> bool {
@@ -856,10 +916,12 @@ main(int argc, char **argv) {
   constexpr uint32_t range_static = 0, range_view = 1, range_index = 2;
   write("counted.dxbc", container({{"ISGN", {0, 8}}, {"OSGN", {0, 8}}, {"SHEX", counted_program()}}));
   write("views.rs", container({{"RTS0", root_signature({{cbv, {}, 0}, {srv, {}, 0}, {srv, {}, 1}, {uav, {}, 0}})}}));
-  write("static.rs", container({{"RTS0", root_signature({{table, {range_cbv, range_srv, range_srv, range_uav}, 0,
-                                                            {0, 0, 1, 0}, true}})}}));
-  write("volatile.rs", container({{"RTS0", root_signature({{table, {range_cbv, range_srv, range_srv, range_uav}, 0,
-                                                              {0, 0, 1, 0}}})}}));
+  // each table's first range is one the shader doesn't use: an index 0's clamp folds into `count == 0`, which says
+  // nothing of which way a failed check goes
+  write("static.rs", container({{"RTS0", root_signature({{table, {range_srv, range_cbv, range_srv, range_srv, range_uav},
+                                                            0, {9, 0, 0, 1, 0}, true}})}}));
+  write("volatile.rs", container({{"RTS0", root_signature({{table, {range_srv, range_cbv, range_srv, range_srv, range_uav},
+                                                              0, {9, 0, 0, 1, 0}}})}}));
   auto convert_counted = [&](const std::string &name, const std::string &flags) {
     std::string out = name + (flags.empty() ? ".plain.ll" : ".counted.ll");
     std::string command = "\"" + std::string(argv[1]) + "\" -S " + flags + " -root-signature \"" +
@@ -873,14 +935,16 @@ main(int argc, char **argv) {
     return read(dir / out);
   };
   auto show = [](const char *name, const Counted &c, int kind) {
-    std::printf("%s: kind %d, %u atomics, %zu checks guard them, %u unguarded; %zu bounds compares of its fields\n",
+    std::printf("%s: kind %d, %u atomics, %zu checks guard them, %u unguarded, %u reached the wrong way; %zu bounds "
+                "compares of its fields\n",
                 name, kind, c.atomics.count(kind) ? c.atomics.at(kind) : 0,
                 c.leaves.count(kind) ? c.leaves.at(kind).size() : 0, c.unguarded.count(kind) ? c.unguarded.at(kind) : 0,
-                c.bounds.size());
+                c.misread.count(kind) ? c.misread.at(kind) : 0, c.bounds.size());
   };
   // one atomic per kind that counts, nothing that passes reaches it, and every check of the kind guards it
   auto counts_alone = [](const Counted &c, int kind) {
-    return c.atomics.size() == 1 && c.atomics.count(kind) && c.atomics.at(kind) == 1 && !c.unguarded.at(kind);
+    return c.atomics.size() == 1 && c.atomics.count(kind) && c.atomics.at(kind) == 1 && !c.unguarded.at(kind) &&
+           !c.misread.at(kind);
   };
   std::set<std::string> view_checks;
   if (auto plain = convert_counted("views", ""), checked = convert_counted("views", "-check-root-ranges");
@@ -925,7 +989,8 @@ main(int argc, char **argv) {
     show("static and indices", after, range_static);
     show("static and indices", after, range_index);
     bool apart = after.atomics.size() == 2 && after.atomics[range_static] == 1 && after.atomics[range_index] == 1 &&
-                 !after.unguarded[range_static] && !after.unguarded[range_index] &&
+                 !after.unguarded[range_static] && !after.unguarded[range_index] && !after.misread[range_static] &&
+                 !after.misread[range_index] &&
                  !after.leaves[range_index].empty() &&
                  std::includes(after.bounds.begin(), after.bounds.end(), after.leaves[range_index].begin(),
                                after.leaves[range_index].end()) &&

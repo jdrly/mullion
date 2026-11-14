@@ -755,12 +755,14 @@ past a buffer and 4 texels past a texture. Both run on the rented M1 under Metal
   each, and follows the branch's condition through the logic that gathers the checks to the bounds compares
   (`icmp ult` and the like): one atomic per kind, behind such a branch, guarded by every bounds compare against a root
   view's length, by as many for a static range, and by compares against the table's count for the clamps; without
-  the flags, none (private ticket 33). Its breaks, `tests/breaks/host_check_root_ranges{,.2,.3}.patch`, leave a root
+  the flags, none (private ticket 33). It then evaluates each guard: with every check passing it has to branch away
+  from the atomic, with any one failing alone, towards it. Its breaks, `tests/breaks/host_check_root_ranges{,.2,.3}.patch`, leave a root
   CBV, SRV or UAV unchecked under the flag, `.4` to `.7` take the fallback away from the view or from one load path
   each, `.8` clamps no index, `.9` to `.14` leave the constant buffer's, the SRV's, the UAV's, the texture's, the
   sampler's or the counter's out, `.15` to `.19` leave the constant buffer's row, the raw load, the load of several
   units, the load at a constant offset and the store uncounted, `.20` the clamps, `.21` the static range's checks,
-  `.22` counts each check where it fails instead of once at the return, and `.23` counts every check, failed or not.
+  `.22` counts each check where it fails instead of once at the return, `.23` counts every check, failed or not, and
+  `.24` counts a check where it passes.
   Each fails at that view, at the trace or at that kind. DXIL's paths (`dxil_converter.cpp`) have no break here: the
   test makes DXBC only.
 
