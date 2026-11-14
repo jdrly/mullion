@@ -31,6 +31,7 @@
 #include "mullion_compression.hpp"
 #include "util_env.hpp"
 #include "util_switch.hpp"
+#include "mullion_ranges.hpp"
 #include "mullion_info.hpp"
 #include "mullion_shader_cache.hpp"
 #include "util_string.hpp"
@@ -1388,10 +1389,28 @@ public:
     TryCreateConstantBufferView(pDesc, Descriptor);
   };
 
+  // MULLION_D3D12_CHECK_RANGES: whether a constant buffer view's bytes lie in the live buffer whose addresses hold its
+  // address. A view is made far less often than it is drawn with: one lookup each
+  bool
+  ConstantBufferViewInRange(const D3D12_CONSTANT_BUFFER_VIEW_DESC &Desc) {
+    static ranges::Site site{ranges::Call::CreateConstantBufferView, "view"};
+    uint64_t offset, end = 0;
+    bool held = LookupBufferByVA(Desc.BufferLocation, &offset, &end) && Desc.BufferLocation < end;
+    auto overrun = ranges::View(Desc.BufferLocation, Desc.SizeInBytes, held, held ? end : 0);
+    if (!overrun)
+      return true;
+    if (auto line = site.fired(overrun); !line.empty())
+      WARN(line);
+    return false;
+  }
+
   // E_INVALIDARG for a slot the heap does not have, as the other TryCreate* answer
   HRESULT STDMETHODCALLTYPE
   TryCreateConstantBufferView(const D3D12_CONSTANT_BUFFER_VIEW_DESC *pDesc, D3D12_CPU_DESCRIPTOR_HANDLE Descriptor) final {
     auto [Heap, Index] = GetShaderVisibleDescriptorHeap(this, Descriptor);
+    // a view past its buffer is a null view, which shaders read as zeros
+    if (ranges::on && pDesc && pDesc->BufferLocation && !ConstantBufferViewInRange(*pDesc))
+      return Heap->AddConstantBufferView(Index, 0, 0);
     return Heap->AddConstantBufferView(Index, pDesc ? pDesc->BufferLocation : 0, pDesc ? pDesc->SizeInBytes : 0);
   };
 

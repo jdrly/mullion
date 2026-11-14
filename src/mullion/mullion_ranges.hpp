@@ -14,7 +14,7 @@
 // what it has past the offset), X, Y or Z (a box's or region's far edge, `limit` the level's), Footprint (a placed
 // footprint's offset or bytes, as Offset and Size), Resource (`given` its D3D12_RESOURCE_DIMENSION where a buffer,
 // 1, was asked for). A view's side is `view`: viewAddress (an address no live buffer holds, `limit` 0) or viewSize
-// (`limit` what the buffer has from the address). `given` is the value the game gave. Every time it fires the call's counter goes up; with
+// (`limit` what the buffer has from the address); WriteBufferImmediate's is `dest`, the same. `given` is the value the game gave. Every time it fires the call's counter goes up; with
 // MULLION_STATS=1 the RANGE section after STATS says how often each call was dropped in that second:
 //
 //   RANGE CopyBufferRegion=3 CopyTextureRegion=1
@@ -29,6 +29,10 @@
 #include <string>
 
 namespace mullion::ranges {
+
+// MULLION_D3D12_CHECK_RANGES, read once as d3d12core.dll loads (d3d12_command_list.cpp declares it). Every check
+// outside that file tests this
+extern const bool on;
 
 // a number that runs past its resource: which part of it, the value given and the most the resource takes there.
 // false when it fits
@@ -119,7 +123,15 @@ FootprintBytes(uint64_t width, uint64_t height, uint64_t depth, uint64_t row_pit
 }
 
 // the calls whose numbers are checked
-enum class Call : unsigned { CopyBufferRegion, CopyTextureRegion, IASetIndexBuffer, IASetVertexBuffers, Count };
+enum class Call : unsigned {
+  CopyBufferRegion,
+  CopyTextureRegion,
+  IASetIndexBuffer,
+  IASetVertexBuffers,
+  CreateConstantBufferView,
+  WriteBufferImmediate,
+  Count
+};
 
 inline const char *
 CallName(Call call) {
@@ -132,6 +144,10 @@ CallName(Call call) {
     return "IASetIndexBuffer";
   case Call::IASetVertexBuffers:
     return "IASetVertexBuffers";
+  case Call::CreateConstantBufferView:
+    return "CreateConstantBufferView";
+  case Call::WriteBufferImmediate:
+    return "WriteBufferImmediate";
   default:
     return "?";
   }

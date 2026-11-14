@@ -1,0 +1,23 @@
+# MULLION_D3D12_CHECK_RANGES=1 makes every constant buffer view and immediate write as given
+--- a/src/d3d12/d3d12_command_list.cpp
++++ b/src/d3d12/d3d12_command_list.cpp
+@@ -4685,7 +4685,7 @@
+     // needs a barrier out of COPY_DEST, which writing one promotes the buffer to
+     for (UINT i = 0; i < Count; i++) {
+       auto &param = pParams[i];
+-      if (kRangesOn && !ViewInRange(kImmediate, param.Dest, sizeof(param.Value)))
++      if (false && !ViewInRange(kImmediate, param.Dest, sizeof(param.Value)))
+         continue;
+       if (pModes && pModes[i] != D3D12_WRITEBUFFERIMMEDIATE_MODE_DEFAULT) {
+         markers_.push_back({param.Dest, param.Value});
+--- a/src/d3d12/d3d12_device.cpp
++++ b/src/d3d12/d3d12_device.cpp
+@@ -1409,7 +1409,7 @@
+   TryCreateConstantBufferView(const D3D12_CONSTANT_BUFFER_VIEW_DESC *pDesc, D3D12_CPU_DESCRIPTOR_HANDLE Descriptor) final {
+     auto [Heap, Index] = GetShaderVisibleDescriptorHeap(this, Descriptor);
+     // a view past its buffer is a null view, which shaders read as zeros
+-    if (ranges::on && pDesc && pDesc->BufferLocation && !ConstantBufferViewInRange(*pDesc))
++    if (false && pDesc && pDesc->BufferLocation && !ConstantBufferViewInRange(*pDesc))
+       return Heap->AddConstantBufferView(Index, 0, 0);
+     return Heap->AddConstantBufferView(Index, pDesc ? pDesc->BufferLocation : 0, pDesc ? pDesc->SizeInBytes : 0);
+   };

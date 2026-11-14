@@ -112,6 +112,12 @@ main() {
   equal(view.fired(View(0x20000, 4, false, 0), counts),
         "MULLION-RANGE call=IASetIndexBuffer what=viewAddress given=131072 limit=0 action=dropped");
   equal(counts.section(last), "IASetIndexBuffer=1");
+  Site dest{Call::WriteBufferImmediate, "dest"}, cbv{Call::CreateConstantBufferView, "view"};
+  equal(dest.fired(View(0x20000, 4, false, 0), counts),
+        "MULLION-RANGE call=WriteBufferImmediate what=destAddress given=131072 limit=0 action=dropped");
+  equal(cbv.fired(View(0x10000, 512, true, 0x10100), counts),
+        "MULLION-RANGE call=CreateConstantBufferView what=viewSize given=512 limit=256 action=dropped");
+  equal(counts.section(last), "CreateConstantBufferView=1 WriteBufferImmediate=1");
 
   if (failures)
     std::printf("%u failed\n", failures);

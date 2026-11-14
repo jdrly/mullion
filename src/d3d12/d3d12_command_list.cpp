@@ -179,6 +179,7 @@ to_metal_primitive_type(D3D12_PRIMITIVE_TOPOLOGY topo, WMTPrimitiveType &primiti
 // GPU gate turns it on (private ticket 15). Read once, when d3d12core.dll loads; each checked call then tests one flag
 static sw::Switch<bool> kCheckRanges{"MULLION_D3D12_CHECK_RANGES", false, sw::exactlyOne};
 static const bool kRangesOn = kCheckRanges();
+const bool ranges::on = kRangesOn;
 
 // RANGE after STATS: the calls the checks dropped in the window
 static stats::SectionRegistrar kRangeSection{"RANGE", [](double, uint64_t) {
@@ -193,7 +194,8 @@ static ranges::Site kBufferCopySrc{ranges::Call::CopyBufferRegion, "src"},
     kTextureCopyDstFootprint{ranges::Call::CopyTextureRegion, "dst"},
     kTextureCopySrcBox{ranges::Call::CopyTextureRegion, "src"},
     kTextureCopyDstRegion{ranges::Call::CopyTextureRegion, "dst"},
-    kIndexView{ranges::Call::IASetIndexBuffer, "view"}, kVertexView{ranges::Call::IASetVertexBuffers, "view"};
+    kIndexView{ranges::Call::IASetIndexBuffer, "view"}, kVertexView{ranges::Call::IASetVertexBuffers, "view"},
+    kImmediate{ranges::Call::WriteBufferImmediate, "dest"};
 
 // a check fired at `site`: counted, and its line written the first time
 static void
@@ -3300,9 +3302,9 @@ public:
   std::array<HeldRange, 4> view_ranges_{};
   uint64_t view_ranges_generation_ = 0;
 
-  // MULLION_D3D12_CHECK_RANGES: whether `size` bytes at `VA` lie in the live buffer whose addresses hold VA. Looks the
-  // address up only when no range found since the last buffer was made or released holds it, so a list that binds the
-  // same few buffers takes the device's address lock once for each, not once a draw
+  // MULLION_D3D12_CHECK_RANGES: whether `size` bytes at `VA`, a view's or an immediate write's, lie in the live buffer
+  // whose addresses hold VA. Looks the address up only when no range found since the last buffer was made or released
+  // holds it, so a list that binds the same few buffers takes the device's address lock once for each, not once a draw
   bool
   ViewInRange(ranges::Site &site, D3D12_GPU_VIRTUAL_ADDRESS VA, uint64_t size) {
     if (!size)
@@ -4690,6 +4692,8 @@ public:
     // needs a barrier out of COPY_DEST, which writing one promotes the buffer to
     for (UINT i = 0; i < Count; i++) {
       auto &param = pParams[i];
+      if (kRangesOn && !ViewInRange(kImmediate, param.Dest, sizeof(param.Value)))
+        continue;
       if (pModes && pModes[i] != D3D12_WRITEBUFFERIMMEDIATE_MODE_DEFAULT) {
         markers_.push_back({param.Dest, param.Value});
         continue;
