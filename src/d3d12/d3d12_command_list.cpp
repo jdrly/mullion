@@ -3206,10 +3206,11 @@ public:
   WriteDescriptorCounts(MTLD3D12RootSignature *rootsig, uint64_t *staging, DirtyState dirty) {
     if (!rootsig)
       return;
-    // a root signature of no parameters may still index the heaps directly: its heaps' counts don't wait for tables
+    // a root signature of no parameters may still index the heaps directly: its heaps' counts don't wait for tables.
+    // a table set before its heap was bound gets its count, and its span checked, now
     for (UINT i = 0; rootsig->TableCountQwords && i < rootsig->ParameterSlots; i++)
       if (rootsig->TableCountQwords[i] != ~0u)
-        staging[rootsig->TableCountQwords[i]] = TableDescriptors(staging[rootsig->SlotQwordOffsets[i]]);
+        SetTableCount(rootsig, staging, dirty, i, staging[rootsig->SlotQwordOffsets[i]]);
     if (rootsig->ResourceHeapCountQword != ~0u)
       staging[rootsig->ResourceHeapCountQword] = resource_heap_count_ ? resource_heap_count_ : UINT32_MAX;
     if (rootsig->SamplerHeapCountQword != ~0u)
