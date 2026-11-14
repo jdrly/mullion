@@ -2334,17 +2334,17 @@ public:
         box.bottom = resource->texture->plane(plane)->height();
       }
       auto extent = unit(box);
-      // a depth-stencil format's bytes are both planes', where a copy moves one: its footprint's format is the plane's
+      // a depth-stencil format's bytes are both planes', where a copy moves one: a stencil byte, or a depth texel of
+      // 4 bytes, which Metal keeps as a float32 and a D24 footprint as a UNORM24 code in 4 (CopyD24)
       if (format.PlanarCount > 1)
-        extent.bytes = 0;
+        extent.bytes = plane ? 1 : 4;
       return extent;
     };
     auto src = extent_of(*pSrc), dst = extent_of(*pDst);
     if (!src || !dst)
       return true;
     // a footprint's bytes from its offset, by the larger unit of its format and the other end's: Metal moves a texel
-    // of the texture's format, which a footprint of another format would hold fewer bytes of. a plane of a
-    // depth-stencil texture counts by the footprint's alone
+    // of the texture's format, which a footprint of another format would hold fewer bytes of
     for (auto [at, other, site] : {std::tuple{&*src, &*dst, &kTextureCopySrcFootprint},
                                    std::tuple{&*dst, &*src, &kTextureCopyDstFootprint}}) {
       if (!at->footprint)

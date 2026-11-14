@@ -235,6 +235,50 @@ main(int, char **) {
     down->Unmap(0, nullptr);
   }
 
+  // D24S8's depth plane from a footprint of R8 texels in a buffer of one byte: dropped, as the copy reads a 4-byte
+  // code for each depth texel. the plane keeps the code an R32 footprint gave it
+  {
+    step("CopyTextureRegion: D24S8's depth plane from a one-byte footprint");
+    D3D12_RESOURCE_DESC desc{D3D12_RESOURCE_DIMENSION_TEXTURE2D, 0, 1, 1, 1, 1, DXGI_FORMAT_D24_UNORM_S8_UINT, {1, 0},
+                             D3D12_TEXTURE_LAYOUT_UNKNOWN, D3D12_RESOURCE_FLAG_ALLOW_DEPTH_STENCIL};
+    ComPtr<ID3D12Resource> depth;
+    CHECK(device->CreateCommittedResource(&heap, D3D12_HEAP_FLAG_NONE, &desc, D3D12_RESOURCE_STATE_COPY_DEST, nullptr,
+                                          IID_PPV_ARGS(&depth)));
+    auto code = buffer(device.Get(), D3D12_HEAP_TYPE_UPLOAD, 4, D3D12_RESOURCE_STATE_GENERIC_READ);
+    auto byte = buffer(device.Get(), D3D12_HEAP_TYPE_UPLOAD, 1, D3D12_RESOURCE_STATE_GENERIC_READ);
+    auto down = buffer(device.Get(), D3D12_HEAP_TYPE_READBACK, 4, D3D12_RESOURCE_STATE_COPY_DEST);
+    if (!expect(depth && code && byte && down, "one-texel depth resources"))
+      return verdict();
+    const UINT32 seeded = 0x00abcdef;
+    UINT8 *data;
+    CHECK(code->Map(0, nullptr, (void **)&data));
+    memcpy(data, &seeded, 4);
+    code->Unmap(0, nullptr);
+    CHECK(byte->Map(0, nullptr, (void **)&data));
+    data[0] = 0x12;
+    byte->Unmap(0, nullptr);
+    CHECK(forget(down.Get()));
+    D3D12_TEXTURE_COPY_LOCATION plane{depth.Get(), D3D12_TEXTURE_COPY_TYPE_SUBRESOURCE_INDEX};
+    plane.SubresourceIndex = 0;
+    D3D12_TEXTURE_COPY_LOCATION from_code{code.Get(), D3D12_TEXTURE_COPY_TYPE_PLACED_FOOTPRINT},
+        from_byte{byte.Get(), D3D12_TEXTURE_COPY_TYPE_PLACED_FOOTPRINT},
+        to{down.Get(), D3D12_TEXTURE_COPY_TYPE_PLACED_FOOTPRINT};
+    from_code.PlacedFootprint = to.PlacedFootprint = {0, {DXGI_FORMAT_R32_TYPELESS, 1, 1, 1, UINT(pitch)}};
+    from_byte.PlacedFootprint = {0, {DXGI_FORMAT_R8_TYPELESS, 1, 1, 1, UINT(pitch)}};
+    CHECK(allocator->Reset());
+    CHECK(list->Reset(allocator.Get(), nullptr));
+    list->CopyTextureRegion(&plane, 0, 0, 0, &from_code, nullptr);
+    list->CopyTextureRegion(&plane, 0, 0, 0, &from_byte, nullptr);
+    transition(list.Get(), depth.Get(), D3D12_RESOURCE_STATE_COPY_DEST, D3D12_RESOURCE_STATE_COPY_SOURCE);
+    list->CopyTextureRegion(&to, 0, 0, 0, &plane, nullptr);
+    CHECK(submit(device.Get(), queue.Get(), list.Get()));
+    UINT32 read = 0;
+    CHECK(down->Map(0, nullptr, (void **)&data));
+    memcpy(&read, data, 4);
+    down->Unmap(0, nullptr);
+    expect((read & 0xffffff) == seeded, "D24S8's depth after a one-byte footprint is %#x, want %#x", read, seeded);
+  }
+
   // a texture where CopyBufferRegion wants a buffer: dropped, and the buffer keeps its seed. Last, as without the
   // check it is a null dereference
   step("CopyBufferRegion: a texture as its source");
