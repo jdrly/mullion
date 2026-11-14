@@ -13,10 +13,13 @@
 // `what` is the side, src or dst, and the number: Offset or Size (a range of bytes, `limit` the buffer's width or
 // what it has past the offset), X, Y or Z (a box's or region's far edge, `limit` the level's), Footprint (a placed
 // footprint's offset or bytes, as Offset and Size), Resource (`given` its D3D12_RESOURCE_DIMENSION where a buffer,
-// 1, was asked for). `given` is the value the game gave. Every time it fires the call's counter goes up; with
+// 1, was asked for). A view's side is `view`: viewAddress (an address no live buffer holds, `limit` 0) or viewSize
+// (`limit` what the buffer has from the address). `given` is the value the game gave. Every time it fires the call's counter goes up; with
 // MULLION_STATS=1 the RANGE section after STATS says how often each call was dropped in that second:
 //
 //   RANGE CopyBufferRegion=3 CopyTextureRegion=1
+//
+// A view that runs past its buffer is bound as no view, which Direct3D reads as zeros; its line says dropped too.
 //
 // Pure C++ (no Windows, no Metal): tests/host/ranges.cpp builds it natively.
 
@@ -80,6 +83,19 @@ InBlocks(Box extent, uint64_t block) {
   return extent;
 }
 
+// whether a view of `size` bytes at GPU address `address` lies in the live buffer that holds the address, which ends
+// at `end`; `held` false when no live buffer holds it. a view of no size reads nothing, wherever it is
+inline Overrun
+View(uint64_t address, uint64_t size, bool held, uint64_t end) {
+  if (!size)
+    return {};
+  if (!held)
+    return {"Address", address, 0};
+  if (size > end - address)
+    return {"Size", size, end - address};
+  return {};
+}
+
 // the texels a copy of `texels` source texels covers in the destination: a copy between a block-compressed format and
 // another carries one unit, a block or a texel, into one unit (CopyResource, Remarks)
 inline uint64_t
@@ -103,7 +119,7 @@ FootprintBytes(uint64_t width, uint64_t height, uint64_t depth, uint64_t row_pit
 }
 
 // the calls whose numbers are checked
-enum class Call : unsigned { CopyBufferRegion, CopyTextureRegion, Count };
+enum class Call : unsigned { CopyBufferRegion, CopyTextureRegion, IASetIndexBuffer, IASetVertexBuffers, Count };
 
 inline const char *
 CallName(Call call) {
@@ -112,6 +128,10 @@ CallName(Call call) {
     return "CopyBufferRegion";
   case Call::CopyTextureRegion:
     return "CopyTextureRegion";
+  case Call::IASetIndexBuffer:
+    return "IASetIndexBuffer";
+  case Call::IASetVertexBuffers:
+    return "IASetVertexBuffers";
   default:
     return "?";
   }

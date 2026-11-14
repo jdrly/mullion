@@ -192,7 +192,8 @@ static ranges::Site kBufferCopySrc{ranges::Call::CopyBufferRegion, "src"},
     kTextureCopySrcFootprint{ranges::Call::CopyTextureRegion, "src"},
     kTextureCopyDstFootprint{ranges::Call::CopyTextureRegion, "dst"},
     kTextureCopySrcBox{ranges::Call::CopyTextureRegion, "src"},
-    kTextureCopyDstRegion{ranges::Call::CopyTextureRegion, "dst"};
+    kTextureCopyDstRegion{ranges::Call::CopyTextureRegion, "dst"},
+    kIndexView{ranges::Call::IASetIndexBuffer, "view"}, kVertexView{ranges::Call::IASetVertexBuffers, "view"};
 
 // a check fired at `site`: counted, and its line written the first time
 static void
@@ -3291,6 +3292,33 @@ public:
     SetRootQword(rootsig_graphics_.ptr(), rootarg_graphics_staging_, DirtyState::GraphicsRootArguments, Index, VA);
   };
 
+  // MULLION_D3D12_CHECK_RANGES: whether `size` bytes at `VA` lie in the live buffer LookupBuffer gave as `found` for
+  // VA. LookupBuffer keeps the buffer it found VA inside, and that buffer's end, in va_found_; a buffer it gives
+  // without keeping holds VA below it, past its end. It looks nothing up itself
+  bool
+  ViewInRange(ranges::Site &site, D3D12_GPU_VIRTUAL_ADDRESS VA, uint64_t size, BufferAllocation *found) {
+    bool held = found && found == va_found_ && VA >= va_found_->gpuAddress() && VA < va_found_end_;
+    if (auto overrun = ranges::View(VA, size, held, held ? va_found_end_ : 0)) {
+      RangeFired(site, overrun);
+      return false;
+    }
+    return true;
+  }
+
+  // MULLION_D3D12_CHECK_RANGES: the vertex buffer views of slots [StartSlot, StartSlot + Count) that run past their
+  // buffer, or lie in none, become no view, which the vertex fetch reads as zeros
+  void
+  VertexViewsInRange(UINT StartSlot, UINT Count) {
+    for (unsigned Slot = StartSlot; Slot < StartSlot + Count; Slot++) {
+      auto &view = vertex_buffers_[Slot];
+      if (!view.BufferLocation)
+        continue;
+      uint64_t offset;
+      if (!ViewInRange(kVertexView, view.BufferLocation, view.SizeInBytes, LookupBuffer(view.BufferLocation, &offset)))
+        view = {};
+    }
+  }
+
   void STDMETHODCALLTYPE
   IASetIndexBuffer(const D3D12_INDEX_BUFFER_VIEW *pView) {
     if (Bundled() && Record([view = pView ? std::optional(*pView) : std::nullopt](auto *l) { l->IASetIndexBuffer(view ? &*view : nullptr); }))
@@ -3299,6 +3327,9 @@ public:
     if (pView ? index_buffer_address && !memcmp(pView, &index_view_, sizeof(*pView)) : !index_buffer_address)
       return;
     auto index_buffer_allocation = pView ? LookupBuffer(pView->BufferLocation, &index_offset) : nullptr;
+    if (kRangesOn && index_buffer_allocation &&
+        !ViewInRange(kIndexView, pView->BufferLocation, pView->SizeInBytes, index_buffer_allocation))
+      index_buffer_allocation = nullptr;
     index_view_ = index_buffer_allocation ? *pView : D3D12_INDEX_BUFFER_VIEW{};
     if (index_buffer_allocation) {
       index_buffer_address = pView->BufferLocation;
@@ -3327,6 +3358,8 @@ public:
     for (unsigned Slot = StartSlot; Slot < StartSlot + Count; Slot++) {
       vertex_buffers_[Slot] = Views[Slot - StartSlot];
     }
+    if (kRangesOn)
+      VertexViewsInRange(StartSlot, Count);
     dirty_state_.set(DirtyState::VertexBuffer);
   };
 

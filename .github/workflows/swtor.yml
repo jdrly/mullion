@@ -380,9 +380,9 @@ jobs:
           grep -qF 'failed: another group keeps compression' "$RUNNER_TEMP/host_compression.2.txt"
           [[ -z $(git status --porcelain -- src/winemetal src/mullion) ]]
           # MULLION_D3D12_CHECK_RANGES: with a range's end computed as offset + size, which wraps
-          # (tests/breaks/host_ranges.patch), or a footprint of one slice whatever its depth (host_ranges.2.patch),
-          # host_ranges has to fail
-          for p in host_ranges host_ranges.2; do
+          # (tests/breaks/host_ranges.patch), a footprint of one slice whatever its depth (host_ranges.2.patch), or a
+          # view's end as address + size (host_ranges.3.patch), host_ranges has to fail
+          for p in host_ranges host_ranges.2 host_ranges.3; do
             git apply "tests/breaks/$p.patch"
             status=0
             meson test -C build host_ranges --print-errorlogs >"$RUNNER_TEMP/$p.txt" 2>&1 || status=$?
@@ -392,6 +392,7 @@ jobs:
           done
           grep -qxF '  Size 18446744073709551608 240' "$RUNNER_TEMP/host_ranges.txt"
           grep -qF 'failed: a 3D footprint' "$RUNNER_TEMP/host_ranges.2.txt"
+          grep -qxF '  Size 18446744073709551360 256' "$RUNNER_TEMP/host_ranges.3.txt"
           [[ -z $(git status --porcelain -- src/mullion) ]]
           # a converter change the build's codegen id doesn't follow: this build against the id of the tree with one
           # comment more in src/airconv. both DLLs and VERSION have to fail

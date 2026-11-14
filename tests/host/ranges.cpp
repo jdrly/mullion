@@ -53,6 +53,15 @@ main() {
   equal(said(Within({0, 0, 0, 5, 4, 1}, mip)), "X 5 4");
   equal(said(Within({0, 0, 0, 3, 3, 1}, InBlocks({0, 0, 0, 3, 3, 1}, 1))), "fits");
 
+  // views: inside their buffer, or of no size anywhere, they fit; an address no live buffer holds, or a size past the
+  // buffer's end from the address, doesn't
+  equal(said(View(0x10100, 256, true, 0x10200)), "fits");
+  equal(said(View(0x10100, 0, false, 0)), "fits");
+  equal(said(View(0x10100, 257, true, 0x10200)), "Size 257 256");
+  equal(said(View(0x20000, 4, false, 0)), "Address 131072 0");
+  // a size whose end wraps past 2^64 from the address
+  equal(said(View(0x10100, UINT64_MAX - 0xff, true, 0x10200)), "Size 18446744073709551360 256");
+
   // a reinterpret copy: 8 BC texels are two blocks, two texels of an uncompressed destination, and back
   check(InDestination(8, 4, 1) == 2, "8 BC texels are 2 destination texels");
   check(InDestination(2, 4, 1) == 1, "a partial block is one destination texel");
@@ -91,6 +100,10 @@ main() {
   equal(counts.section(last), "");
   src.fired(Bytes(0, 4096, 256), counts);
   equal(counts.section(last), "CopyBufferRegion=1");
+  Site view{Call::IASetIndexBuffer, "view"};
+  equal(view.fired(View(0x20000, 4, false, 0), counts),
+        "MULLION-RANGE call=IASetIndexBuffer what=viewAddress given=131072 limit=0 action=dropped");
+  equal(counts.section(last), "IASetIndexBuffer=1");
 
   if (failures)
     std::printf("%u failed\n", failures);
