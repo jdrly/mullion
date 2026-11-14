@@ -318,8 +318,11 @@ library added.
   checks that it unpacks to the same files, hash for hash. Only for a push to `swtor-on-mac` does it upload the archive
   (§ Releases). It is the only job with `contents: write`.
 
-**Runner time.** One run at a time for the whole repository: a run in progress is never cancelled, and GitHub keeps one
-more waiting. No schedule, no manual trigger. Toolchain caches are saved only on a miss. On a miss LLVM takes about 25
+**Runner time.** One run at a time for each branch (`swtor-<ref>`): a run in progress is never cancelled, and GitHub
+keeps one more of that branch waiting, which a newer push to the same branch replaces. Another pull request's push
+never drops a run, and nothing drops a push run of `swtor-on-mac` but a later push to it. With three pull requests
+open that is up to four runs at once, about 8 minutes each with warm caches. A push run's Publish waits in
+`swtor-publish`, one for the whole repository, so two uploads never overlap. No schedule, no manual trigger. Toolchain caches are saved only on a miss. On a miss LLVM takes about 25
 minutes to build; push nothing else while that runs. GitHub lets a pull request's run read only its own caches and
 `swtor-on-mac`'s, so after a toolchain change LLVM builds twice: once in that pull request, once in the first push to
 `swtor-on-mac`. When `.github/swtor/toolchain.zsh` builds LLVM differently, raise `LLVM_BUILD` in the workflow so the

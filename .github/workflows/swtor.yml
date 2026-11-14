@@ -4,10 +4,10 @@
 # docs/swtor/README.md § CI and § Releases say what it leaves out and why. Shaped after jdrly/dxmt's
 # gw2.yml.
 #
-# runner time: GitHub has blocked two of my forks for wasted compute, so: one run at a time, queued
-# and never cancelled in progress; no schedule; nothing but this one build; caches saved only on a
-# miss; a push run builds and uploads but doesn't repeat the tests, the control or the warnings
-# check that the pull request's run of the same tree passed.
+# runner time: GitHub has blocked two of my forks for wasted compute, so: one run at a time for each
+# branch, queued and never cancelled in progress; no schedule; nothing but this one build; caches
+# saved only on a miss; a push run builds and uploads but doesn't repeat the tests, the control or
+# the warnings check that the pull request's run of the same tree passed.
 name: SWTOR
 
 on:
@@ -21,10 +21,13 @@ on:
 permissions:
   contents: read
 
-# one group for the whole repository. A run in progress is never cancelled; GitHub keeps one run
-# waiting behind it and cancels an older waiting run when a newer one arrives, before it gets a runner.
+# one group for each branch: a pull request's, and swtor-on-mac's for the push runs. A run in progress is
+# never cancelled; GitHub keeps one run waiting behind it and cancels an older waiting run when a newer one of
+# the same group arrives, before it gets a runner. So a new push to a pull request replaces only that pull
+# request's waiting run, never another's or a push run. One group for the whole repository dropped the push
+# runs of a40ddb4 and 88d5a9f that way, and their builds were never published
 concurrency:
-  group: swtor
+  group: swtor-${{ github.ref }}
   cancel-in-progress: false
 
 env:
@@ -364,11 +367,15 @@ jobs:
 
   # packs the build into mullion-swtor-<commit>.tar.xz for every run, and for a push to swtor-on-mac adds it to the
   # pre-release swtor-builds: one asset per commit, never replaced, the 30 newest kept, never releases/latest.
-  # the only job that may write to the repository. two pushes never upload at once: the workflow's concurrency
-  # group runs one run at a time and never cancels one in progress
+  # the only job that may write to the repository. two pushes never upload at once: a push run's Publish waits
+  # in a group of its own for the whole repository, and is never cancelled in progress. a pull request's Publish
+  # uploads nothing and waits in its branch's group, so it never replaces a push's waiting Publish
   publish:
     name: Publish
     needs: [lint, build]
+    concurrency:
+      group: ${{ github.event_name == 'push' && 'swtor-publish' || format('swtor-publish-{0}', github.ref) }}
+      cancel-in-progress: false
     # Lint runs for pull requests only
     if: ${{ !cancelled() && needs.build.result == 'success' && needs.lint.result != 'failure' }}
     runs-on: ubuntu-24.04
