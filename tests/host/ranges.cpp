@@ -171,6 +171,14 @@ main() {
     equal(table_counts.section(table_last), "SetRootDescriptorTable=1");
   }
 
+  // an ExecuteIndirect's commands: the stride for each but the last, which takes its arguments' bytes only
+  check(IndirectBytes(32, 4, 12) == 3 * 32 + 12, "four commands of stride 32 and 12 bytes of arguments take 108");
+  check(IndirectBytes(32, 1, 12) == 12, "one command takes its arguments");
+  check(IndirectBytes(32, 0, 12) == 0, "no command takes nothing");
+  check(IndirectBytes(UINT32_MAX, UINT64_MAX, 12) == UINT64_MAX, "a count no buffer holds does not wrap");
+  equal(said(Bytes(256, IndirectBytes(32, 4, 12), 364)), "fits");
+  equal(said(Bytes(256, IndirectBytes(32, 4, 12), 360)), "Size 108 104");
+
   // the bridge's Metal 4 lengths: what a buffer has from an offset, before, at and past its end
   check(buffer_remaining(256, 0) == 256, "a buffer's length from its start");
   check(buffer_remaining(256, 200) == 56, "what is left from an offset inside it");

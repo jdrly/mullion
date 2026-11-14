@@ -65,6 +65,18 @@ struct Box {
   uint64_t left = 0, top = 0, front = 0, right = 0, bottom = 0, back = 0;
 };
 
+// the bytes `count` indirect commands of `stride` bytes take, the last only its arguments' `bytes`: what ExecuteIndirect
+// reads from its argument buffer's offset. A number too large for 64 bits is the largest there is
+inline uint64_t
+IndirectBytes(uint64_t stride, uint64_t count, uint64_t bytes) {
+  if (!count)
+    return 0;
+  uint64_t total;
+  if (__builtin_mul_overflow(stride, count - 1, &total) || __builtin_add_overflow(total, bytes, &total))
+    return UINT64_MAX;
+  return total;
+}
+
 // whether `box` lies within an extent that starts at 0: the edge past it, x, y or z first
 inline Overrun
 Within(const Box &box, const Box &extent) {
@@ -254,6 +266,7 @@ enum class Call : unsigned {
   WriteBufferImmediate,
   SetRootView,
   SetRootDescriptorTable,
+  ExecuteIndirect,
   Count
 };
 
@@ -276,6 +289,8 @@ CallName(Call call) {
     return "SetRootView";
   case Call::SetRootDescriptorTable:
     return "SetRootDescriptorTable";
+  case Call::ExecuteIndirect:
+    return "ExecuteIndirect";
   default:
     return "?";
   }

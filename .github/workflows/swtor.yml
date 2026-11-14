@@ -388,10 +388,10 @@ jobs:
           # length - offset, which wraps past the end (host_ranges.4.patch), kept address ranges that outlive a
           # buffer released (host_ranges.5.patch), a root view's bound past 32 bits (host_ranges.6.patch), or a command
           # list's found buffer that outlives one (host_ranges.8.patch), a table at its heap's end counted as in it
-          # (host_ranges.7.patch), or a table's span cut to its last range (host_ranges.9.patch), host_ranges has to
-          # fail
+          # (host_ranges.7.patch), a table's span cut to its last range (host_ranges.9.patch), or an ExecuteIndirect's
+          # last command counted as a whole stride (host_ranges.10.patch), host_ranges has to fail
           for p in host_ranges host_ranges.2 host_ranges.3 host_ranges.4 host_ranges.5 host_ranges.6 host_ranges.7 \
-            host_ranges.8 host_ranges.9; do
+            host_ranges.8 host_ranges.9 host_ranges.10; do
             git apply "tests/breaks/$p.patch"
             status=0
             meson test -C build host_ranges --print-errorlogs >"$RUNNER_TEMP/$p.txt" 2>&1 || status=$?
@@ -408,6 +408,7 @@ jobs:
           grep -qF 'failed: a buffer released or made forgets the buffer found' "$RUNNER_TEMP/host_ranges.8.txt"
           grep -qF "failed: a table at a heap's end is in no heap" "$RUNNER_TEMP/host_ranges.7.txt"
           grep -qF "failed: a range placed before another doesn't shorten the table" "$RUNNER_TEMP/host_ranges.9.txt"
+          grep -qF 'failed: four commands of stride 32 and 12 bytes of arguments take 108' "$RUNNER_TEMP/host_ranges.10.txt"
           [[ -z $(git status --porcelain -- src/winemetal) ]]
           # the root views' checks in the converter (SM50_SHADER_FLAG_CHECK_ROOT_RANGES): with a root CBV, SRV or UAV
           # left unchecked under the flag (tests/breaks/host_check_root_ranges{,.2,.3}.patch), host_check_root_ranges

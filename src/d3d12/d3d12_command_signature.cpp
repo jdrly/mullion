@@ -393,6 +393,7 @@ public:
     };
     CommandType = side_effect;
     ByteStride = pDesc->ByteStride;
+    ArgumentBytes = bytes;
     UpdateIndexBuffer = ib_index != ~0u;
 
     // an indexed signature's resolver is this, then what it does once all its threads have (below)

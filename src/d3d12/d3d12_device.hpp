@@ -491,6 +491,9 @@ class MTLD3D12CommandSignature : public ID3D12CommandSignature {
 public:
   D3D12_INDIRECT_ARGUMENT_TYPE CommandType;
   UINT ByteStride;
+  // jdrly/mullion: the bytes of one command's arguments, which the last command of an ExecuteIndirect takes of its
+  // stride (MULLION_D3D12_CHECK_RANGES)
+  UINT ArgumentBytes = 0;
   UINT UpdateRootArguments : 1;
   UINT UpdateVertexBuffers : 1;
   UINT UpdateIndexBuffer   : 1;

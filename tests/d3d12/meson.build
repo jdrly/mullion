@@ -70,6 +70,11 @@ foreach front_end : ['dxil', 'dxbc']
   test('d3d12_descriptor_index_ranges_' + front_end, exe, args: [front_end], env: ['MULLION_D3D12_CHECK_RANGES=1'],
        timeout: 600)
 endforeach
+# jdrly/mullion: ExecuteIndirect dropped when its commands or count run past their buffers (part 4)
+exe = executable('d3d12_indirect_ranges', ['d3d12_indirect_ranges.cpp'], dependencies: d3d12_test_deps)
+foreach front_end : ['dxil', 'dxbc']
+  test('d3d12_indirect_ranges_' + front_end, exe, args: [front_end], env: ['MULLION_D3D12_CHECK_RANGES=1'], timeout: 600)
+endforeach
 exe = executable('d3d12_trace_log',['d3d12_trace_log.cpp'], dependencies: d3d12_test_deps + [cpp.find_library('d3d11')])
 test('d3d12_trace_log', exe, timeout: 600)
 exe = executable('d3d12_copy_memory', ['d3d12_copy_memory.cpp'], dependencies: d3d12_test_deps)
