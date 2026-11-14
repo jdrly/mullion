@@ -1,0 +1,12 @@
+# a root view's bound is its buffer's whole length, which a descriptor's 32 bits cut to its low bits
+--- a/src/mullion/mullion_ranges.hpp
++++ b/src/mullion/mullion_ranges.hpp
+@@ -113,7 +113,7 @@
+ // so that every access reads zero and writes nothing
+ inline uint64_t
+ RootViewLength(uint64_t address, bool held, uint64_t end) {
+-  return held ? std::min<uint64_t>(end - address, UINT32_MAX) : 0;
++  return held ? end - address : 0;
+ }
+ 
+ // the address ranges of live buffers a check found, newest first, kept while buffer_generation is the one they were

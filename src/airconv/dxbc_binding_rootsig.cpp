@@ -137,7 +137,7 @@ public:
     }
     if (DescriptorOffset == ~0u) {
       auto Pointer = GetArgument(Builder, RootSignatureArgumentIndex, CBuf.arg_index);
-      return ConstantBufferDescriptor{Pointer, nullptr};
+      return ConstantBufferDescriptor{Pointer, RootViewLength(Builder, D3D12_DESCRIPTOR_RANGE_TYPE_CBV, Range)};
     }
     auto HeapPointer = GetArgument(Builder, RootSignatureArgumentIndex, CBuf.arg_index);
     auto [Pointer, Metadata] = GetBufferDescriptor(
@@ -307,6 +307,8 @@ public:
     auto DescriptorOffset = Iter->second.second;
     auto HeapPointer = GetArgument(Builder, RootSignatureArgumentIndex, SRV.arg_index);
     if (DescriptorOffset == ~0u) {
+      if (auto Length = RootViewLength(Builder, D3D12_DESCRIPTOR_RANGE_TYPE_SRV, Range))
+        return BufferDescriptor{HeapPointer, Length, SRV.structure_stride, false, true};
       return BufferDescriptor{HeapPointer, Builder.builder.getInt64(0xffffffff), SRV.structure_stride, false, false};
     }
     auto [Pointer, Metadata] = GetBufferDescriptor(
@@ -331,6 +333,8 @@ public:
     auto DescriptorOffset = Iter->second.second;
     auto HeapPointer = GetArgument(Builder, RootSignatureArgumentIndex, UAV.arg_index);
     if (DescriptorOffset == ~0u) {
+      if (auto Length = RootViewLength(Builder, D3D12_DESCRIPTOR_RANGE_TYPE_UAV, Range))
+        return BufferDescriptor{HeapPointer, Length, UAV.structure_stride, UAV.global_coherent, true};
       return BufferDescriptor{
           HeapPointer, Builder.builder.getInt64(0xffffffff), UAV.structure_stride, UAV.global_coherent, false
       };
@@ -388,6 +392,16 @@ public:
 
   // the table ranges whose descriptors root signature 1.1 says are static, by range type (BufferDescriptor::Bounded)
   std::set<std::pair<D3D12_DESCRIPTOR_RANGE_TYPE, RangeId>> Unbounded;
+  // jdrly/mullion: a root CBV, SRV or UAV's length in the root arguments (SM50_SHADER_FLAG_CHECK_ROOT_RANGES); a root
+  // view not in it carries none, as upstream's never do
+  std::map<std::pair<D3D12_DESCRIPTOR_RANGE_TYPE, RangeId>, uint32_t> RootViewLengths;
+
+  // the length a root view of `Type` is checked against, or null
+  llvm::Value *
+  RootViewLength(llvm::air::AIRBuilder &Builder, D3D12_DESCRIPTOR_RANGE_TYPE Type, RangeId Range) {
+    auto Length = RootViewLengths.find({Type, Range});
+    return Length == RootViewLengths.end() ? nullptr : GetArgument(Builder, RootSignatureArgumentIndex, Length->second);
+  }
 
   std::map<RangeId, std::pair<ConstantBufferInfo, uint64_t>> ConstantBuffers;
   std::map<RangeId, std::pair<SamplerInfo, uint64_t>> Samplers;
@@ -483,6 +497,8 @@ setup_binding_rootsig(
     return false;
   };
 
+  // jdrly/mullion: each root CBV, SRV and UAV parameter, in order, with the ranges this stage binds to it
+  std::vector<std::vector<std::pair<D3D12_DESCRIPTOR_RANGE_TYPE, RangeId>>> root_views;
   for (unsigned i = 0; i < root_sig.NumParameters; i++) {
     auto &Parameter = root_sig.pParameters[i];
 
@@ -604,6 +620,7 @@ setup_binding_rootsig(
       auto descriptor_index = builder.DefineBuffer(
           "cb" + std::to_string(i), AddressSpace::constant, MemoryAccess::read, msl_uint4, inc_attribute_index++
       );
+      root_views.push_back({});
       if (!check_visibility(Parameter.ShaderVisibility))
         break;
       for (auto &[_, cbuf] : shader_info->cbufferMap) {
@@ -611,6 +628,7 @@ setup_binding_rootsig(
           auto range_id = cbuf.range.range_id;
           binding_map->ConstantBuffers[range_id] = {cbuf, ~0u};
           binding_map->ConstantBuffers[range_id].first.arg_index = descriptor_index;
+          root_views.back().push_back({D3D12_DESCRIPTOR_RANGE_TYPE_CBV, range_id});
         }
       }
       break;
@@ -620,6 +638,7 @@ setup_binding_rootsig(
       auto descriptor_index = builder.DefineBuffer(
           "t" + std::to_string(i), AddressSpace::device, MemoryAccess::read, msl_uint, inc_attribute_index++
       );
+      root_views.push_back({});
       if (!check_visibility(Parameter.ShaderVisibility))
         break;
       for (auto &[_, srv] : shader_info->srvMap) {
@@ -628,6 +647,7 @@ setup_binding_rootsig(
           auto range_id = srv.range.range_id;
           binding_map->SRVs[range_id] = {srv, ~0u};
           binding_map->SRVs[range_id].first.arg_index = descriptor_index;
+          root_views.back().push_back({D3D12_DESCRIPTOR_RANGE_TYPE_SRV, range_id});
         }
       }
       break;
@@ -636,6 +656,7 @@ setup_binding_rootsig(
       auto &descriptor = Parameter.Descriptor;
       auto descriptor_index = builder.Size();
       std::optional<uint32_t> raster_order_group;
+      root_views.push_back({});
       if (check_visibility(Parameter.ShaderVisibility))
         for (auto &[_, uav] : shader_info->uavMap) {
           if (uav.range.lower_bound == descriptor.ShaderRegister && uav.range.space == descriptor.RegisterSpace) {
@@ -643,6 +664,7 @@ setup_binding_rootsig(
             auto range_id = uav.range.range_id;
             binding_map->UAVs[range_id] = {uav, ~0u};
             binding_map->UAVs[range_id].first.arg_index = descriptor_index;
+            root_views.back().push_back({D3D12_DESCRIPTOR_RANGE_TYPE_UAV, range_id});
             raster_order_group = uav.rasterizer_order ? std::optional(1) : std::nullopt;
           }
         }
@@ -688,6 +710,14 @@ setup_binding_rootsig(
   // then the lock table of 64-bit atomics (AtomicLocksQword)
   binding_map->AtomicLocksArgIndex =
       builder.DefineBuffer("atomic_locks", AddressSpace::device, MemoryAccess::read_write, msl_uint, inc_attribute_index++);
+  // jdrly/mullion: then each root view's length, every root CBV, SRV and UAV parameter's in order, seen by this stage or
+  // not, as the root signature lays them out (RootLengthQwords). a shader record's arguments have none
+  if ((shader_flags & SM50_SHADER_FLAG_CHECK_ROOT_RANGES) && !local)
+    for (unsigned i = 0; i < root_views.size(); i++) {
+      auto length = builder.DefineInteger64("root_view_length" + std::to_string(i), inc_attribute_index++);
+      for (auto &view : root_views[i])
+        binding_map->RootViewLengths[view] = length;
+    }
 
   auto [type, metadata] = builder.Build(module.getContext(), module.getDataLayout());
   binding_map->RootArgumentsType = type;

@@ -195,7 +195,8 @@ static ranges::Site kBufferCopySrc{ranges::Call::CopyBufferRegion, "src"},
     kTextureCopySrcBox{ranges::Call::CopyTextureRegion, "src"},
     kTextureCopyDstRegion{ranges::Call::CopyTextureRegion, "dst"},
     kIndexView{ranges::Call::IASetIndexBuffer, "view"}, kVertexView{ranges::Call::IASetVertexBuffers, "view"},
-    kImmediate{ranges::Call::WriteBufferImmediate, "dest"};
+    kImmediate{ranges::Call::WriteBufferImmediate, "dest"},
+    kRootView{ranges::Call::SetRootView, "view", "clamped"};
 
 // a check fired at `site`: counted, and its line written the first time
 static void
@@ -3164,6 +3165,8 @@ public:
       rootsig_compute_ = static_cast<MTLD3D12RootSignature *>(pRootSignature);
       assert(rootsig_compute_->UploadQwords <= std::size(rootarg_compute_staging_));
       WriteHeapArguments(rootsig_compute_.ptr(), rootarg_compute_staging_, DirtyState::ComputeRootArguments);
+      if (kRangesOn)
+        ClearRootViewLengths(rootsig_compute_.ptr(), rootarg_compute_staging_);
     } else {
       rootsig_compute_ = nullptr;
     }
@@ -3180,6 +3183,8 @@ public:
       rootsig_graphics_ = static_cast<MTLD3D12RootSignature *>(pRootSignature);
       assert(rootsig_graphics_->UploadQwords <= std::size(rootarg_graphics_staging_));
       WriteHeapArguments(rootsig_graphics_.ptr(), rootarg_graphics_staging_, DirtyState::GraphicsRootArguments);
+      if (kRangesOn)
+        ClearRootViewLengths(rootsig_graphics_.ptr(), rootarg_graphics_staging_);
     } else {
       rootsig_graphics_ = nullptr;
     }
@@ -3192,11 +3197,41 @@ public:
   SetRootQword(MTLD3D12RootSignature *rootsig, uint64_t *staging, DirtyState dirty, UINT Index, uint64_t Value) {
     if (!rootsig || Index >= rootsig->ParameterSlots)
       return;
+    if (kRangesOn && rootsig->RootLengthQwords)
+      SetRootViewLength(rootsig, staging, dirty, Index, Value);
     auto &slot = staging[rootsig->SlotQwordOffsets[Index]];
     if (slot == Value)
       return;
     slot = Value;
     dirty_state_.set(dirty);
+  }
+
+  // MULLION_D3D12_CHECK_RANGES: a root CBV, SRV or UAV's length, which its shaders check it against
+  // (SM50_SHADER_FLAG_CHECK_ROOT_RANGES): what the live buffer holding `VA` has from it, or 0 where none holds it. Set
+  // with every root argument whose parameter has one, as the buffer at an address may have changed since
+  void
+  SetRootViewLength(MTLD3D12RootSignature *rootsig, uint64_t *staging, DirtyState dirty, UINT Index, uint64_t VA) {
+    auto qword = rootsig->RootLengthQwords[Index];
+    if (qword == ~0u)
+      return;
+    auto end = VA ? HeldEnd(VA) : 0;
+    if (VA && !end)
+      RangeFired(kRootView, ranges::View(VA, 1, false, 0));
+    auto length = ranges::RootViewLength(VA, end != 0, end);
+    if (staging[qword] != length) {
+      staging[qword] = length;
+      dirty_state_.set(dirty);
+    }
+  }
+
+  // MULLION_D3D12_CHECK_RANGES: a root signature just set has no root views yet: their lengths are 0 until one is
+  void
+  ClearRootViewLengths(MTLD3D12RootSignature *rootsig, uint64_t *staging) {
+    if (!rootsig->RootLengthQwords)
+      return;
+    for (UINT i = 0; i < rootsig->ParameterSlots; i++)
+      if (rootsig->RootLengthQwords[i] != ~0u)
+        staging[rootsig->RootLengthQwords[i]] = 0;
   }
 
   void
@@ -3295,19 +3330,27 @@ public:
   // MULLION_D3D12_CHECK_RANGES: the address ranges of live buffers the view checks found
   ranges::HeldRanges view_ranges_;
 
-  // MULLION_D3D12_CHECK_RANGES: whether `size` bytes at `VA`, a view's or an immediate write's, lie in the live buffer
-  // whose addresses hold VA. Looks the address up only when no range found since the last buffer was made or released
-  // holds it, so a list that binds the same few buffers takes the device's address lock once for each, not once a draw
-  bool
-  ViewInRange(ranges::Site &site, D3D12_GPU_VIRTUAL_ADDRESS VA, uint64_t size) {
-    if (!size)
-      return true;
+  // MULLION_D3D12_CHECK_RANGES: the end of the live buffer whose addresses hold `VA`, or 0 where none does. Looks the
+  // address up only when no range found since the last buffer was made or released holds it, so a list that binds the
+  // same few buffers takes the device's address lock once for each, not once a draw
+  uint64_t
+  HeldEnd(D3D12_GPU_VIRTUAL_ADDRESS VA) {
     auto end = view_ranges_.end(device_, ranges::buffer_generation.load(std::memory_order_acquire), VA);
     uint64_t offset, found_end;
     if (!end && device_->LookupBufferByVA(VA, &offset, &found_end) && VA < found_end) {
       view_ranges_.keep(VA - offset, found_end);
       end = found_end;
     }
+    return end;
+  }
+
+  // MULLION_D3D12_CHECK_RANGES: whether `size` bytes at `VA`, a view's or an immediate write's, lie in the live buffer
+  // whose addresses hold VA
+  bool
+  ViewInRange(ranges::Site &site, D3D12_GPU_VIRTUAL_ADDRESS VA, uint64_t size) {
+    if (!size)
+      return true;
+    auto end = HeldEnd(VA);
     if (auto overrun = ranges::View(VA, size, end != 0, end)) {
       RangeFired(site, overrun);
       return false;

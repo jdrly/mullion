@@ -1,0 +1,12 @@
+# MULLION_D3D12_CHECK_RANGES=1 converts shaders without the root views' checks
+--- a/src/d3d12/d3d12_device.cpp
++++ b/src/d3d12/d3d12_device.cpp
+@@ -376,7 +376,7 @@
+         metal_version_(SM50_SHADER_METAL_VERSION(ShaderMetalVersion(adapter_->GetMTLDevice()))),
+         shader_flags_(SM50_SHADER_FLAG(
+             GPUShaderFlags(adapter_->GetMTLDevice()) | GuardStaticRangesFlag() |
+-            (ranges::on ? SM50_SHADER_FLAG_CHECK_ROOT_RANGES : SM50_SHADER_FLAG{})
++            (false ? SM50_SHADER_FLAG_CHECK_ROOT_RANGES : SM50_SHADER_FLAG{})
+         )) {
+     mesh_bytes_per_draw = MeshBytesPerDraw(adapter_->GetMTLDevice());
+   }

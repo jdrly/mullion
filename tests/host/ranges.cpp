@@ -122,6 +122,20 @@ main() {
     check(!found.at(generation, 0x10100, offset), "Reset and an aliasing barrier forget it");
   }
 
+  // a root view's bound: what its buffer has from the address, at most 32 bits of it, and 0 in no buffer
+  check(RootViewLength(0x10100, true, 0x10200) == 0x100, "a root view's bound is what its buffer has left");
+  check(RootViewLength(0x10000, true, 0x10000 + (5ull << 32)) == UINT32_MAX,
+        "a root view in a buffer of 5 GiB is bound at 4 GiB, not at what the low 32 bits of its length say");
+  check(RootViewLength(0x20000, false, 0) == 0, "a root view in no buffer is bound at 0");
+  Site root{Call::SetRootView, "view", "clamped"};
+  {
+    Counts root_counts;
+    std::array<uint64_t, size_t(Call::Count)> root_last{};
+    equal(root.fired(View(0x20000, 4, false, 0), root_counts),
+          "MULLION-RANGE call=SetRootView what=viewAddress given=131072 limit=0 action=clamped");
+    equal(root_counts.section(root_last), "SetRootView=1");
+  }
+
   // the bridge's Metal 4 lengths: what a buffer has from an offset, before, at and past its end
   check(buffer_remaining(256, 0) == 256, "a buffer's length from its start");
   check(buffer_remaining(256, 200) == 56, "what is left from an offset inside it");

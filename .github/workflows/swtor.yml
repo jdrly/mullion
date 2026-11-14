@@ -228,7 +228,7 @@ jobs:
           { echo '### The build'; echo '```'; cat "$RUNNER_TEMP/check.txt"; echo '```'; } >>"$GITHUB_STEP_SUMMARY"
           exit "$status"
 
-      # tests/host/meson.build: twenty-nine tests, each with meson's 30 s timeout but host_tessellator's
+      # tests/host/meson.build: thirty-one tests, each with meson's 30 s timeout but host_tessellator's
       # 300 s; none builds the tree or waits on a GPU
       - name: Host tests
         if: github.event_name == 'pull_request'
@@ -386,9 +386,9 @@ jobs:
           # (tests/breaks/host_ranges.patch), a footprint of one slice whatever its depth (host_ranges.2.patch), or a
           # view's end as address + size (host_ranges.3.patch), the bridge's Metal 4 length from an offset as
           # length - offset, which wraps past the end (host_ranges.4.patch), kept address ranges that outlive a
-          # buffer released (host_ranges.5.patch), or a command list's found buffer that outlives one
-          # (host_ranges.8.patch), host_ranges has to fail
-          for p in host_ranges host_ranges.2 host_ranges.3 host_ranges.4 host_ranges.5 host_ranges.8; do
+          # buffer released (host_ranges.5.patch), a root view's bound past 32 bits (host_ranges.6.patch), or a command
+          # list's found buffer that outlives one (host_ranges.8.patch), host_ranges has to fail
+          for p in host_ranges host_ranges.2 host_ranges.3 host_ranges.4 host_ranges.5 host_ranges.6 host_ranges.8; do
             git apply "tests/breaks/$p.patch"
             status=0
             meson test -C build host_ranges --print-errorlogs >"$RUNNER_TEMP/$p.txt" 2>&1 || status=$?
@@ -401,8 +401,24 @@ jobs:
           grep -qxF '  Size 18446744073709551360 256' "$RUNNER_TEMP/host_ranges.3.txt"
           grep -qF 'failed: nothing past its end, not a length that wraps' "$RUNNER_TEMP/host_ranges.4.txt"
           grep -qF 'failed: a buffer made or released forgets every range' "$RUNNER_TEMP/host_ranges.5.txt"
+          grep -qF 'failed: a root view in a buffer of 5 GiB is bound at 4 GiB' "$RUNNER_TEMP/host_ranges.6.txt"
           grep -qF 'failed: a buffer released or made forgets the buffer found' "$RUNNER_TEMP/host_ranges.8.txt"
           [[ -z $(git status --porcelain -- src/winemetal) ]]
+          # the root views' checks in the converter (SM50_SHADER_FLAG_CHECK_ROOT_RANGES): with a root CBV, SRV or UAV
+          # left unchecked under the flag (tests/breaks/host_check_root_ranges{,.2,.3}.patch), host_check_root_ranges
+          # has to fail, at that view
+          for n in "" .2 .3; do
+            git apply "tests/breaks/host_check_root_ranges$n.patch"
+            status=0
+            meson test -C build host_check_root_ranges --print-errorlogs >"$RUNNER_TEMP/root$n.txt" 2>&1 || status=$?
+            git apply -R "tests/breaks/host_check_root_ranges$n.patch"
+            cat "$RUNNER_TEMP/root$n.txt"
+            [[ $status != 0 ]]
+          done
+          grep -qF 'FAILED: a root CBV is checked with the flag' "$RUNNER_TEMP/root.txt"
+          grep -qF 'FAILED: a root SRV is checked with the flag' "$RUNNER_TEMP/root.2.txt"
+          grep -qF 'FAILED: a root UAV is checked with the flag' "$RUNNER_TEMP/root.3.txt"
+          [[ -z $(git status --porcelain -- src/airconv) ]]
           [[ -z $(git status --porcelain -- src/mullion) ]]
           # the window lines: with an activation alone written as d9mt's visibility line
           # (tests/breaks/host_window_lines.patch), what the watch said last following only the lines it wrote
@@ -435,7 +451,7 @@ jobs:
             grep -qxF "FAIL  x86_64-windows/$f: carries the codegen id ${changed:0:12}" "$RUNNER_TEMP/codegen.txt"
           done
           grep -qxF "FAIL  VERSION: codegen ${changed:0:12}" "$RUNNER_TEMP/codegen.txt"
-          echo "all ten checks failed on their break"
+          echo "all twelve checks failed on their break"
 
       # last, so that a run that only adds a warning still shows everything above
       - name: No new warnings

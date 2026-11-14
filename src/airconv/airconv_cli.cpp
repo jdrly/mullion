@@ -61,6 +61,12 @@ static cl::opt<bool> GuardStaticRanges(
   cl::desc("Keep the bounds checks of buffers in descriptor ranges root signature 1.1 calls static")
 );
 
+// jdrly/mullion: MULLION_D3D12_CHECK_RANGES=1, as the device passes it
+static cl::opt<bool> CheckRootRanges(
+  "check-root-ranges", cl::init(false),
+  cl::desc("Check root CBVs, SRVs and UAVs against a length the root arguments carry after the lock table")
+);
+
 static cl::opt<bool>
   EmitLLVM("S", cl::init(false), cl::desc("Write output as LLVM assembly"));
 
@@ -270,6 +276,8 @@ int main(int argc, char **argv) {
   data.flags = NoCustomBorder ? SM50_SHADER_FLAG_NO_CUSTOM_BORDER : SM50_SHADER_FLAG{};
   if (GuardStaticRanges)
     data.flags = SM50_SHADER_FLAG(data.flags | SM50_SHADER_FLAG_GUARD_STATIC_RANGES);
+  if (CheckRootRanges)
+    data.flags = SM50_SHADER_FLAG(data.flags | SM50_SHADER_FLAG_CHECK_ROOT_RANGES);
   data.simd_width = 0; // no device to ask; a vertex shader's wave has no lane count here
   data.next = 0;
   data.type = SM50_SHADER_COMMON;

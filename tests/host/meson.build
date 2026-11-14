@@ -20,6 +20,10 @@ test('host_cache_prepare', executable('host_cache_prepare', 'cache_prepare.c', l
 test('host_guard_static_ranges', executable('host_guard_static_ranges', 'guard_static_ranges.cpp',
                                             override_options : ['cpp_std=c++20'], native : true),
      args : [airconv_cli_darwin], timeout : 120, suite : 'host')
+# jdrly/mullion: MULLION_D3D12_CHECK_RANGES' root descriptor checks in the native converter's output (private ticket 20)
+test('host_check_root_ranges', executable('host_check_root_ranges', 'check_root_ranges.cpp',
+                                          override_options : ['cpp_std=c++20'], native : true),
+     args : [airconv_cli_darwin], timeout : 120, suite : 'host')
 # jdrly/mullion: the shader cache's key changes with the compile flags. its argument loop is CompileFunction's own,
 # copied out of src/d3d12/d3d12_pipeline_graphics.cpp at build time
 compile_key_arguments = custom_target('compile_key_arguments',
