@@ -1,0 +1,10 @@
+# the bridge's Metal 4 length from an offset as length - offset, which wraps past the end
+--- a/src/winemetal/unix/buffer_range.h
++++ b/src/winemetal/unix/buffer_range.h
+@@ -8,5 +8,5 @@
+ 
+ static inline uint64_t
+ buffer_remaining(uint64_t length, uint64_t offset) {
+-  return offset < length ? length - offset : 0;
++  return length - offset;
+ }

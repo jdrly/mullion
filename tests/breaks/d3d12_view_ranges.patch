@@ -1,11 +1,11 @@
 # MULLION_D3D12_CHECK_RANGES=1 binds every index and vertex buffer view as given
 --- a/src/d3d12/d3d12_command_list.cpp
 +++ b/src/d3d12/d3d12_command_list.cpp
-@@ -3295,6 +3295,7 @@
-   // without keeping holds VA below it, past its end. It looks nothing up itself
+@@ -3303,6 +3303,7 @@
+   // same few buffers takes the device's address lock once for each, not once a draw
    bool
-   ViewInRange(ranges::Site &site, D3D12_GPU_VIRTUAL_ADDRESS VA, uint64_t size, BufferAllocation *found) {
+   ViewInRange(ranges::Site &site, D3D12_GPU_VIRTUAL_ADDRESS VA, uint64_t size) {
 +    return true;
-     bool held = found && found == va_found_ && VA >= va_found_->gpuAddress() && VA < va_found_end_;
-     if (auto overrun = ranges::View(VA, size, held, held ? va_found_end_ : 0)) {
-       RangeFired(site, overrun);
+     if (!size)
+       return true;
+     auto generation = device_->buffer_generation.load(std::memory_order_acquire);

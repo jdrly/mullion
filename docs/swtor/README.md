@@ -440,12 +440,13 @@ its source and its destination, `CopyTextureRegion` four, its two footprints, it
 call one. `action` is always `dropped`, for a view too: the view is dropped and nothing bound in its place. `AtomicCopyBufferUINT` and `AtomicCopyBufferUINT64` copy through `CopyBufferRegion` and are checked
 and counted as it.
 
-A view's buffer is the one whose address range holds `BufferLocation`, found the way the index buffer always was
-(`LookupBuffer`, which keeps the last buffer found): its end is the Metal allocation's, which can be longer than the
-width Direct3D gave a write-watched or imported buffer, as the address doesn't say which resource it came from. The
-memory past the width is that buffer's own. `IASetIndexBuffer` looks the address up already, so its check adds two
-compares; `IASetVertexBuffers` looks up each view it sets, which takes the device's address lock when the view isn't
-in the last buffer found. A view is checked when it is set: a buffer released after that, with the view still bound,
+A view's buffer is the one whose address range holds `BufferLocation` in the device's address map, which is how the
+index buffer was always found: its end is the Metal allocation's, which can be longer than the width Direct3D gave it
+(at least 256 bytes; a write-watched or imported buffer is rounded up), as the address doesn't say which resource it
+came from. The memory past the width is that buffer's own. Each command list keeps the address ranges of the last
+four buffers its views were found in, as numbers, while no buffer is made or released on the device
+(`buffer_generation`): a view inside one of them costs a few compares and one atomic load; another takes the device's
+address lock once. A view is checked when it is set: a buffer released after that, with the view still bound,
 isn't seen. `ExecuteIndirect`'s views are part 4's.
 
 `RANGE CopyBufferRegion=3 CopyTextureRegion=1`: the calls dropped in the `STATS` window, each call with a count that
@@ -456,7 +457,8 @@ formats' descriptions and the subresources' extents, which the copy asks for aga
 atomic and, the first time at its check, writes one line. No lock.
 
 Metal 4's draws and argument tables took a buffer's length from an offset as `length - offset`, which wraps to nearly
-2^64 for an offset past the end (`winemetal_unix.c`, `metal4_remaining`): it is now 0 there, whatever the switch. A fix
+2^64 for an offset past the end (`winemetal_unix.c`, `metal4_remaining`): it is now 0 there, whatever the switch
+([`buffer_range.h`](../../src/winemetal/unix/buffer_range.h), which `host_ranges` tests). A fix
 of undefined behaviour without a switch ([ADR 0001](adr/0001-switches.md)).
 
 `tests/d3d12/d3d12_view_ranges.cpp` draws through an index view past its buffer, one at a released buffer's address
@@ -554,11 +556,12 @@ past a buffer and 4 texels past a texture. Both run on the rented M1 under Metal
 
   The tenth break guards `MULLION_D3D12_CHECK_RANGES`'s arithmetic. `host_ranges` builds
   [`mullion_ranges.hpp`](../../src/mullion/mullion_ranges.hpp) natively and checks ranges of bytes (a sum that wraps
-  past 2^64 among them), views, boxes, block-compressed extents, footprints, the `MULLION-RANGE` line and the `RANGE`
-  section.
+  past 2^64 among them), views, boxes, block-compressed extents, footprints, the bridge's Metal 4 lengths, the
+  `MULLION-RANGE` line and the `RANGE` section.
   Its controls: `tests/breaks/host_ranges.patch` computes a range's end as `offset + size`, which wraps,
-  `host_ranges.2.patch` counts one slice of a footprint whatever its depth, and `host_ranges.3.patch` computes a
-  view's end as `address + size`. The test has to fail on each.
+  `host_ranges.2.patch` counts one slice of a footprint whatever its depth, `host_ranges.3.patch` computes a view's
+  end as `address + size`, and `host_ranges.4.patch` gives the bridge's Metal 4 length from an offset as
+  `length - offset`, which wraps past the end. The test has to fail on each.
 - **Publish** (`ubuntu-24.04`, after the other jobs): packs the artifact into `mullion-swtor-<commit>.tar.xz` and
   checks that it unpacks to the same files, hash for hash. Only for a push to `swtor-on-mac` does it upload the archive
   (§ Releases). It is the only job with `contents: write`.

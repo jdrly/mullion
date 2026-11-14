@@ -4,7 +4,7 @@
 // drawn ("0 GPUVA or NULL pDesc means nothing bound", DirectX-Specs, Resource Binding; D3D11.3 8.19.2). A view inside
 // its buffer draws as before.
 // The model is d3d12_fetch: vertex i is a point on pixel i of a 15 by 15 target with the value i + 1, drawn through
-// indices last to first. Each view runs at most 24 bytes past a buffer of its own. Its control,
+// indices last to first. Each view runs at most 24 bytes past a buffer of its own memory. Its control,
 // tests/breaks/d3d12_view_ranges.patch, binds the views as given: under Metal's validation (tests/run.py --validate)
 // Metal reports the index buffers, without it the draws read the bytes behind the buffers, and the test fails either
 // way. Run it on the rented M1 only (private ticket 15)
@@ -77,12 +77,14 @@ main(int argc, char **argv) {
   CHECK(device->CreateCommandList(0, D3D12_COMMAND_LIST_TYPE_DIRECT, allocator.Get(), pso.Get(), IID_PPV_ARGS(&list)));
   CHECK(list->Close());
 
-  // the vertices and their indices, last to first, each in an upload buffer of exactly their bytes
-  const UINT vertex_bytes = count * sizeof(Vertex), index_bytes = count * sizeof(UINT);
+  // the vertices and their indices, last to first, each in an upload buffer of its own. A view's buffer ends where
+  // its memory does, and Mullion gives a buffer at least 256 bytes (BufferAllocation): the vertices' 384 bytes are
+  // exactly theirs, the indices' 128 lie in a buffer of 256, all of it theirs
+  const UINT vertex_bytes = count * sizeof(Vertex), index_bytes = count * sizeof(UINT), index_room = 256;
   auto vertices = buffer(device.Get(), D3D12_HEAP_TYPE_UPLOAD, vertex_bytes, D3D12_RESOURCE_STATE_GENERIC_READ);
-  auto indices = buffer(device.Get(), D3D12_HEAP_TYPE_UPLOAD, index_bytes, D3D12_RESOURCE_STATE_GENERIC_READ);
+  auto indices = buffer(device.Get(), D3D12_HEAP_TYPE_UPLOAD, index_room, D3D12_RESOURCE_STATE_GENERIC_READ);
   // a buffer released before the draws: its address is no live buffer's
-  auto released = buffer(device.Get(), D3D12_HEAP_TYPE_UPLOAD, index_bytes, D3D12_RESOURCE_STATE_GENERIC_READ);
+  auto released = buffer(device.Get(), D3D12_HEAP_TYPE_UPLOAD, index_room, D3D12_RESOURCE_STATE_GENERIC_READ);
   if (!expect(readback && vertices && indices && released, "buffers"))
     return verdict();
   const D3D12_GPU_VIRTUAL_ADDRESS gone = released->GetGPUVirtualAddress();
@@ -94,8 +96,8 @@ main(int argc, char **argv) {
   vertices->Unmap(0, nullptr);
   UINT *index;
   CHECK(indices->Map(0, nullptr, (void **)&index));
-  for (UINT i = 0; i < count; i++)
-    index[i] = count - 1 - i;
+  for (UINT i = 0; i < index_room / sizeof(UINT); i++)
+    index[i] = i < count ? count - 1 - i : 0;
   indices->Unmap(0, nullptr);
 
   enum class Drawn { All, First, None };
@@ -143,7 +145,7 @@ main(int argc, char **argv) {
   const D3D12_VERTEX_BUFFER_VIEW whole{vertices->GetGPUVirtualAddress(), vertex_bytes, stride},
       past_vertices{vertices->GetGPUVirtualAddress(), vertex_bytes + 2 * stride, stride};
   const D3D12_INDEX_BUFFER_VIEW all{indices->GetGPUVirtualAddress(), index_bytes, DXGI_FORMAT_R32_UINT},
-      past_indices{indices->GetGPUVirtualAddress(), index_bytes + 8, DXGI_FORMAT_R32_UINT},
+      past_indices{indices->GetGPUVirtualAddress(), index_room + 8, DXGI_FORMAT_R32_UINT},
       released_indices{gone, index_bytes, DXGI_FORMAT_R32_UINT};
   draw("both views inside their buffers: every vertex", whole, all, Drawn::All);
   draw("an index view 8 bytes past its buffer: no view, every index 0", whole, past_indices, Drawn::First);

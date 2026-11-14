@@ -1,9 +1,11 @@
-// contract: MULLION_D3D12_CHECK_RANGES's arithmetic (src/mullion/mullion_ranges.hpp). A range of bytes fits its
+// contract: MULLION_D3D12_CHECK_RANGES's arithmetic (src/mullion/mullion_ranges.hpp), and the length the bridge gives
+// Metal 4 from an offset (src/winemetal/unix/buffer_range.h). A range of bytes fits its
 // buffer only when offset and size both do, and no sum wraps to make a far range look near. A box fits a level only
 // within its extent, which a block-compressed level counts in whole blocks. A placed footprint covers every row but the
 // last one's padding. A reinterpret copy carries one source unit into one destination unit. A site writes its line once
 // and counts every time; the RANGE section gives each window's counts
 #include "../../src/mullion/mullion_ranges.hpp"
+#include "../../src/winemetal/unix/buffer_range.h"
 #include <cstdio>
 
 using namespace mullion::ranges;
@@ -61,6 +63,12 @@ main() {
   equal(said(View(0x20000, 4, false, 0)), "Address 131072 0");
   // a size whose end wraps past 2^64 from the address
   equal(said(View(0x10100, UINT64_MAX - 0xff, true, 0x10200)), "Size 18446744073709551360 256");
+
+  // the bridge's Metal 4 lengths: what a buffer has from an offset, before, at and past its end
+  check(buffer_remaining(256, 0) == 256, "a buffer's length from its start");
+  check(buffer_remaining(256, 200) == 56, "what is left from an offset inside it");
+  check(buffer_remaining(256, 256) == 0, "nothing from its end");
+  check(buffer_remaining(256, 260) == 0, "nothing past its end, not a length that wraps");
 
   // a reinterpret copy: 8 BC texels are two blocks, two texels of an uncompressed destination, and back
   check(InDestination(8, 4, 1) == 2, "8 BC texels are 2 destination texels");

@@ -3292,13 +3292,39 @@ public:
     SetRootQword(rootsig_graphics_.ptr(), rootarg_graphics_staging_, DirtyState::GraphicsRootArguments, Index, VA);
   };
 
-  // MULLION_D3D12_CHECK_RANGES: whether `size` bytes at `VA` lie in the live buffer LookupBuffer gave as `found` for
-  // VA. LookupBuffer keeps the buffer it found VA inside, and that buffer's end, in va_found_; a buffer it gives
-  // without keeping holds VA below it, past its end. It looks nothing up itself
+  // MULLION_D3D12_CHECK_RANGES: the address ranges of live buffers the view checks found, newest first, while the
+  // device's buffer_generation is the one they were found at. Numbers only: a buffer released since is never touched
+  struct HeldRange {
+    uint64_t start = 0, end = 0;
+  };
+  std::array<HeldRange, 4> view_ranges_{};
+  uint64_t view_ranges_generation_ = 0;
+
+  // MULLION_D3D12_CHECK_RANGES: whether `size` bytes at `VA` lie in the live buffer whose addresses hold VA. Looks the
+  // address up only when no range found since the last buffer was made or released holds it, so a list that binds the
+  // same few buffers takes the device's address lock once for each, not once a draw
   bool
-  ViewInRange(ranges::Site &site, D3D12_GPU_VIRTUAL_ADDRESS VA, uint64_t size, BufferAllocation *found) {
-    bool held = found && found == va_found_ && VA >= va_found_->gpuAddress() && VA < va_found_end_;
-    if (auto overrun = ranges::View(VA, size, held, held ? va_found_end_ : 0)) {
+  ViewInRange(ranges::Site &site, D3D12_GPU_VIRTUAL_ADDRESS VA, uint64_t size) {
+    if (!size)
+      return true;
+    auto generation = device_->buffer_generation.load(std::memory_order_acquire);
+    if (generation != view_ranges_generation_) {
+      view_ranges_ = {};
+      view_ranges_generation_ = generation;
+    }
+    auto held = std::find_if(view_ranges_.begin(), view_ranges_.end(), [&](auto &range) {
+      return VA >= range.start && VA < range.end;
+    });
+    if (held == view_ranges_.end()) {
+      uint64_t offset, end;
+      if (device_->LookupBufferByVA(VA, &offset, &end) && VA < end) {
+        std::move_backward(view_ranges_.begin(), view_ranges_.end() - 1, view_ranges_.end());
+        view_ranges_[0] = {VA - offset, end};
+        held = view_ranges_.begin();
+      }
+    }
+    bool found = held != view_ranges_.end();
+    if (auto overrun = ranges::View(VA, size, found, found ? held->end : 0)) {
       RangeFired(site, overrun);
       return false;
     }
@@ -3311,10 +3337,7 @@ public:
   VertexViewsInRange(UINT StartSlot, UINT Count) {
     for (unsigned Slot = StartSlot; Slot < StartSlot + Count; Slot++) {
       auto &view = vertex_buffers_[Slot];
-      if (!view.BufferLocation)
-        continue;
-      uint64_t offset;
-      if (!ViewInRange(kVertexView, view.BufferLocation, view.SizeInBytes, LookupBuffer(view.BufferLocation, &offset)))
+      if (view.BufferLocation && !ViewInRange(kVertexView, view.BufferLocation, view.SizeInBytes))
         view = {};
     }
   }
@@ -3327,8 +3350,8 @@ public:
     if (pView ? index_buffer_address && !memcmp(pView, &index_view_, sizeof(*pView)) : !index_buffer_address)
       return;
     auto index_buffer_allocation = pView ? LookupBuffer(pView->BufferLocation, &index_offset) : nullptr;
-    if (kRangesOn && index_buffer_allocation &&
-        !ViewInRange(kIndexView, pView->BufferLocation, pView->SizeInBytes, index_buffer_allocation))
+    if (kRangesOn && pView && pView->BufferLocation &&
+        !ViewInRange(kIndexView, pView->BufferLocation, pView->SizeInBytes))
       index_buffer_allocation = nullptr;
     index_view_ = index_buffer_allocation ? *pView : D3D12_INDEX_BUFFER_VIEW{};
     if (index_buffer_allocation) {

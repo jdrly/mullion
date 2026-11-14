@@ -854,6 +854,9 @@ public:
   // jdrly/mullion: what a command allocator's Reset waiting for its lists wakes on (MULLION_D3D12_RESET_WAITS): raised
   // by the queues as an allocator's last pending list completes, and by LoseDevice
   reset_wait::Wakes reset_wakes;
+  // jdrly/mullion: raised each time a buffer's addresses are registered or unregistered, after the change: an address
+  // range found before it may no longer be a live buffer's (MULLION_D3D12_CHECK_RANGES' view checks)
+  std::atomic<uint64_t> buffer_generation{0};
   // how many threadgroups of `threads` each of a compute pipeline go to the GPU at once when they wait for one
   // another: those its cores keep (an Apple GPU takes turns among the ones it does not keep, which a group that waits
   // makes take seconds), or with `kept` false those its SIMD groups run at once, the estimate behind TotalLaneCount

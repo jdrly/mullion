@@ -22,6 +22,7 @@
 #include "layer.h"
 #include "../memory_pressure.h"
 #include "texture_compression.h"
+#include "buffer_range.h"
 
 typedef int NTSTATUS;
 #define STATUS_SUCCESS 0
@@ -5812,12 +5813,11 @@ API_AVAILABLE(macos(26.0)) metal4_address(MullionMetal4Buffer *state, obj_handle
   return [(id<MTLBuffer>)buffer gpuAddress];
 }
 
-// jdrly/mullion: the bytes a buffer has from `offset`, 0 from its end on. `length - offset` wrapped to nearly 2^64 for
-// an offset past the end, and Metal 4 took that as the range's length (private ticket 20, part 2)
+// jdrly/mullion: the bytes a buffer has from `offset`, 0 from its end on (buffer_range.h). `length - offset` wrapped
+// to nearly 2^64 for an offset past the end, and Metal 4 took that as the range's length (private ticket 20, part 2)
 static uint64_t
 metal4_remaining(obj_handle_t buffer, uint64_t offset) {
-  uint64_t length = [(id<MTLBuffer>)buffer length];
-  return offset < length ? length - offset : 0;
+  return buffer_remaining([(id<MTLBuffer>)buffer length], offset);
 }
 
 static MTL4BufferRange
