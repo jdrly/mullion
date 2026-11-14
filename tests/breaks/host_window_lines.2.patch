@@ -1,17 +1,16 @@
 # what the watch said last follows only the lines written, so the line after the limit hides the window's last state
 diff --git a/src/winemetal/unix/window_lines.h b/src/winemetal/unix/window_lines.h
-index 565b234..43d0f3b 100644
+index 488d1a3..249c26c 100644
 --- a/src/winemetal/unix/window_lines.h
 +++ b/src/winemetal/unix/window_lines.h
-@@ -74,10 +74,10 @@ window_look(struct window_watch *watch, struct window_state now, uint64_t now_ns
+@@ -73,9 +73,9 @@ window_look(struct window_watch *watch, struct window_state now, uint64_t now_ns
    struct window_state was = watch->last;
    if (was.visibility == now.visibility && was.active == now.active)
      return 0;
 -  watch->last = now;
-   int dropped = window_limit_take(&watch->limit, now_ns);
-   if (dropped < 0)
+   if (!window_limit_take(&watch->limit, now_ns))
      return 0;
 +  watch->last = now;
    char tail[48] = "";
-   if (dropped)
-     snprintf(tail, sizeof tail, " [%d earlier lines suppressed]", dropped);
+   if (watch->limit.dropped)
+     snprintf(tail, sizeof tail, " [%u earlier lines suppressed]", watch->limit.dropped);

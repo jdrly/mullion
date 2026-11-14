@@ -8,7 +8,8 @@
 //     MtlPresenter: <HH:MM:SS.mmm> visibility 0x<before> -> 0x<now> visible= activeSpace= miniaturized= active= why=
 // A change of the app's activation alone is the fork's own, which the report doesn't read:
 //     mullion: window at=<HH:MM:SS.mmm> active= visibility=0x<now> why=
-// Either ends with " [<n> earlier lines suppressed]" after the limit left lines out.
+// Either ends with " [<n> earlier lines suppressed]" after the limit left lines out: the lines left out since the last
+// visibility line, so that an activation line in between doesn't take the count from the report.
 
 #include <stdbool.h>
 #include <stddef.h>
@@ -47,8 +48,8 @@ window_watch_start(void) {
   return watch;
 }
 
-// -1: leave the line out; else how many lines it left out since the last one written
-static inline int
+// false: leave the line out, and count it in `dropped`
+static inline bool
 window_limit_take(struct window_limit *limit, uint64_t now_ns) {
   if (!limit->started || now_ns - limit->start_ns >= 10000000000ull) {
     limit->started = true;
@@ -57,12 +58,10 @@ window_limit_take(struct window_limit *limit, uint64_t now_ns) {
   }
   if (limit->lines >= 30) {
     limit->dropped++;
-    return -1;
+    return false;
   }
   limit->lines++;
-  int dropped = (int)limit->dropped;
-  limit->dropped = 0;
-  return dropped;
+  return true;
 }
 
 // one look at the window, `now` its state, `at` the local time, `why` what AppKit said. writes the line into `buf`,
@@ -75,21 +74,21 @@ window_look(struct window_watch *watch, struct window_state now, uint64_t now_ns
   if (was.visibility == now.visibility && was.active == now.active)
     return 0;
   watch->last = now;
-  int dropped = window_limit_take(&watch->limit, now_ns);
-  if (dropped < 0)
+  if (!window_limit_take(&watch->limit, now_ns))
     return 0;
   char tail[48] = "";
-  if (dropped)
-    snprintf(tail, sizeof tail, " [%d earlier lines suppressed]", dropped);
+  if (watch->limit.dropped)
+    snprintf(tail, sizeof tail, " [%u earlier lines suppressed]", watch->limit.dropped);
   int length;
-  if (was.visibility != now.visibility)
+  if (was.visibility != now.visibility) {
+    watch->limit.dropped = 0;
     length = snprintf(buf, size,
                       "MtlPresenter: %s visibility 0x%x -> 0x%x visible=%d activeSpace=%d miniaturized=%d active=%d"
                       " why=%s%s\n",
                       at, (unsigned)was.visibility, (unsigned)now.visibility, (now.visibility & WINDOW_VISIBLE) != 0,
                       (now.visibility & WINDOW_ON_ACTIVE_SPACE) != 0, (now.visibility & WINDOW_MINIATURIZED) != 0,
                       now.active, why, tail);
-  else
+  } else
     length = snprintf(buf, size, "mullion: window at=%s active=%d visibility=0x%x why=%s%s\n", at, now.active,
                       (unsigned)now.visibility, why, tail);
   return length > 0 && (size_t)length < size ? length : 0;

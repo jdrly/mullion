@@ -452,9 +452,11 @@ nothing, and one that changed writes one line. Unlike d9mt, which writes its lin
 wait for a frame: they land between the `STATS` lines of the second they happened in, which is where the report puts
 them. The first look assumes `0x3` and active, as d9mt does, so a game that starts shown and active writes nothing.
 
-At most 30 lines in 10 s for the two together (the limit `MULLION-GPU-ERROR` and d9mt have). The next line says how
-many were left out, and its `before` is the window's real last state, so a line left out shows as a `before` that
-differs from the last line's `now`: the report then leaves out the seconds since.
+At most 30 lines in 10 s for the two together (the limit `MULLION-GPU-ERROR` and d9mt have). A line after the limit
+says how many lines were left out since the last visibility line. An activation line says so too, but leaves the count
+to the next visibility line, the one the report reads. Its `before` is the window's real last state. The report leaves
+out the seconds since its last visibility line when a line says lines were left out, or when its `before` differs from
+that line's `now`.
 
 Always on, with no switch: it changes no behaviour, and a session writes one to three lines for each Cmd-Tab, Space
 switch or trip to the Dock. A session without Debug Logging needs them most: the freezes come without warning. Cost:
@@ -627,7 +629,8 @@ past a buffer and 4 texels past a texture. Both run on the rented M1 under Metal
   patterns, the limit, and the fixture's lines. Its controls: `tests/breaks/host_window_lines.patch` writes an
   activation alone as d9mt's visibility line, which the report would count as a switch, and
   `host_window_lines.2.patch` updates the watch's last state only for the lines it writes, so the line after the limit
-  starts from the wrong state. The test has to fail on each.
+  starts from the wrong state, and `host_window_lines.3.patch` lets an activation line clear the count of lines left
+  out, so the visibility line after it doesn't carry it. The test has to fail on each.
 - **Publish** (`ubuntu-24.04`, after the other jobs): packs the artifact into `mullion-swtor-<commit>.tar.xz` and
   checks that it unpacks to the same files, hash for hash. Only for a push to `swtor-on-mac` does it upload the archive
   (§ Releases). It is the only job with `contents: write`.

@@ -403,9 +403,10 @@ jobs:
           [[ -z $(git status --porcelain -- src/winemetal) ]]
           [[ -z $(git status --porcelain -- src/mullion) ]]
           # the window lines: with an activation alone written as d9mt's visibility line
-          # (tests/breaks/host_window_lines.patch), or what the watch said last following only the lines it wrote
-          # (host_window_lines.2.patch), host_window_lines has to fail
-          for p in host_window_lines host_window_lines.2; do
+          # (tests/breaks/host_window_lines.patch), what the watch said last following only the lines it wrote
+          # (host_window_lines.2.patch), or an activation line clearing the count of lines left out
+          # (host_window_lines.3.patch), host_window_lines has to fail
+          for p in host_window_lines host_window_lines.2 host_window_lines.3; do
             git apply "tests/breaks/$p.patch"
             status=0
             meson test -C build host_window_lines --print-errorlogs >"$RUNNER_TEMP/$p.txt" 2>&1 || status=$?
@@ -415,6 +416,7 @@ jobs:
           done
           grep -qF "failed: an activation alone isn't a visibility line for the report" "$RUNNER_TEMP/host_window_lines.txt"
           grep -qF 'failed: the report reads the 11 left out' "$RUNNER_TEMP/host_window_lines.2.txt"
+          grep -qF 'failed: the report reads the 2 left out after an activation line' "$RUNNER_TEMP/host_window_lines.3.txt"
           [[ -z $(git status --porcelain -- src/winemetal) ]]
           # a converter change the build's codegen id doesn't follow: this build against the id of the tree with one
           # comment more in src/airconv. both DLLs and VERSION have to fail

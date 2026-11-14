@@ -103,6 +103,29 @@ main(int argc, char **argv) {
           "MtlPresenter: 20:00:10.100 visibility 0x0 -> 0x3 visible=1 activeSpace=1 miniaturized=0 active=1 why=space");
   }
 
+  // an activation line after the limit says how many it left out, and leaves the count to the next visibility line:
+  // the report reads only those, and a trip away and back that was left out ends where it began
+  {
+    auto watch = window_watch_start();
+    const uint64_t s = 1000000000ull;
+    for (unsigned i = 0; i < 30; i++)
+      Look(watch, i % 2 ? kShown : uint32_t(WINDOW_VISIBLE), true, "20:00:00.000", "occlusion", i * s / 30);
+    // the 30th left it shown; away and back, both left out
+    check(Look(watch, 0, true, "20:00:01.000", "space", s).empty() &&
+              Look(watch, kShown, true, "20:00:01.500", "space", s + s / 2).empty(),
+          "the limit leaves out the trip away and back");
+    equal(Look(watch, kShown, false, "20:00:10.000", "resign", 10 * s),
+          "mullion: window at=20:00:10.000 active=0 visibility=0x3 why=resign [2 earlier lines suppressed]");
+    auto line = Look(watch, WINDOW_VISIBLE, false, "20:00:10.100", "space", 10 * s + s / 10);
+    equal(line, "MtlPresenter: 20:00:10.100 visibility 0x3 -> 0x1 visible=1 activeSpace=0 miniaturized=0 active=0"
+                " why=space [2 earlier lines suppressed]");
+    std::smatch m;
+    check(std::regex_search(line, m, kReportSuppressed) && m[1] == "2",
+          "the report reads the 2 left out after an activation line");
+    equal(Look(watch, kShown, false, "20:00:10.200", "space", 10 * s + s / 5),
+          "MtlPresenter: 20:00:10.200 visibility 0x1 -> 0x3 visible=1 activeSpace=1 miniaturized=0 active=0 why=space");
+  }
+
   // the fixture: its window lines are a Cmd-Tab to an app on another Space and back, between STATS t=30 and t=31,
   // and t=33 and t=34
   {
