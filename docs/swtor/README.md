@@ -516,16 +516,18 @@ Metal 4's draws and argument tables took a buffer's length from an offset as `le
 of undefined behaviour without a switch ([ADR 0001](adr/0001-switches.md)).
 
 A command list keeps the buffer it last found an address in, for index buffers, `WriteBufferImmediate` and the
-copies of acceleration structures' data, and `IASetIndexBuffer` keeps the Metal buffer of the view bound last. A game
-may release a buffer while a list records, and its allocation ends at once when no queue has work; another buffer
-may then be made at its address. Both kept the old one: the next lookup read the ended allocation, and an address of
-the new buffer could find the old one's Metal buffer. Both now hold only while `ranges::buffer_generation` is the one
-they were found at, and the found buffer's addresses are kept as numbers, so a lookup reads nothing of a buffer the
-generation doesn't vouch for (private ticket 30, `FoundBuffer` in
-[`mullion_ranges.hpp`](../../src/mullion/mullion_ranges.hpp), which `host_ranges` tests). Whatever the switch: a fix
-of undefined behaviour without one ([ADR 0001](adr/0001-switches.md)). Cost: a lookup the entry holds adds one
-atomic load, a plain load on x86_64; after a buffer is made or released anywhere in the process, each list's next
-lookup takes the device's address lock once, as a lookup always did before it was kept.
+copies of acceleration structures' data, and `IASetIndexBuffer` skipped a view equal to the one bound last, keeping
+its Metal buffer. A game may release a buffer while a list records, and its allocation ends at once when no queue has
+work; another buffer may then be made at its address. Both kept the old one: the next lookup read the ended
+allocation, and an address of the new buffer could find the old one's Metal buffer. The entry now holds only while
+`ranges::buffer_generation` is the one it was found at, with the found buffer's addresses kept as numbers, so a
+lookup reads nothing of a buffer the generation doesn't vouch for (private ticket 30, `FoundBuffer` in
+[`mullion_ranges.hpp`](../../src/mullion/mullion_ranges.hpp), which `host_ranges` tests). `IASetIndexBuffer` looks
+every view up through it, the one bound already too. Whatever the switch: a fix of undefined behaviour without one
+([ADR 0001](adr/0001-switches.md)). Cost: a lookup the entry holds adds one atomic load, a plain load on x86_64;
+after a buffer is made or released anywhere in the process, each list's next lookup takes the device's address lock
+once, as a lookup always did before it was kept. A view bound again costs about a nanosecond more than the skip did,
+two with the switch on (g++ -O2 on a Ryzen server, not a Mac).
 
 `tests/d3d12/d3d12_view_ranges.cpp` draws through an index view past its buffer, one at a released buffer's address
 and a vertex view past its buffer, between draws through views inside theirs; its control,

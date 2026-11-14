@@ -225,7 +225,6 @@ class MTLD3D12GraphicsCommandListImpl : public MTLD3D12DeviceChild<MTLD3D12Graph
   WMTIndexType index_type;
   uint64_t index_offset;
   D3D12_INDEX_BUFFER_VIEW index_view_{}; // what tessellation's object stage reads indices through
-  uint64_t index_generation_ = 0;        // ranges::buffer_generation when index_buffer was found
   // the buffer the last address was found in and the addresses that find it too (LookupBufferByVA's pEnd): index
   // buffers and immediate writes mostly look up one buffer after another. a game may release a buffer while the list
   // records, and its allocation ends at once when no queue has work: the entry holds only while no buffer was made or
@@ -3331,12 +3330,8 @@ public:
   IASetIndexBuffer(const D3D12_INDEX_BUFFER_VIEW *pView) {
     if (Bundled() && Record([view = pView ? std::optional(*pView) : std::nullopt](auto *l) { l->IASetIndexBuffer(view ? &*view : nullptr); }))
       return;
-    // the view bound already: games set one per draw. its buffer still there only while no buffer was made or released
-    auto generation = ranges::buffer_generation.load(std::memory_order_acquire);
-    if (pView ? index_buffer_address && index_generation_ == generation && !memcmp(pView, &index_view_, sizeof(*pView))
-              : !index_buffer_address)
-      return;
-    index_generation_ = generation;
+    // looked up again even for the view bound already, which games set once a draw: its buffer may have been released
+    // and another made at its address. LookupBuffer's entry makes that a few compares
     auto index_buffer_allocation = pView ? LookupBuffer(pView->BufferLocation, &index_offset) : nullptr;
     if (kRangesOn && pView && pView->BufferLocation &&
         !ViewInRange(kIndexView, pView->BufferLocation, pView->SizeInBytes))
