@@ -161,10 +161,10 @@ main(int argc, char **argv) {
     return result.text.substr(at, result.text.find(')', at) - at);
   };
 
-  constexpr uint32_t uint32 = 1, float32 = 3;
+  constexpr uint32_t uint_type = 1, float_type = 3; // D3D_REGISTER_COMPONENT_UINT32, _FLOAT32
   auto pixel = [&](uint32_t declaration, uint32_t name, const char *semantic) {
-    return container({{"ISGN", signature({{semantic, 0, name, uint32, 1, 1}})},
-                      {"OSGN", signature({{"SV_Target", 0, 0, float32, 0, 15}})},
+    return container({{"ISGN", signature({{semantic, 0, name, uint_type, 1, 1}})},
+                      {"OSGN", signature({{"SV_Target", 0, 0, float_type, 0, 15}})},
                       {"SHEX", pixel_program(declaration, name)}});
   };
   write("siv.dxbc", pixel(D3D10_SB_OPCODE_DCL_INPUT_PS_SIV, D3D10_SB_NAME_VERTEX_ID, "SV_VertexID"));
