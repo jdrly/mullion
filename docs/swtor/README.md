@@ -427,7 +427,7 @@ and a size whose sum passes 2^64 run past, as they should.
 | Call | Dropped when |
 |---|---|
 | `CopyBufferRegion` | Either resource isn't a buffer, or `SrcOffset` or `DstOffset` plus `NumBytes` runs past its buffer's width, as Direct3D gave it (`GetDesc().Width`; the Metal allocation may be longer) (`what=` `srcResource`, `srcOffset`, `srcSize` or their `dst` forms) |
-| `CopyTextureRegion` | A placed footprint runs past its buffer's width (`srcFootprint`, `dstFootprint`): its offset, then every row of every slice at `RowPitch` but the last row, which needs only its texels, each of the larger size of the footprint's format and the texture's at the other end, which Metal moves. The source box runs past the source's level or footprint (`srcX`, `srcY`, `srcZ`). The region it writes from `DstX`, `DstY`, `DstZ` runs past the destination's (`dstX`, `dstY`, `dstZ`). A block-compressed level counts in whole 4-texel blocks, small mips too, and a copy between a compressed format and another carries one block into one texel or back. A copy the call drops anyway (no texture or buffer, an empty box, a format Metal lacks) isn't counted |
+| `CopyTextureRegion` | A placed footprint runs past its buffer's width (`srcFootprint`, `dstFootprint`): its offset, then every row of every slice at `RowPitch` but the last row, which needs only its texels, each of the larger size of the footprint's format and the texture's at the other end, which Metal moves (a depth-stencil texture's plane by the footprint's alone: the format's size is both planes'). The source box runs past the source's level or footprint (`srcX`, `srcY`, `srcZ`). The region it writes from `DstX`, `DstY`, `DstZ` runs past the destination's (`dstX`, `dstY`, `dstZ`). A block-compressed level counts in whole 4-texel blocks, small mips too, and a copy between a compressed format and another carries one block into one texel or back. A copy the call drops anyway (no texture or buffer, an empty box, a format Metal lacks) isn't counted |
 
 `MULLION-RANGE call=CopyBufferRegion what=srcSize given=4096 limit=256 action=dropped`: `call` the Direct3D call,
 `what` the side (`src`, `dst`) and the number, `given` the value the game gave, `limit` the most the resource takes
@@ -445,7 +445,8 @@ Cost. Off: each checked call tests one flag. On: a buffer copy compares two rang
 formats' descriptions and the subresources' extents, which the copy asks for again after it. A drop adds a relaxed
 atomic and, the first time at its check, writes one line. No lock.
 
-`tests/d3d12/d3d12_copy_ranges.cpp` runs every kind of drop above and one copy in range after each, with the switch on;
+`tests/d3d12/d3d12_copy_ranges.cpp` runs every kind of drop above and one copy in range after each, and the planes of
+two depth-stencil formats through footprints of exactly their bytes, which must not drop, with the switch on;
 its control, `tests/breaks/d3d12_copy_ranges.patch`, turns the checks off, which hands Metal copies up to 272 bytes
 past a buffer and 4 texels past a texture. Both run on the rented M1 under Metal's validation only (private ticket 15).
 

@@ -2,7 +2,7 @@
 // CopyTextureRegion whose offset, size, box, region or footprint runs past its resource is dropped whole, and the list
 // goes on: the destination keeps every byte it had, and an in-range copy after it lands. Direct3D calls such a copy
 // undefined, and its debug layer rejects it (CopyBufferRegion, CopyTextureRegion, Remarks). A texture given to
-// CopyBufferRegion is dropped too.
+// CopyBufferRegion is dropped too. A depth-stencil plane through a footprint of exactly its bytes is not.
 // Each copy reaches at most 272 bytes past a buffer or 4 texels past a texture. Its control,
 // tests/breaks/d3d12_copy_ranges.patch, hands them to Metal: under Metal's validation (tests/run.py --validate) Metal
 // reports them, without it the destination changes or the texture case crashes, and the test fails either way. Run it
@@ -176,6 +176,64 @@ main(int, char **) {
   for (UINT64 b = 0; b < upload_bytes; b++)
     if (!expect(got[b] == 0xff, "a source box past the texture: byte %llu is %#x, want 0xff", b, got[b]))
       break;
+
+  // a plane of a depth-stencil texture through footprints of exactly the bytes GetCopyableFootprints gives (every row
+  // but the last at RowPitch, and the last row's texels): in range both ways, so the plane comes back as it went in.
+  // the format's size is both planes', which no footprint of one plane holds
+  struct PlaneCase {
+    DXGI_FORMAT format;
+    UINT plane;
+    DXGI_FORMAT footprint;
+    UINT bytes;
+  };
+  for (auto c : {PlaneCase{DXGI_FORMAT_D24_UNORM_S8_UINT, 1, DXGI_FORMAT_R8_TYPELESS, 1},
+                 PlaneCase{DXGI_FORMAT_D32_FLOAT_S8X24_UINT, 1, DXGI_FORMAT_R8_TYPELESS, 1},
+                 PlaneCase{DXGI_FORMAT_D32_FLOAT_S8X24_UINT, 0, DXGI_FORMAT_R32_TYPELESS, 4}}) {
+    step("CopyTextureRegion: plane %u of format %u through a footprint of its exact bytes", c.plane, c.format);
+    D3D12_RESOURCE_DESC desc{D3D12_RESOURCE_DIMENSION_TEXTURE2D, 0, 4, 4, 1, 1, c.format, {1, 0},
+                             D3D12_TEXTURE_LAYOUT_UNKNOWN, D3D12_RESOURCE_FLAG_ALLOW_DEPTH_STENCIL};
+    ComPtr<ID3D12Resource> depth;
+    CHECK(device->CreateCommittedResource(&heap, D3D12_HEAP_FLAG_NONE, &desc, D3D12_RESOURCE_STATE_COPY_DEST, nullptr,
+                                          IID_PPV_ARGS(&depth)));
+    const UINT64 exact = 3 * pitch + 4 * c.bytes;
+    auto up = buffer(device.Get(), D3D12_HEAP_TYPE_UPLOAD, exact, D3D12_RESOURCE_STATE_GENERIC_READ);
+    auto down = buffer(device.Get(), D3D12_HEAP_TYPE_READBACK, exact, D3D12_RESOURCE_STATE_COPY_DEST);
+    if (!expect(up && down, "exact footprint buffers"))
+      return verdict();
+    // stencil values, or depth values 0 to 1 that float32 holds exactly
+    auto word = [&](UINT x, UINT y) {
+      return c.bytes == 1 ? UINT32(x + 4 * y + 1) : UINT32(0x3c000000u + (x + 4 * y) * 0x10000u);
+    };
+    UINT8 *data;
+    CHECK(up->Map(0, nullptr, (void **)&data));
+    for (UINT y = 0; y < 4; y++)
+      for (UINT x = 0; x < 4; x++) {
+        UINT32 w = word(x, y);
+        memcpy(data + y * pitch + x * c.bytes, &w, c.bytes);
+      }
+    up->Unmap(0, nullptr);
+    CHECK(forget(down.Get()));
+    D3D12_TEXTURE_COPY_LOCATION plane{depth.Get(), D3D12_TEXTURE_COPY_TYPE_SUBRESOURCE_INDEX};
+    plane.SubresourceIndex = c.plane;
+    D3D12_TEXTURE_COPY_LOCATION from{up.Get(), D3D12_TEXTURE_COPY_TYPE_PLACED_FOOTPRINT},
+        to{down.Get(), D3D12_TEXTURE_COPY_TYPE_PLACED_FOOTPRINT};
+    from.PlacedFootprint = to.PlacedFootprint = {0, {c.footprint, 4, 4, 1, UINT(pitch)}};
+    CHECK(allocator->Reset());
+    CHECK(list->Reset(allocator.Get(), nullptr));
+    list->CopyTextureRegion(&plane, 0, 0, 0, &from, nullptr);
+    transition(list.Get(), depth.Get(), D3D12_RESOURCE_STATE_COPY_DEST, D3D12_RESOURCE_STATE_COPY_SOURCE);
+    list->CopyTextureRegion(&to, 0, 0, 0, &plane, nullptr);
+    CHECK(submit(device.Get(), queue.Get(), list.Get()));
+    CHECK(down->Map(0, nullptr, (void **)&data));
+    for (UINT y = 0, wrong = 0; y < 4 && !wrong; y++)
+      for (UINT x = 0; x < 4 && !wrong; x++) {
+        UINT32 got32 = 0, want = word(x, y);
+        memcpy(&got32, data + y * pitch + x * c.bytes, c.bytes);
+        wrong = !expect(got32 == want, "plane %u of format %u: texel (%u, %u) is %#x, want %#x", c.plane, c.format, x,
+                        y, got32, want);
+      }
+    down->Unmap(0, nullptr);
+  }
 
   // a texture where CopyBufferRegion wants a buffer: dropped, and the buffer keeps its seed. Last, as without the
   // check it is a null dereference
