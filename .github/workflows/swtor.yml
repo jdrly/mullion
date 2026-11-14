@@ -422,6 +422,11 @@ jobs:
                 lines=('FAILED: every descriptor load through the resource table is clamped with the flag') ;;
               host_check_root_ranges.13)
                 lines=('FAILED: every descriptor load through the sampler table is clamped with the flag') ;;
+              # #7's fixes undone: a pixel shader's unhandled dcl_input_ps_siv or dcl_input_ps_sgv copying v1 from an
+              # argument never chosen, and a DXIL typed resource of doubles converted instead of refused
+              host_converter_fixes) lines=('FAILED: an unhandled dcl_input_ps_siv converts and adds no argument') ;;
+              host_converter_fixes.2) lines=('FAILED: an unhandled dcl_input_ps_sgv converts and adds no argument') ;;
+              host_converter_fixes.3) lines=('FAILED: a DXIL typed SRV of doubles is refused as unsupported') ;;
               *) lines=() ;;
             esac
             if ! grep -qE '^Fail: +1 *$' "$RUNNER_TEMP/$name.txt"; then
