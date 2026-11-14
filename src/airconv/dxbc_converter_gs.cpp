@@ -600,7 +600,7 @@ convert_dxbc_geometry_shader(
 
   auto binding_map = rootsig ? setup_binding_rootsig(
                                    shader_info, func_signature, module, D3D10_SB_GEOMETRY_SHADER, rootsig->bytecode,
-                                   rootsig->bytecode_length
+                                   rootsig->bytecode_length, shader_flags
                                )
                      : pHullStage
                          ? setup_binding_table2(
@@ -614,7 +614,7 @@ convert_dxbc_geometry_shader(
                         : rootsig_ds
                             ? setup_binding_rootsig(
                                   &pVertexStage->shader_info, func_signature, module, D3D11_SB_DOMAIN_SHADER,
-                                  rootsig_ds->bytecode, rootsig_ds->bytecode_length
+                                  rootsig_ds->bytecode, rootsig_ds->bytecode_length, shader_flags
                               )
                             : setup_binding_table2(&pVertexStage->shader_info, func_signature, module);
   if (pHullStage && !domain_binding)
@@ -2443,7 +2443,7 @@ convert_dxbc_vertex_for_geometry_shader(
 
   auto binding_map = rootsig ? setup_binding_rootsig(
                                    shader_info, func_signature, module, D3D10_SB_VERTEX_SHADER, rootsig->bytecode,
-                                   rootsig->bytecode_length
+                                   rootsig->bytecode_length, shader_flags
                                )
                              : setup_binding_table2(shader_info, func_signature, module);
   if (!binding_map)

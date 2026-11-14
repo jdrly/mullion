@@ -1,0 +1,12 @@
+# MULLION_D3D12_GUARD_STATIC_RANGES=1 leaves a static range's SRVs unchecked: their loads read past the view
+--- a/src/airconv/dxbc_binding_rootsig.cpp
++++ b/src/airconv/dxbc_binding_rootsig.cpp
+@@ -502,7 +502,7 @@ setup_binding_rootsig(
+         constexpr uint32_t kKeepsBoundsChecks = 0x10000;
+         bool bounded = uint32_t(range.Flags) & (D3D12_DESCRIPTOR_RANGE_FLAG_DESCRIPTORS_VOLATILE | kKeepsBoundsChecks);
+         // jdrly/mullion: MULLION_D3D12_GUARD_STATIC_RANGES=1 keeps a static range's checks too
+-        bounded = bounded || (shader_flags & SM50_SHADER_FLAG_GUARD_STATIC_RANGES);
++        bounded = bounded || (range.RangeType != D3D12_DESCRIPTOR_RANGE_TYPE_SRV && (shader_flags & SM50_SHADER_FLAG_GUARD_STATIC_RANGES));
+         auto bind = [&](RangeId id) {
+           if (bounded)
+             binding_map->Unbounded.erase({range.RangeType, id});

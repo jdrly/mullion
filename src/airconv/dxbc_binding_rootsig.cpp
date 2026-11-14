@@ -399,7 +399,7 @@ std::unique_ptr<BindingMap>
 setup_binding_rootsig(
     const ShaderInfo *shader_info, air::FunctionSignatureBuilder &func_signature, llvm::Module &module,
     microsoft::D3D10_SB_TOKENIZED_PROGRAM_TYPE shader_type, const void *bytecode, size_t bytecode_length,
-    uint32_t root_sig_slot, uint32_t static_sampler_slot, bool local
+    SM50_SHADER_FLAG shader_flags, uint32_t root_sig_slot, uint32_t static_sampler_slot, bool local
 ) {
   using namespace microsoft;
   using namespace mullion::dxbc;
@@ -501,6 +501,8 @@ setup_binding_rootsig(
         // D3D12_DESCRIPTOR_RANGE_FLAG_DESCRIPTORS_STATIC_KEEPING_BUFFER_BOUNDS_CHECKS, which the bundled header lacks
         constexpr uint32_t kKeepsBoundsChecks = 0x10000;
         bool bounded = uint32_t(range.Flags) & (D3D12_DESCRIPTOR_RANGE_FLAG_DESCRIPTORS_VOLATILE | kKeepsBoundsChecks);
+        // jdrly/mullion: MULLION_D3D12_GUARD_STATIC_RANGES=1 keeps a static range's checks too
+        bounded = bounded || (shader_flags & SM50_SHADER_FLAG_GUARD_STATIC_RANGES);
         auto bind = [&](RangeId id) {
           if (bounded)
             binding_map->Unbounded.erase({range.RangeType, id});

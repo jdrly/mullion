@@ -28,6 +28,7 @@ are set.
 | `MULLION_HITCH_MS` | `50` | With `MULLION_STATS=1`, a frame (Present to Present) this many ms long or longer gets a `HITCH` line, and its `COMPILE` line is at `warn`. Whole ms, 1 to 60000; anything else is 50. Read once, at the first Present counted | Nothing to restore: it only moves a threshold, and `MULLION_STATS` off writes no `HITCH` |
 | `MULLION_MEMSTATS` | `0` | A `DIAG MEM` line (below) at each sample of the bridge's memory sampler: `1` every 5 s, `N` from 2 to 3600 every `N` s; anything else is `0`. With it on, the game's `ID3D12Heap`s are counted as they are made and released. Read once, when `d3d12core.dll` loads. SWTOR on Mac's Debug Logging turns it on (private ticket 14) | No `DIAG MEM` line and no heap count. The sampler still runs, every 30 s, for `MULLION-MEMORY-PRESSURE` |
 | `MULLION_GPU_ERROR_DETAIL` | off (`1` turns it on) | Every Metal 3 command buffer asks Metal for each encoder's status (`MTLCommandBufferErrorOptionEncoderExecutionStatus`), and every pass's encoder gets a label, so `MULLION-GPU-ERROR` lists the encoders that didn't complete by name (below). Costs a label string a pass and Metal's per-encoder status; off until its frame time is measured on an M5 Max. `MULLION_D3D12_GPU_ERRORS` and `MULLION_TRACE_GPU=heavy` imply it. The bridge reads it too, for the status | No status asked for and no labels but upstream's: `ClearPass`, `ResolvePass`, and the profile's and the heavy pass trace's |
+| `MULLION_D3D12_GUARD_STATIC_RANGES` | off (`1` turns it on) | Shaders keep the bounds checks of buffer views reached through descriptor table ranges that root signature 1.1 calls static (no `DESCRIPTORS_VOLATILE`, no `..._KEEPING_BUFFER_BOUNDS_CHECKS`), which upstream dropped in `6e4b44d`: an index past the view reads 0 and a store or atomic there writes nothing, as through a volatile range, instead of reaching memory past the view. Constant buffers, SRVs and UAVs of such ranges; not root descriptors, which have no length to check against (private ticket 20). Read once per process, at the first device. A compile flag (`SM50_SHADER_FLAG_GUARD_STATIC_RANGES`), so the shader cache keys on it and a shader converted one way is never served to the other. Off until the GPU gate has run `d3d12_bounds_guarded` and its frame time is measured on an M5 Max | Upstream's: without the flag the converter decides which ranges are checked as upstream does |
 
 A test hook, not a switch, and only in a build with the tests (`-Denable_tests=true`): `MULLION_TEST_GPU_ERROR=<code>`
 makes the bridge read every command buffer that completes as failed with that code of `MTLCommandBufferErrorDomain`,
@@ -45,6 +46,7 @@ removed with `DXGI_ERROR_DEVICE_HUNG`. A release build doesn't have it.
 | `Mullion: env <NAME=value …>` or `none` | With the session line | The same | The same |
 | `Mullion: cache shaders= entries= sizeMiB=` | With the session line | The same | The same |
 | `Mullion: cacheOpen shaders= codegen= build= entries= sizeMiB= droppedTables= droppedShards= droppedMiB=` | When a process opens a shader cache, once per Metal version and DLL: at its first pipeline, or with `MULLION_SESSION_HEADER=1` just before the header, which opens it. Whatever the switches | `d3d12.log` (`d3d11.log` for Direct3D 11), at `info` | Me: which cache, which codegen id, and what an update dropped ([caches.md](caches.md)) |
+| `Mullion: guard staticRanges=1` | The first Direct3D 12 device made with `MULLION_D3D12_GUARD_STATIC_RANGES=1`, once per process | `d3d12.log` (Wine's output, `wine.log` in the app), at `info` | Me: the session's shaders check static ranges' buffers |
 | `Mullion: layer wait=0` | The first swap chain made with `MULLION_LAYER_WAIT=0`, once per process | `d3d12.log` (Wine's output, `wine.log` in the app), at `info` | Me: the session's presents didn't wait for the main thread |
 | `mullion: layer mainThreadWaitMs=<N> applied=no` | A change to a layer has waited 1 s, 5 s and 30 s without the main thread applying one: once at each, with either value of `MULLION_LAYER_WAIT`. `<N>`: ms since the main thread last applied a change, or was sent one with none waiting | The process's stderr (`wine.log` in the app), not `MULLION_LOG_PATH`: the bridge's watch thread writes it | Me, on a freeze: the main thread stopped answering |
 | `mullion: layer mainThreadWaitMs=<N> applied=yes` | The main thread applies a change after an `applied=no` line | The same, from the main thread | The same |
@@ -365,7 +367,7 @@ then.
   `winemetal.so` without LLVM assertion text, built for macOS 15.0 (`minos`), with an ad hoc signature that `codesign`
   verifies; and the internal Metal library (below). The job uploads `mullion-swtor-<commit>` (7 days). For a pull
   request it also runs the host tests in `tests/host` (`meson test 'host_*'`; `host_tessellator` and `host_mutate`
-  below), breaks six checks on purpose and requires each to fail, and fails on a compiler warning that
+  below), breaks seven checks on purpose and requires each to fail, and fails on a compiler warning that
   `.github/swtor/warnings-x86_64.txt` doesn't list. A push run builds, checks and uploads only: the pull request's run
   of the same tree has already passed the rest.
 
@@ -407,6 +409,15 @@ then.
   [caches.md](caches.md)) and require it in `d3d11.dll` and `d3d12core.dll`, which key the shader cache on it, and in
   `VERSION`. The sixth break is a converter change the build's id doesn't follow: the id of the checkout with one
   comment more in `src/airconv/dxbc_converter.cpp`, against this build. Both DLLs and `VERSION` have to fail.
+
+  The seventh break guards `MULLION_D3D12_GUARD_STATIC_RANGES` in the converter. `host_guard_static_ranges` builds a
+  compute shader that reads a constant buffer by a dynamic index, loads from a structured SRV, and stores and adds to
+  a structured UAV, all through one descriptor table, and has the build's native `airconv` write it as LLVM assembly
+  for that table's ranges static and volatile, with and without `-guard-static-ranges`. Static with the flag has to be
+  volatile's output byte for byte, static without it has to differ, and the flag must not change volatile's. The
+  control applies each of `tests/breaks/d3d12_bounds_guarded.patch`, `.2.patch` and
+  `host_guard_static_ranges.patch`, which leave a static range's SRVs, UAVs and constant buffers unchecked under the
+  flag, and requires the test to fail on each.
 - **Publish** (`ubuntu-24.04`, after the other jobs): packs the artifact into `mullion-swtor-<commit>.tar.xz` and
   checks that it unpacks to the same files, hash for hash. Only for a push to `swtor-on-mac` does it upload the archive
   (§ Releases). It is the only job with `contents: write`.

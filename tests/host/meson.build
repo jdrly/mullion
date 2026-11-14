@@ -16,6 +16,10 @@ test('host_cache_identity', executable('host_cache_identity',
 # (src/winemetal/unix/cache_prepare.h). linked as C++: the root meson.build gives native links their -arch for C++ only
 test('host_cache_prepare', executable('host_cache_prepare', 'cache_prepare.c', link_args : ['-lsqlite3'],
                                       link_language : 'cpp', native : true))
+# jdrly/mullion: MULLION_D3D12_GUARD_STATIC_RANGES in the native converter's output, static ranges against volatile
+test('host_guard_static_ranges', executable('host_guard_static_ranges', 'guard_static_ranges.cpp',
+                                            override_options : ['cpp_std=c++20'], native : true),
+     args : [airconv_cli_darwin], timeout : 120)
 # the converter's codegen id (tools/codegen_id.py)
 test('host_codegen_id', find_program('python3', native : true),
      args : files('codegen_id.py') + [meson.project_source_root() / 'tools/codegen_id.py'])

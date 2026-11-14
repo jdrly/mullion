@@ -1,0 +1,12 @@
+# the device reads MULLION_D3D12_GUARD_STATIC_RANGES=1 and passes the converter nothing
+--- a/src/d3d12/d3d12_device.cpp
++++ b/src/d3d12/d3d12_device.cpp
+@@ -60,7 +60,7 @@ GuardStaticRangesFlag() {
+       Logger::info("Mullion: guard staticRanges=1");
+     return on;
+   }();
+-  return guard ? SM50_SHADER_FLAG_GUARD_STATIC_RANGES : SM50_SHADER_FLAG{};
++  return SM50_SHADER_FLAG{};
+ }
+ 
+ // Copyright (c) Microsoft Corporation. Licensed under the MIT License.

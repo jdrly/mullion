@@ -848,7 +848,7 @@ llvm::Error convert_dxbc_pixel_shader(
 
   auto binding_map = rootsig ? setup_binding_rootsig(
                                    shader_info, func_signature, module, D3D10_SB_PIXEL_SHADER, rootsig->bytecode,
-                                   rootsig->bytecode_length
+                                   rootsig->bytecode_length, shader_flags
                                )
                              : setup_binding_table2(shader_info, func_signature, module);
   if (!binding_map)
@@ -1251,7 +1251,7 @@ llvm::Error convert_dxbc_compute_shader(
 
   auto binding_map = rootsig ? setup_binding_rootsig(
                                    shader_info, func_signature, module, D3D11_SB_COMPUTE_SHADER, rootsig->bytecode,
-                                   rootsig->bytecode_length
+                                   rootsig->bytecode_length, shader_flags
                                )
                              : setup_binding_table2(shader_info, func_signature, module);
   if (!binding_map)
@@ -1401,7 +1401,7 @@ llvm::Error convert_dxbc_vertex_shader(
 
   auto binding_map = rootsig ? setup_binding_rootsig(
                                    shader_info, func_signature, module, D3D10_SB_VERTEX_SHADER, rootsig->bytecode,
-                                   rootsig->bytecode_length
+                                   rootsig->bytecode_length, shader_flags
                                )
                              : setup_binding_table2(shader_info, func_signature, module);
   if (!binding_map)
