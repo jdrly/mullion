@@ -87,10 +87,12 @@ applied_one(void) {
 uint64_t
 layer_take_main_wait_max_ms(void) {
   uint64_t ns = atomic_exchange(&wait_max_ns, 0);
-  // a change still waiting counts with its wait so far: once the main thread stops, it applies none
-  if (atomic_load(&applied) != atomic_load(&sent)) {
-    uint64_t now = now_ns(), since = atomic_load(&since_ns);
-    if (now > since && now - since > ns)
+  // a change still waiting counts with its wait so far: once the main thread stops, it applies none. not when the main
+  // thread applied one meanwhile: `since` and `now` could then span the time it was idle
+  uint64_t done = atomic_load(&applied);
+  if (done != atomic_load(&sent)) {
+    uint64_t since = atomic_load(&since_ns), now = now_ns();
+    if (atomic_load(&applied) == done && now > since && now - since > ns)
       ns = now - since;
   }
   return ns / NSEC_PER_MSEC;
