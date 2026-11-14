@@ -1,0 +1,12 @@
+# the buffer a command list found outlives a buffer made or released: the generation is never compared
+--- a/src/mullion/mullion_ranges.hpp
++++ b/src/mullion/mullion_ranges.hpp
+@@ -157,7 +157,7 @@
+   // before looking an address up, as for HeldRanges
+   Buffer *
+   at(uint64_t generation, uint64_t address, uint64_t &offset) const {
+-    if (!buffer_ || generation != generation_ || address < start_ || address >= end_)
++    if (!buffer_ || address < start_ || address >= end_)
+       return nullptr;
+     offset = address - start_;
+     return buffer_;

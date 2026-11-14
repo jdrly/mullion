@@ -26,6 +26,7 @@
 #include <algorithm>
 #include <array>
 #include <atomic>
+#include <cstddef>
 #include <cstdint>
 #include <string>
 
@@ -141,6 +142,39 @@ private:
   std::array<Range, 4> ranges_{};
   const void *owner_ = nullptr;
   uint64_t generation_ = 0;
+};
+
+// the buffer a command list last found an address in, with the addresses that find it too, kept while
+// buffer_generation is the one it was found at (private ticket 30; not behind MULLION_D3D12_CHECK_RANGES). A buffer
+// released or made forgets it: the one it names may be gone, and another may have its addresses. Its addresses are
+// numbers, so a lookup reads nothing of the buffer before the generation says it is still there. Not thread-safe:
+// each command list has its own
+template <typename Buffer> class FoundBuffer {
+public:
+  FoundBuffer(std::nullptr_t = nullptr) {}
+
+  // the buffer kept for `address`, with the address's offset in it, or nullptr when none is. Read the generation
+  // before looking an address up, as for HeldRanges
+  Buffer *
+  at(uint64_t generation, uint64_t address, uint64_t &offset) const {
+    if (!buffer_ || generation != generation_ || address < start_ || address >= end_)
+      return nullptr;
+    offset = address - start_;
+    return buffer_;
+  }
+
+  // `buffer` holds [start, end), found at `generation`
+  void
+  keep(Buffer *buffer, uint64_t generation, uint64_t start, uint64_t end) {
+    buffer_ = buffer;
+    generation_ = generation;
+    start_ = start;
+    end_ = end;
+  }
+
+private:
+  Buffer *buffer_ = nullptr;
+  uint64_t generation_ = 0, start_ = 0, end_ = 0;
 };
 
 // the texels a copy of `texels` source texels covers in the destination: a copy between a block-compressed format and

@@ -515,6 +515,18 @@ Metal 4's draws and argument tables took a buffer's length from an offset as `le
 ([`buffer_range.h`](../../src/winemetal/unix/buffer_range.h), which `host_ranges` tests). A fix
 of undefined behaviour without a switch ([ADR 0001](adr/0001-switches.md)).
 
+A command list keeps the buffer it last found an address in, for index buffers, `WriteBufferImmediate` and the
+copies of acceleration structures' data, and `IASetIndexBuffer` keeps the Metal buffer of the view bound last. A game
+may release a buffer while a list records, and its allocation ends at once when no queue has work; another buffer
+may then be made at its address. Both kept the old one: the next lookup read the ended allocation, and an address of
+the new buffer could find the old one's Metal buffer. Both now hold only while `ranges::buffer_generation` is the one
+they were found at, and the found buffer's addresses are kept as numbers, so a lookup reads nothing of a buffer the
+generation doesn't vouch for (private ticket 30, `FoundBuffer` in
+[`mullion_ranges.hpp`](../../src/mullion/mullion_ranges.hpp), which `host_ranges` tests). Whatever the switch: a fix
+of undefined behaviour without one ([ADR 0001](adr/0001-switches.md)). Cost: a lookup the entry holds adds one
+atomic load, a plain load on x86_64; after a buffer is made or released anywhere in the process, each list's next
+lookup takes the device's address lock once, as a lookup always did before it was kept.
+
 `tests/d3d12/d3d12_view_ranges.cpp` draws through an index view past its buffer, one at a released buffer's address
 and a vertex view past its buffer, between draws through views inside theirs; its control,
 `tests/breaks/d3d12_view_ranges.patch`, binds them as given, up to 24 bytes past a buffer or at the released address.
@@ -615,14 +627,15 @@ past a buffer and 4 texels past a texture. Both run on the rented M1 under Metal
 
   The tenth break guards `MULLION_D3D12_CHECK_RANGES`'s arithmetic. `host_ranges` builds
   [`mullion_ranges.hpp`](../../src/mullion/mullion_ranges.hpp) natively and checks ranges of bytes (a sum that wraps
-  past 2^64 among them), views and the address ranges they keep, boxes, block-compressed extents, footprints, the
-  bridge's Metal 4 lengths, the
+  past 2^64 among them), views and the address ranges they keep, the buffer a command list last found an address in,
+  boxes, block-compressed extents, footprints, the bridge's Metal 4 lengths, the
   `MULLION-RANGE` line and the `RANGE` section.
   Its controls: `tests/breaks/host_ranges.patch` computes a range's end as `offset + size`, which wraps,
   `host_ranges.2.patch` counts one slice of a footprint whatever its depth, `host_ranges.3.patch` computes a view's
   end as `address + size`, and `host_ranges.4.patch` gives the bridge's Metal 4 length from an offset as
-  `length - offset`, which wraps past the end, and `host_ranges.5.patch` keeps found address ranges after a buffer is
-  made or released. The test has to fail on each.
+  `length - offset`, which wraps past the end, `host_ranges.5.patch` keeps found address ranges after a buffer is
+  made or released, and `host_ranges.8.patch` keeps a command list's found buffer after one is. The test has to fail
+  on each.
 
   The eleventh break guards the window lines. `host_window_lines` builds
   [`window_lines.h`](../../src/winemetal/unix/window_lines.h) natively and checks the two lines against the report's
