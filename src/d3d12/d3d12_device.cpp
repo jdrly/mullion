@@ -2573,6 +2573,16 @@ public:
           if (plane)
             PopulateWMTTextureInfo(this, texture_info, *desc, plane);
           auto size_and_align = GetMTLDevice().heapTextureSizeAndAlign(texture_info);
+          // jdrly/mullion: a texture that becomes a resolve target when a multisampled one is made before it is
+          // placed (TextureUncompressed) has room for either descriptor
+          if (textures_.msaaUncompressed() && !texture_info.uncompressed && texture_info.sample_count == 1 &&
+              desc->Dimension == D3D12_RESOURCE_DIMENSION_TEXTURE2D) {
+            WMTTextureInfo uncompressed = texture_info;
+            uncompressed.uncompressed = 1;
+            auto other = GetMTLDevice().heapTextureSizeAndAlign(uncompressed);
+            size_and_align.align = std::max(size_and_align.align, other.align);
+            size_and_align.size = std::max(size_and_align.size, other.size);
+          }
           resource_info.SizeInBytes = align(resource_info.SizeInBytes, size_and_align.align) + size_and_align.size;
           resource_info.Alignment = std::max<UINT64>(resource_info.Alignment, size_and_align.align);
         }
@@ -2908,7 +2918,7 @@ public:
   SparseTailHolds(const WMTTextureInfo &Info, DXGI_FORMAT Format, std::pair<uint64_t, uint64_t> &Tail) final {
     std::array<uint64_t, 7> key{uint64_t(Info.type), uint64_t(Info.pixel_format), Info.width, Info.height,
                                 uint64_t(Info.depth) << 32 | Info.array_length, Info.mipmap_level_count,
-                                uint64_t(Info.placement_sparse_page_size)};
+                                uint64_t(Info.placement_sparse_page_size) | uint64_t(Info.uncompressed) << 32};
     std::unique_lock<mullion::mutex> lock(sparse_tails_lock_);
     if (auto found = sparse_tails_.find(key); found != sparse_tails_.end()) {
       Tail = found->second.second;

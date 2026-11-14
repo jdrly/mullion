@@ -404,12 +404,14 @@ MTLPixelFormat to_metal_pixel_format(enum WMTPixelFormat format) {
 }
 
 // jdrly/mullion: MULLION_TEX_NO_COMPRESSION=1, read once per process: no texture the bridge makes, or sizes for a
-// heap, has Metal's lossless compression (texture_compression.h)
+// heap, has Metal's lossless compression (texture_compression.h). said once, here, so a Direct3D 11 process says it too
 static bool texture_compression_off;
 
 __attribute__((constructor)) static void
 init_texture_compression(void) {
   texture_compression_off = texture_compression_off_by_switch();
+  if (texture_compression_off)
+    fprintf(stderr, "mullion: textures compression=off\n");
 }
 
 void

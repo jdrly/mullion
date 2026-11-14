@@ -29,5 +29,6 @@ resolve writes, which then loses compression for nothing. d9mt resolves into an 
 Direct3D 12 command list can't do without a texture of its own per resolve. The `Mullion: texture uncompressed` lines
 say which rules acted: an `msaa` line without a `resolve` line means this game's target was missed.
 
-A texture placed in a heap gets its size from Metal with the same descriptor, so `GetResourceAllocationInfo` and the
-placed texture agree, except where a multisampled texture of the target's shape is made between the two calls.
+A texture placed in a heap gets its size from Metal with the same descriptor. Because a multisampled texture made
+between `GetResourceAllocationInfo` and the placement can turn a texture into a resolve target, the first gives a
+single-sampled 2D texture room for both descriptors while the rule is on.
