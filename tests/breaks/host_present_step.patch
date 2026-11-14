@@ -1,0 +1,16 @@
+# the queue's test before review: a gated frame without a drawable goes on to Metal's present
+diff --git a/src/mullion/mullion_present_step.hpp b/src/mullion/mullion_present_step.hpp
+index 7510bb1..abf3056 100644
+--- a/src/mullion/mullion_present_step.hpp
++++ b/src/mullion/mullion_present_step.hpp
+@@ -18,8 +18,8 @@ enum class PresentStep {
+ // `drawable`: the presenter gave one; `gated`: the gate kept the frame from one; `after`: the minimum duration, s
+ constexpr PresentStep
+ PresentStepOf(bool drawable, bool gated, double after) {
+-  if (!drawable)
+-    return gated ? PresentStep::Nothing : PresentStep::Window;
++  if (!drawable && !gated)
++    return PresentStep::Window;
+   return after > 0 ? PresentStep::DrawableAfter : PresentStep::Drawable;
+ }
+ 

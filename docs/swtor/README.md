@@ -524,8 +524,9 @@ Space), or `0x4` (in the Dock); and 0 when it is shown. The bridge's `nextDrawab
 compares it with its own layer:
 
 - the same layer: no `-nextDrawable` call, no drawable. The presenter draws the frame to its fallback target, as it
-  does when a drawable times out, and presents nothing. The frame's command buffer, and every `Signal` after the
-  `Present`, commit as usual. No GDI frame is queued. `Present` returns `S_OK`;
+  does when a drawable times out, and presents nothing: the D3D12 queue asks Metal for no present and queues no GDI
+  frame ([`mullion_present_step.hpp`](../../src/mullion/mullion_present_step.hpp)). The frame's command buffer, and
+  every `Signal` after the `Present`, commit as usual. `Present` returns `S_OK`;
 - another layer, or none watched (a second swap chain's window, one not watched yet, one released): the call as
   before. The gate fails open.
 
@@ -833,6 +834,9 @@ past a buffer and 4 texels past a texture. Both run on the rented M1 under Metal
   back at once; a call again once shown; with it off, a call every time; another layer's call while the watched window
   is hidden, and a call once the view is unwatched (the gate fails open); and the closed and open lines with the count
   skipped. Its break, `tests/breaks/host_present_gate.patch`, makes the gate ignore the window's state.
+  `host_present_step` checks what the D3D12 queue does with a frame: a drawable presented at once or after its minimum
+  duration, a missing one sent to GDI, and a gated one neither, with and without a minimum duration. Its break,
+  `tests/breaks/host_present_step.patch`, sends a gated frame on to Metal's present with no drawable.
 
   The root views' checks in the converter: `host_check_root_ranges` has the native `airconv`
   convert `host_guard_static_ranges`' compute shader for root signatures that bind its constant buffer, its SRV or its

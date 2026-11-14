@@ -419,6 +419,10 @@ jobs:
               host_hitch.2) lines=("failed: drawableMs is the bridge's 1149.3 ms in nextDrawable, not the encoding's") ;;
               # MULLION_PRESENT_GATE ignoring the window's state: a hidden window's present still calls nextDrawable
               host_present_gate) lines=('failed: !p.called && p.gated && p.ms < 50') ;;
+              # and the queue sending a gated frame on to Metal's present with no drawable, with and without a minimum
+              # duration
+              host_present_step) lines=('failed: a gated frame presents nothing, after 0'
+                                        'failed: a gated frame presents nothing, after > 0') ;;
               # SM50_SHADER_FLAG_CHECK_ROOT_RANGES leaving a root CBV, SRV or UAV unchecked, at that view; and a failed
               # check's load reading a root SRV's start instead of the lock table, at the trace of the loads
               host_check_root_ranges) lines=('FAILED: a root CBV is checked with the flag') ;;
