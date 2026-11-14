@@ -33,6 +33,7 @@
 #include "mullion_diag.hpp"
 #include "mullion_command_constants.hpp"
 #include "mullion_gpu_error.hpp"
+#include "mullion_present_step.hpp"
 #include "util_switch.hpp"
 #include <atomic>
 #include <charconv>
@@ -3002,13 +3003,20 @@ public:
       scope.inflight->physical[WMTMetal4Blit] += present_encoders - 1;
     }
 
-    // a frame the gate skipped has no GDI frame either: its window has a layer
-    if (!drawable && !gated)
+    switch (PresentStepOf(!!drawable, gated, after)) {
+    case PresentStep::Window:
       scope.inflight->completed = [presenter = Rc(presenter), after] { presenter->drawToWindow(after); };
-    else if (after > 0)
+      break;
+    // a frame the gate kept from a drawable: no present, and no GDI frame, as its window has a layer
+    case PresentStep::Nothing:
+      break;
+    case PresentStep::DrawableAfter:
       cmdbuf.presentDrawableAfterMinimumDuration(drawable, after);
-    else
+      break;
+    case PresentStep::Drawable:
       cmdbuf.presentDrawable(drawable);
+      break;
+    }
     if (!dump_frames.empty()) {
       DumpFrame(backbuffer, *scope.inflight, id, number);
       scope.inflight->settles = true;

@@ -65,6 +65,9 @@ test('host_present_gate', executable('host_present_gate', ['present_gate.c', '..
                                                   '-framework', 'QuartzCore', '-framework', 'Metal']
                                                  + (mullion_crossbuild ? ['-arch', native_compiler_arch] : []),
                                      native : true), suite : 'host')
+# jdrly/mullion: what a Direct3D 12 present does with its frame, a gated one among them (src/mullion/mullion_present_step.hpp)
+test('host_present_step', executable('host_present_step', 'present_step.cpp', override_options : ['cpp_std=c++20'],
+                                     native : true), suite : 'host')
 # jdrly/mullion: the bridge's texture descriptor with and without Metal's lossless compression
 # (src/winemetal/unix/texture_compression.h), and a texture made each way where the machine has a Metal device
 test('host_texture_compression', executable('host_texture_compression', 'texture_compression.c',
