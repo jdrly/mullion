@@ -1,0 +1,10 @@
+# control for private ticket 28: a break no line of swtor.yml names, which host_ranges does not notice
+diff --git a/src/mullion/mullion_ranges.hpp b/src/mullion/mullion_ranges.hpp
+index 69e7d0c..ab8d7bf 100644
+--- a/src/mullion/mullion_ranges.hpp
++++ b/src/mullion/mullion_ranges.hpp
+@@ -186,3 +186,4 @@ struct Site {
+ };
+ 
+ } // namespace mullion::ranges
++// control: changes nothing host_ranges sees
