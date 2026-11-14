@@ -1,7 +1,8 @@
 // the bridge's layer setters (src/winemetal/unix/layer.c) with the main thread held: without waiting (MULLION_LAYER_WAIT=0)
 // a present's call returns at once and the main thread sets the layer later, in the order asked; with it (=1) the call
-// returns only once the main thread has set it. either way the bridge says when the main thread stops answering. a
-// layer without a device, no window and no GPU
+// returns only once the main thread has set it. either way the bridge says when the main thread stops answering, and
+// MULLION_STATS' mainWaitMaxMs takes the longest wait, the one still waiting included. a layer without a device, no
+// window and no GPU
 #include <stdatomic.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -70,6 +71,8 @@ shows(CAMetalLayer *layer, double width, double height, CFStringRef colorspace) 
 static void
 change(CAMetalLayer *layer, bool wait, double width, double height, CFStringRef colorspace) {
   off_t from = lseek(STDERR_FILENO, 0, SEEK_CUR);
+  // what the changes before left
+  layer_take_main_wait_max_ms();
   struct WMTLayerProps props = props_of(layer, width, height);
   // how long the calls took, -1 until they return
   static _Atomic int64_t took;
@@ -95,6 +98,10 @@ change(CAMetalLayer *layer, bool wait, double width, double height, CFStringRef 
   }
   // written once 1 s has passed
   CHECK(strstr(logged(from), " applied=no\n"));
+  // the change still waiting counts, with its wait so far
+  uint64_t waiting = layer_take_main_wait_max_ms();
+  printf("wait=%d: mainWaitMaxMs=%llu with the change still waiting\n", wait, (unsigned long long)waiting);
+  CHECK(waiting >= 1000 && waiting < 10000);
   CHECK(run_main(^bool {
     return atomic_load(&took) >= 0 && shows(layer, width, height, colorspace);
   }));
@@ -102,6 +109,12 @@ change(CAMetalLayer *layer, bool wait, double width, double height, CFStringRef 
   CHECK(run_main(^bool {
     return strstr(logged(from), " applied=yes\n") != NULL;
   }));
+  // the change applied: its whole wait, once. the next call starts from 0
+  uint64_t applied = layer_take_main_wait_max_ms(), after = layer_take_main_wait_max_ms();
+  printf("wait=%d: mainWaitMaxMs=%llu once applied, then %llu\n", wait, (unsigned long long)applied,
+         (unsigned long long)after);
+  CHECK(applied >= waiting && applied < 10000);
+  CHECK(after == 0);
   printf("wait=%d: the layer is %gx%g once the main thread runs\n%s", wait, width, height, logged(from));
 }
 

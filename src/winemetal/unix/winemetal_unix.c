@@ -5302,6 +5302,13 @@ _WMTMemorySampler(void *obj) {
 }
 
 static NTSTATUS
+_WMTMainThreadWaitMax(void *obj) {
+  struct unixcall_main_thread_wait_max *params = obj;
+  params->ret = layer_take_main_wait_max_ms();
+  return STATUS_SUCCESS;
+}
+
+static NTSTATUS
 _WMTTraceWrite(void *obj) {
   @autoreleasepool {
     struct unixcall_wmttrace_write *params = obj;
@@ -7659,6 +7666,7 @@ const void *__wine_unix_call_funcs[] = {
     &_WMTGetGPUError,
     &_WMTCachePrepare,
     &_WMTMemorySampler,
+    &_WMTMainThreadWaitMax,
 };
 
 #ifndef MULLION_NATIVE
@@ -7880,6 +7888,7 @@ const void *__wine_unix_call_wow64_funcs[] = {
     &_WMTGetGPUError,
     &_WMTCachePrepare,
     &_WMTMemorySampler,
+    &_WMTMainThreadWaitMax,
 };
 _Static_assert(sizeof(__wine_unix_call_wow64_funcs) / sizeof(__wine_unix_call_wow64_funcs[0]) == WMTUnixCallCount,
                "32-bit bridge call count");

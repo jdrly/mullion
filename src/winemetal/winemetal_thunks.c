@@ -2140,6 +2140,13 @@ WMTMemorySampler(struct WMTMemorySample *sample, uint32_t seconds) {
   UNIX_CALL(WMTUnixMemorySampler, &params);
 }
 
+WINEMETAL_API uint64_t
+WMTMainThreadWaitMax(void) {
+  struct unixcall_main_thread_wait_max params = {.ret = WMTMainThreadWaitUnknown};
+  UNIX_CALL(WMTUnixMainThreadWaitMax, &params);
+  return params.ret;
+}
+
 WINEMETAL_API void
 MTLCommandBuffer_pushDebugGroup(obj_handle_t cmdbuf, obj_handle_t name) {
   struct unixcall_generic_obj_obj_noret params;

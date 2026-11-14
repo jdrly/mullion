@@ -123,6 +123,7 @@ public:
 // by default; SWTOR on Mac's DX12 dev build turns it on. Read once: off, a Present pays one load and one branch
 static sw::Switch<bool> kStats{"MULLION_STATS", false, sw::exactlyOne};
 const bool stats::on = kStats();
+static_assert(stats::kNoAnswer == WMTMainThreadWaitUnknown);
 
 // MULLION_HITCH_MS: with MULLION_STATS=1, a frame this long or longer has a HITCH line. Whole ms, more than 0; read once
 static unsigned
@@ -351,7 +352,7 @@ public:
       return;
     GetLocalTime(&local);
     std::string text;
-    for (auto &line : window.Take(now, totals, device_->GetMTLDevice().currentAllocatedSize(),
+    for (auto &line : window.Take(now, totals, device_->GetMTLDevice().currentAllocatedSize(), WMTMainThreadWaitMax(),
                                   {local.wHour, local.wMinute, local.wSecond, local.wMilliseconds}))
       text += (text.empty() ? "" : "\n") + line;
     // one message: its lines stay together

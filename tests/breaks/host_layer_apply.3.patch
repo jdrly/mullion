@@ -1,0 +1,12 @@
+# mainWaitMaxMs is not reset: each call returns the longest wait since the process started
+--- a/src/winemetal/unix/layer.c
++++ b/src/winemetal/unix/layer.c
+@@ -86,7 +86,7 @@
+ 
+ uint64_t
+ layer_take_main_wait_max_ms(void) {
+-  uint64_t ns = atomic_exchange(&wait_max_ns, 0);
++  uint64_t ns = atomic_load(&wait_max_ns);
+   // a change still waiting counts with its wait so far: once the main thread stops, it applies none. not when the main
+   // thread applied one meanwhile: `since` and `now` could then span the time it was idle
+   uint64_t done = atomic_load(&applied);

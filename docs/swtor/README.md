@@ -24,7 +24,7 @@ are set.
 |---|---|---|---|
 | `MULLION_LAYER_WAIT` | `1` | `1`: a present that changes its layer (size, pixel format, scale, colour space) waits for the main thread to set the change, as upstream does. `0`: it goes on, the main thread sets the change later in the order asked (`src/winemetal/unix/layer.c`), and the present draws to the size of the drawable it got. Read once per swap chain. | `1` is upstream's behaviour |
 | `MULLION_SESSION_HEADER` | off (`1` turns it on) | Writes the session header (below) when the first Direct3D 12 device is created, with one read-only bridge call for what the Windows side can't read. Off until the Mac run shows the header right on an M1 and an M5 Max; SWTOR on Mac's DX12 dev build turns it on | No header and no bridge call for it |
-| `MULLION_STATS` | off (`1` turns it on) | Writes a `STATS` line (below) each second of presenting, and counts what it reports. Read once, when `d3d12core.dll` loads. SWTOR on Mac's DX12 dev build turns it on | No line, and nothing counted: each place that counts tests one flag (below) |
+| `MULLION_STATS` | off (`1` turns it on) | Writes a `STATS` line (below) each second of presenting, and counts what it reports. Read once, when `d3d12core.dll` loads. SWTOR on Mac's DX12 dev build turns it on | No line, and nothing counted: each place that counts tests one flag (below). The bridge still keeps `mainWaitMaxMs`' longest wait, one compare-and-swap for each layer change the main thread applies, which nothing reads |
 | `MULLION_HITCH_MS` | `50` | With `MULLION_STATS=1`, a frame (Present to Present) this many ms long or longer gets a `HITCH` line, and its `COMPILE` line is at `warn`. Whole ms, 1 to 60000; anything else is 50. Read once, at the first Present counted | Nothing to restore: it only moves a threshold, and `MULLION_STATS` off writes no `HITCH` |
 | `MULLION_MEMSTATS` | `0` | A `DIAG MEM` line (below) at each sample of the bridge's memory sampler: `1` every 5 s, `N` from 2 to 3600 every `N` s; anything else is `0`. With it on, the game's `ID3D12Heap`s are counted as they are made and released. Read once, when `d3d12core.dll` loads. SWTOR on Mac's Debug Logging turns it on (private ticket 14) | No `DIAG MEM` line and no heap count. The sampler still runs, every 30 s, for `MULLION-MEMORY-PRESSURE` |
 | `MULLION_GPU_ERROR_DETAIL` | off (`1` turns it on) | Every Metal 3 command buffer asks Metal for each encoder's status (`MTLCommandBufferErrorOptionEncoderExecutionStatus`), and every pass's encoder gets a label, so `MULLION-GPU-ERROR` lists the encoders that didn't complete by name (below). Costs a label string a pass and Metal's per-encoder status; off until its frame time is measured on an M5 Max. `MULLION_D3D12_GPU_ERRORS` and `MULLION_TRACE_GPU=heavy` imply it. The bridge reads it too, for the status | No status asked for and no labels but upstream's: `ClearPass`, `ResolvePass`, and the profile's and the heavy pass trace's |
@@ -58,7 +58,7 @@ removed with `DXGI_ERROR_DEVICE_HUNG`. A release build doesn't have it.
 | `Mullion: layer wait=0` | The first swap chain made with `MULLION_LAYER_WAIT=0`, once per process | `d3d12.log` (Wine's output, `wine.log` in the app), at `info` | Me: the session's presents didn't wait for the main thread |
 | `mullion: layer mainThreadWaitMs=<N> applied=no` | A change to a layer has waited 1 s, 5 s and 30 s without the main thread applying one: once at each, with either value of `MULLION_LAYER_WAIT`. `<N>`: ms since the main thread last applied a change, or was sent one with none waiting | The process's stderr (`wine.log` in the app), not `MULLION_LOG_PATH`: the bridge's watch thread writes it | Me, on a freeze: the main thread stopped answering |
 | `mullion: layer mainThreadWaitMs=<N> applied=yes` | The main thread applies a change after an `applied=no` line | The same, from the main thread | The same |
-| `STATS t= fps= ms=avg/p99/max slow33= slow50= \| cb= rp= cp= draws= \| sh= pso= wait=n/ms cache=hits/misses \| allocMiB= \| at=` | With `MULLION_STATS=1`, at the Present that ends each second of presenting; none for a second without a Present | `d3d12.log` (`wine.log`), at `warn` | The app's session report, which reads d9mt's line of that name; me |
+| `STATS t= fps= ms=avg/p99/max slow33= slow50= \| cb= rp= cp= draws= \| sh= pso= wait=n/ms cache=hits/misses \| allocMiB= \| mainWaitMaxMs= \| at=` | With `MULLION_STATS=1`, at the Present that ends each second of presenting; none for a second without a Present | `d3d12.log` (`wine.log`), at `warn` | The app's session report, which reads d9mt's line of that name; me |
 | `<NAME> k=v …` | Right after `STATS`, one line for each registered section that has something to say | The same | The tickets that register one |
 | `CACHE rejected=` | The `STATS` section of a window in which Metal refused stored shaders, each then deleted from the cache and converted again | The same | Me: a damaged cache, or one a macOS update made stale |
 | `RESETWAIT waits= ms= longestMs=` | The `STATS` section of a window in which a command allocator's `Reset` waited for its lists (`MULLION_D3D12_RESET_WAITS=1`): the waits, their total ms and the longest | The same | Me: how often the game resets an allocator in flight, and what the waits cost |
@@ -190,6 +190,7 @@ rows from them.
 | `wait` | Draws and dispatches that waited for their pipeline to be made, and the total ms they waited |
 | `cache` | Shader cache lookups that found the shader / that didn't (and converted it). Shaders reused in the process aren't lookups |
 | `allocMiB` | Metal's `currentAllocatedSize` at the line, in MiB |
+| `mainWaitMaxMs` | The longest wait of a layer change for the main thread in the window, in whole ms, a change still waiting counted with its wait so far, as the `mainThreadWaitMs` lines count it: from the change's send, or from the main thread's last applied change when another was ahead of it. 0 when no change waited (a present changes its layer only when its size, format or colour space changes). The bridge keeps the maximum in `src/winemetal/unix/layer.c` and the line takes it once a second with the bridge's call 217 from 0 (`WMTMainThreadWaitMax`), which only reads it and starts it again from 0. `n/a` when the bridge didn't answer. With either value of `MULLION_LAYER_WAIT`; with `1` a present that waits doesn't write its line until the main thread answers (private ticket 26) |
 | `at` | The local time of the line, `HH:MM:SS.mmm` |
 
 The names up to `slow50`, and `sh`, `pso`, `wait` and `allocMiB`, are the report's and are never renamed. A new group
@@ -501,9 +502,10 @@ past a buffer and 4 texels past a texture. Both run on the rented M1 under Metal
   `d3d12core.dll`'s internal library tagged 2.9 with its first function AIR 2.9. Each of the seven has to fail.
 
   The fifth break guards `host_layer_apply`, which runs the bridge's layer setters (`src/winemetal/unix/layer.c`) on
-  a `CAMetalLayer` without a device while the test's main thread is held for 2 s without its run loop. Its two patches
-  in `tests/breaks/` put `dispatch_sync` back on `MULLION_LAYER_WAIT=0`'s path, and compare a change only with the
-  layer, not with the change still on its way to the main thread. The test has to fail on each.
+  a `CAMetalLayer` without a device while the test's main thread is held for 2 s without its run loop. Its four patches
+  in `tests/breaks/` put `dispatch_sync` back on `MULLION_LAYER_WAIT=0`'s path, compare a change only with the
+  layer, not with the change still on its way to the main thread, leave `STATS`' `mainWaitMaxMs` without its reset,
+  and leave out of it a change still waiting. The test has to fail on each.
 
   The build checks also compute the converter's codegen id again from the checkout (`tools/codegen_id.py`,
   [caches.md](caches.md)) and require it in `d3d11.dll` and `d3d12core.dll`, which key the shader cache on it, and in

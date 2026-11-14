@@ -608,6 +608,10 @@ struct unixcall_memory_sampler {
   uint64_t seconds;
 };
 
+struct unixcall_main_thread_wait_max {
+  uint64_t ret;
+};
+
 struct unixcall_wmtdiag_write {
   struct WMTConstMemoryPointer directory, lines;
   uint64_t length;

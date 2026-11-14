@@ -14,6 +14,8 @@ static _Atomic uint64_t since_ns;
 static pthread_mutex_t said_lock = PTHREAD_MUTEX_INITIALIZER;
 static unsigned said;
 static atomic_bool watching;
+// the longest wait an applied change had, in ns, since layer_take_main_wait_max_ms
+static _Atomic uint64_t wait_max_ns;
 static const uint64_t marks_ms[] = {1000, 5000, 30000};
 
 static uint64_t
@@ -71,13 +73,29 @@ watch(void) {
 static void
 applied_one(void) {
   pthread_mutex_lock(&said_lock);
-  uint64_t now = now_ns();
-  uint64_t ms = since_ms(atomic_exchange(&since_ns, now), now);
+  uint64_t now = now_ns(), since = atomic_exchange(&since_ns, now);
+  uint64_t ms = since_ms(since, now), ns = now > since ? now - since : 0;
+  for (uint64_t max = atomic_load(&wait_max_ns); ns > max && !atomic_compare_exchange_weak(&wait_max_ns, &max, ns);)
+    ;
   atomic_fetch_add(&applied, 1);
   if (said)
     fprintf(stderr, "mullion: layer mainThreadWaitMs=%llu applied=yes\n", (unsigned long long)ms);
   said = 0;
   pthread_mutex_unlock(&said_lock);
+}
+
+uint64_t
+layer_take_main_wait_max_ms(void) {
+  uint64_t ns = atomic_exchange(&wait_max_ns, 0);
+  // a change still waiting counts with its wait so far: once the main thread stops, it applies none. not when the main
+  // thread applied one meanwhile: `since` and `now` could then span the time it was idle
+  uint64_t done = atomic_load(&applied);
+  if (done != atomic_load(&sent)) {
+    uint64_t since = atomic_load(&since_ns), now = now_ns();
+    if (atomic_load(&applied) == done && now > since && now - since > ns)
+      ns = now - since;
+  }
+  return ns / NSEC_PER_MSEC;
 }
 
 // runs `set` on the main thread, after what was sent to it before, and waits for it with `wait`. its number among the

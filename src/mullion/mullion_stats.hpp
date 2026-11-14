@@ -4,7 +4,7 @@
 // (d3d12_swapchain.cpp), in the form SWTOR on Mac's session report reads from d9mt (scripts/session-report.sh):
 //
 //   STATS t=63 fps=59.9 ms=16.7/18.0/21.4 slow33=0 slow50=0 | cb=13.0 rp=31.4 cp=2.0 draws=1520
-//     | sh=0 pso=0 wait=0/0.0ms cache=0/0 | allocMiB=5210 | at=20:01:04.120
+//     | sh=0 pso=0 wait=0/0.0ms cache=0/0 | allocMiB=5210 | mainWaitMaxMs=0 | at=20:01:04.120
 //
 //   t            seconds since the first Present
 //   fps          Presents of the window per second of it
@@ -16,6 +16,8 @@
 //   wait         draws and dispatches that waited for a pipeline still being made: count / total ms
 //   cache        shader cache lookups: found / not found (and converted)
 //   allocMiB     Metal's currentAllocatedSize at the line
+//   mainWaitMaxMs  the longest wait of a layer change for the main thread in the window, a change still waiting
+//                included (the bridge's WMTMainThreadWaitMax); n/a when the bridge didn't answer
 //   at           the local time at the line
 //
 // The names up to slow50, sh, pso, wait and allocMiB are the report's and are never renamed. A new group goes after a
@@ -53,6 +55,9 @@ struct Counters {
 
 // this DLL's
 inline Counters counters;
+
+// mainWaitMaxMs when the bridge didn't answer (WMTMainThreadWaitUnknown)
+constexpr uint64_t kNoAnswer = UINT64_MAX;
 
 // the counts as plain numbers
 struct Totals {
@@ -140,9 +145,11 @@ public:
   }
 
   // the STATS line and the sections' lines for the window that ends at `now`, and the next window starts. `totals` are
-  // the counters now, `allocated` Metal's allocated bytes
+  // the counters now, `allocated` Metal's allocated bytes, `main_wait_ms` the window's longest wait for the main thread
+  // or kNoAnswer
   std::vector<std::string>
-  Take(uint64_t now, const Totals &totals, uint64_t allocated, const Clock &at, const Sections &sections = processSections()) {
+  Take(uint64_t now, const Totals &totals, uint64_t allocated, uint64_t main_wait_ms, const Clock &at,
+       const Sections &sections = processSections()) {
     const double seconds = double(now - window_start_) / 1e9;
     const uint64_t n = intervals_.size();
     double sum = 0, longest = 0, p99 = 0;
@@ -163,18 +170,19 @@ public:
     auto per = [&](uint64_t Totals::*counter) { return double(totals.*counter - last_totals_.*counter) / frames; };
     auto in = [&](uint64_t Totals::*counter) { return (unsigned long long)(totals.*counter - last_totals_.*counter); };
 
+    const std::string main_wait = main_wait_ms == kNoAnswer ? "n/a" : std::to_string(main_wait_ms);
     char line[1024];
     std::snprintf(line, sizeof(line),
                   "STATS t=%.0f fps=%.1f ms=%.1f/%.1f/%.1f slow33=%u slow50=%u"
                   " | cb=%.1f rp=%.1f cp=%.1f draws=%.0f"
                   " | sh=%llu pso=%llu wait=%llu/%.1fms cache=%llu/%llu"
-                  " | allocMiB=%llu | at=%02u:%02u:%02u.%03u",
+                  " | allocMiB=%llu | mainWaitMaxMs=%s | at=%02u:%02u:%02u.%03u",
                   double(now - start_) / 1e9, seconds > 0 ? double(n) / seconds : 0.0, n ? sum / double(n) : 0.0, p99,
                   longest, slow33, slow50, per(&Totals::command_buffers), per(&Totals::render_passes),
                   per(&Totals::compute_passes), per(&Totals::draws), in(&Totals::shaders), in(&Totals::pipelines),
                   in(&Totals::waits), double(totals.wait_ns - last_totals_.wait_ns) / 1e6, in(&Totals::cache_hits),
-                  in(&Totals::cache_misses), (unsigned long long)(allocated >> 20), at.hour % 100, at.minute % 100,
-                  at.second % 100, at.millisecond % 1000);
+                  in(&Totals::cache_misses), (unsigned long long)(allocated >> 20), main_wait.c_str(), at.hour % 100,
+                  at.minute % 100, at.second % 100, at.millisecond % 1000);
 
     std::vector<std::string> lines{line};
     for (auto &section : sections.lines(seconds, n))
