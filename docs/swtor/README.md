@@ -447,8 +447,9 @@ A view's buffer is the one whose address range holds `BufferLocation` in the dev
 index buffer was always found: its end is the Metal allocation's, which can be longer than the width Direct3D gave it
 (at least 256 bytes; a write-watched or imported buffer is rounded up), as the address doesn't say which resource it
 came from. The memory past the width is that buffer's own. Each command list keeps the address ranges of the last
-four buffers its views were found in, as numbers, while no buffer is made or released on the device
-(`buffer_generation`): a view inside one of them costs a few compares and one atomic load; another takes the device's
+four buffers its views were found in, as numbers, while no buffer is made or released in the process
+(`ranges::buffer_generation`, one counter that never restarts, so a device made where another was never inherits its
+ranges): a view inside one of them costs a few compares and one atomic load; another takes the device's
 address lock once. A view is checked when it is set: a buffer released after that, with the view still bound,
 isn't seen. `ExecuteIndirect`'s views are part 4's.
 

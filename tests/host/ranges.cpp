@@ -83,6 +83,20 @@ main() {
     held.keep(0x50000, 0x50100);
     check(held.end(&other, 2, 0x50080) == 0, "so does another device");
   }
+  // a device made at the address of one destroyed, with as many buffers made and released: the process's counter has
+  // moved past every generation the first one's ranges were kept at, so the second one's checks find none of them
+  {
+    HeldRanges held;
+    int device;
+    auto first = buffer_generation.load();
+    check(held.end(&device, first, 0x10100) == 0, "the first device finds nothing kept");
+    held.keep(0x10000, 0x10200);
+    buffer_generation.fetch_add(1); // its buffer released, and the device with it
+    buffer_generation.fetch_add(1); // the next device, at the same address, makes a buffer
+    check(buffer_generation.load() != first, "the counter never comes back to a generation read before");
+    check(held.end(&device, buffer_generation.load(), 0x10100) == 0,
+          "a device at a destroyed one's address keeps none of its ranges");
+  }
 
   // the bridge's Metal 4 lengths: what a buffer has from an offset, before, at and past its end
   check(buffer_remaining(256, 0) == 256, "a buffer's length from its start");

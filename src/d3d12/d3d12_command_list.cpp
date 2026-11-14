@@ -3304,7 +3304,7 @@ public:
   ViewInRange(ranges::Site &site, D3D12_GPU_VIRTUAL_ADDRESS VA, uint64_t size) {
     if (!size)
       return true;
-    auto end = view_ranges_.end(device_, device_->buffer_generation.load(std::memory_order_acquire), VA);
+    auto end = view_ranges_.end(device_, ranges::buffer_generation.load(std::memory_order_acquire), VA);
     uint64_t offset, found_end;
     if (!end && device_->LookupBufferByVA(VA, &offset, &found_end) && VA < found_end) {
       view_ranges_.keep(VA - offset, found_end);

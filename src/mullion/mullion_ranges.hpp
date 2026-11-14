@@ -101,8 +101,13 @@ View(uint64_t address, uint64_t size, bool held, uint64_t end) {
   return {};
 }
 
-// the address ranges of live buffers a check found, newest first, kept while their device's buffer generation (raised
-// as any buffer's addresses are registered or unregistered) is the one they were found at. Numbers only, never a
+// raised each time any buffer's addresses are registered or unregistered, by any device of the process, after the
+// change. One counter for the process, never restarted: a device made where another was, at the same address, never
+// reads a generation the other's ranges were kept at. This DLL's
+inline std::atomic<uint64_t> buffer_generation{0};
+
+// the address ranges of live buffers a check found, newest first, kept while buffer_generation is the one they were
+// found at, for the device they were found in. Numbers only, never a
 // buffer: a range outlives nothing. Not thread-safe: each command list has its own, each thread making views its own
 class HeldRanges {
 public:
