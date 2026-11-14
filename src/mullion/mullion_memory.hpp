@@ -19,7 +19,8 @@
 //
 // with MULLION_MEMSTATS on, once a sample. frame= and allocatedMiB= are what SWTOR on Mac's session report reads from
 // d9mt's line of that name (scripts/session-report.sh) and are never renamed. Always, once a process, at the first
-// sample that shows pressure:
+// Present after the first sample that showed pressure (memory_pressure.h, which the bridge applies to each sample),
+// with that sample's numbers and time:
 //
 //   MULLION-MEMORY-PRESSURE at=21:04:05.123 swapMiB=2048 footprintMiB=9216 ramMiB=16384
 //
@@ -30,6 +31,8 @@
 #include <cstdio>
 #include <cstdlib>
 #include <string>
+
+#include "../winemetal/memory_pressure.h"
 
 namespace mullion::memory {
 
@@ -59,7 +62,6 @@ struct Numbers {
   uint64_t allocated = 0, footprint = 0, footprint_peak = 0, budget = 0, usage = 0, working_set = 0;
   uint64_t swap_used = 0, compressed = 0, free_memory = 0, pageouts = 0, swapouts = 0;
   uint64_t heaps = 0, heap_bytes = 0;
-  uint64_t physical_memory = 0;
 };
 
 struct Clock {
@@ -85,41 +87,26 @@ Line(const Numbers &n, const Clock &at) {
   return line;
 }
 
-// pressure: the system swapped out since the sample before, while the process's footprint is over half the Mac's RAM
-inline bool
-Pressure(const Numbers &n) {
-  return n.swapouts > 0 && n.physical_memory && n.footprint > n.physical_memory / 2;
-}
+// the first sample that showed pressure, as the bridge keeps it
+struct Pressure {
+  uint64_t swap_used = 0, footprint = 0, physical_memory = 0;
+  Clock at;
+};
 
 inline std::string
-PressureLine(const Numbers &n, const Clock &at) {
+PressureLine(const Pressure &p) {
   char line[160];
   std::snprintf(line, sizeof(line),
                 "MULLION-MEMORY-PRESSURE at=%02u:%02u:%02u.%03u swapMiB=%llu footprintMiB=%llu ramMiB=%llu",
-                at.hour % 100, at.minute % 100, at.second % 100, at.millisecond % 1000, MiB(n.swap_used),
-                MiB(n.footprint), MiB(n.physical_memory));
+                p.at.hour % 100, p.at.minute % 100, p.at.second % 100, p.at.millisecond % 1000, MiB(p.swap_used),
+                MiB(p.footprint), MiB(p.physical_memory));
   return line;
 }
 
-// one process's lines: the DIAG MEM line of each sample with it on, and the pressure line once
-class Lines {
-public:
-  explicit Lines(bool line) : line_(line) {}
-
-  // the lines of a new sample, "" for none; more than one joined with "\n"
-  std::string
-  Take(const Numbers &n, const Clock &at) {
-    std::string text = line_ ? Line(n, at) : std::string();
-    if (!pressed_ && Pressure(n)) {
-      pressed_ = true;
-      text += (text.empty() ? "" : "\n") + PressureLine(n, at);
-    }
-    return text;
-  }
-
-private:
-  bool line_;
-  bool pressed_ = false;
-};
+// the bridge's time of day, ms since midnight, as a Clock
+inline Clock
+TimeOfDay(uint32_t ms) {
+  return {ms / 3'600'000, ms / 60'000 % 60, ms / 1000 % 60, ms % 1000};
+}
 
 } // namespace mullion::memory

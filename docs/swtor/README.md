@@ -61,7 +61,7 @@ removed with `DXGI_ERROR_DEVICE_HUNG`. A release build doesn't have it.
 | `MULLION-FEATURE-LEVEL asked= reaches= tiledResourcesTier= macOS=` | Always, each time `D3D12CreateDevice` refuses the feature level asked for. Replaces `D3D12CreateDevice: feature level <n> is not supported` | `d3d12.log`, at `warn` | The same, when the game won't start |
 | `mullion: flight record of <reason> in <executable>.flight` | Each flight dump. The file's name only: the folder is `MULLION_DIAG_PATH`, or `~/Library/Logs/Mullion` | The process's stderr (`wine.log`): the bridge writes it | Me: which dump to open |
 | `DIAG MEM frame= allocatedMiB= footprintMiB= footprintPeakMiB= budgetMiB= usageMiB= workingSetMiB= \| system: swapMiB= compressedMiB= freeMiB= pageouts= swapouts= \| heaps=n/MiB \| at=` | With `MULLION_MEMSTATS` on, at the first Present after each sample of the bridge's memory sampler; none while nothing presents | `d3d12.log` (`wine.log`), at `warn` | The app's session report, which reads d9mt's line of that name (`frame`, `allocatedMiB`); me, when a session degrades |
-| `MULLION-MEMORY-PRESSURE at= swapMiB= footprintMiB= ramMiB=` | Always, once per process, at the first Present after the first sample in which the Mac swapped out while the process's footprint was over half its RAM | The same, at `warn` | Me, on "it got slow after an hour" from an 8 or 16 GB Mac |
+| `MULLION-MEMORY-PRESSURE at= swapMiB= footprintMiB= ramMiB=` | Always, once per process, at the first Present after the first sample in which the Mac swapped out while the process's footprint was over half its RAM, with that sample's numbers and time | The same, at `warn` | Me, on "it got slow after an hour" from an 8 or 16 GB Mac |
 
 ### The session header
 
@@ -331,16 +331,19 @@ report takes the session's memory peak and its frame count from them when the lo
 `texRT`, `vbibGpu`, ...): Mullion keeps none.
 
 `MULLION-MEMORY-PRESSURE`: the first sample in which the system swapped out since the sample before while the
-process's footprint was over half the Mac's RAM (`hw.memsize`). `swapMiB` and `footprintMiB` as above, `ramMiB` the
-RAM. Once a process, with `MULLION_MEMSTATS` on or off.
+process's footprint was over half the Mac's RAM (`hw.memsize`). `at` is that sample's local time, `swapMiB` and
+`footprintMiB` its numbers as above, `ramMiB` the RAM. Once a process, with `MULLION_MEMSTATS` on or off. The bridge
+applies the rule ([`memory_pressure.h`](../../src/winemetal/memory_pressure.h)) to every sample and keeps the first that
+meets it, so later samples written while nothing presents don't lose it.
 
 The sampler is one thread for the process, `mullion-memory`, started at the first Present. It also writes the trace's
 `[memory] sampler:` sentence every 5 s with `MULLION_TRACE_MEMORY`, as before, so two readers share one thread. Each wake
 reads `task_info` once, `host_statistics64` once and `vm.swapusage` once, and writes the sample into a struct of
-`d3d12core.dll`'s (bridge call 217, `WMTMemorySampler`). With both switches off it wakes every 30 s. Each Present pays
-two loads and a compare to find no new sample; one that finds one formats the lines and makes one log call, and with
-`MULLION_MEMSTATS` on asks Metal for its allocation and working set and `QueryVideoMemoryInfo` for the budget. With it
-on, each `ID3D12Heap` made or released adds two relaxed atomics.
+`d3d12core.dll`'s (`WMTMemorySampler`, the bridge's call 216 from 0), which the bridge never frees. With both switches
+off it wakes every 30 s. Each Present pays a static's guard, one load and a compare to find no new sample; one that
+finds one reads it, makes one log call when it has a line, and with `MULLION_MEMSTATS` on asks Metal for its allocation
+and working set and `QueryVideoMemoryInfo` for the budget. With it on, each `ID3D12Heap` made or released adds two
+relaxed atomics.
 
 Lines come at Presents: a process that stops presenting writes none until it presents again, and gets the pressure line
 then.

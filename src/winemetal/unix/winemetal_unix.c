@@ -20,6 +20,7 @@
 #include "../winemetal_thunks.h"
 #include "../airconv_thunks.h"
 #include "layer.h"
+#include "../memory_pressure.h"
 
 typedef int NTSTATUS;
 #define STATUS_SUCCESS 0
@@ -5153,27 +5154,13 @@ trace_flusher(void *unused) {
 
 // the memory sampler: one thread for the process, for two readers. The trace's `memory` category gets a sentence every
 // 5 s: the process's memory footprint and the system's swap and paging, as a game that runs out of memory or starts
-// paging shows it. WMTMemorySampler gets the same numbers in its struct at its own period (src/mullion/mullion_memory.hpp).
-// Each wake reads task_info once, host_statistics64 once and vm.swapusage once
+// paging shows it. WMTMemorySampler gets the same numbers in its struct at its own period
+// (src/mullion/mullion_memory.hpp). Each wake reads task_info once, host_statistics64 once and vm.swapusage once
 static pthread_mutex_t sampler_lock = PTHREAD_MUTEX_INITIALIZER;
 static pthread_cond_t sampler_changed = PTHREAD_COND_INITIALIZER;
 static bool sampler_started, sampler_trace;
 static struct WMTMemorySample *sampler_out;
 static uint32_t sampler_seconds;
-
-// paging since the reader's last sample; 0 at its first
-struct sampler_paging {
-  uint64_t pageouts, swapouts;
-};
-
-static void
-sampler_paging_take(struct sampler_paging *last, const vm_statistics64_data_t *vm, uint64_t *pageouts,
-                    uint64_t *swapouts) {
-  *pageouts = last->pageouts ? vm->pageouts - last->pageouts : 0;
-  *swapouts = last->swapouts ? vm->swapouts - last->swapouts : 0;
-  last->pageouts = vm->pageouts;
-  last->swapouts = vm->swapouts;
-}
 
 static uint64_t
 sampler_now_ms(void) {
@@ -5188,7 +5175,7 @@ memory_sampler(void *unused) {
   size_t size = sizeof(physical_memory);
   if (sysctlbyname("hw.memsize", &physical_memory, &size, NULL, 0))
     physical_memory = 0;
-  struct sampler_paging trace_paging = {0}, out_paging = {0};
+  struct memory_paging trace_paging = {0}, out_paging = {0};
   uint64_t trace_due = 0, out_due = 0;
   pthread_mutex_lock(&sampler_lock);
   for (;;) {
@@ -5209,11 +5196,12 @@ memory_sampler(void *unused) {
         sysctlbyname("vm.swapusage", &swap, &swap_size, NULL, 0);
         uint64_t page = vm_kernel_page_size, pageouts, swapouts;
         if (trace) {
-          sampler_paging_take(&trace_paging, &vm, &pageouts, &swapouts);
+          memory_paging_take(&trace_paging, vm.pageouts, vm.swapouts, &pageouts, &swapouts);
           char line[256];
           int length = snprintf(line, sizeof(line),
-                                "[memory] sampler: process footprint %llu MB (peak %llu MB); system: swap used %llu MB, "
-                                "compressed %llu MB, free %llu MB, %llu pageouts and %llu swapouts in the last 5 s",
+                                "[memory] sampler: process footprint %llu MB (peak %llu MB); "
+                                "system: swap used %llu MB, compressed %llu MB, free %llu MB, "
+                                "%llu pageouts and %llu swapouts in the last 5 s",
                                 task.phys_footprint >> 20, task.ledger_phys_footprint_peak >> 20, swap.xsu_used >> 20,
                                 (vm.compressor_page_count * page) >> 20, (vm.free_count * page) >> 20, pageouts,
                                 swapouts);
@@ -5223,18 +5211,33 @@ memory_sampler(void *unused) {
           pthread_mutex_unlock(&trace_lock);
         }
         if (out) {
-          sampler_paging_take(&out_paging, &vm, &pageouts, &swapouts);
+          memory_paging_take(&out_paging, vm.pageouts, vm.swapouts, &pageouts, &swapouts);
           uint32_t sequence = __atomic_load_n(&out->sequence, __ATOMIC_RELAXED);
           __atomic_store_n(&out->sequence, sequence + 1, __ATOMIC_RELAXED);
           __atomic_thread_fence(__ATOMIC_RELEASE);
-          out->footprint = task.phys_footprint;
-          out->footprint_peak = task.ledger_phys_footprint_peak;
-          out->swap_used = swap.xsu_used;
-          out->compressed = vm.compressor_page_count * page;
-          out->free_memory = vm.free_count * page;
-          out->pageouts = pageouts;
-          out->swapouts = swapouts;
-          out->physical_memory = physical_memory;
+          __atomic_store_n(&out->footprint, (uint64_t)task.phys_footprint, __ATOMIC_RELAXED);
+          __atomic_store_n(&out->footprint_peak, (uint64_t)task.ledger_phys_footprint_peak, __ATOMIC_RELAXED);
+          __atomic_store_n(&out->swap_used, (uint64_t)swap.xsu_used, __ATOMIC_RELAXED);
+          __atomic_store_n(&out->compressed, vm.compressor_page_count * page, __ATOMIC_RELAXED);
+          __atomic_store_n(&out->free_memory, vm.free_count * page, __ATOMIC_RELAXED);
+          __atomic_store_n(&out->pageouts, pageouts, __ATOMIC_RELAXED);
+          __atomic_store_n(&out->swapouts, swapouts, __ATOMIC_RELAXED);
+          __atomic_store_n(&out->physical_memory, physical_memory, __ATOMIC_RELAXED);
+          // the first sample with pressure stays, for the Present that comes after however many samples
+          if (!__atomic_load_n(&out->pressure, __ATOMIC_RELAXED) &&
+              memory_pressure(swapouts, (uint64_t)task.phys_footprint, physical_memory)) {
+            struct timeval time;
+            struct tm local;
+            gettimeofday(&time, NULL);
+            localtime_r(&time.tv_sec, &local);
+            __atomic_store_n(&out->pressure_footprint, (uint64_t)task.phys_footprint, __ATOMIC_RELAXED);
+            __atomic_store_n(&out->pressure_swap_used, (uint64_t)swap.xsu_used, __ATOMIC_RELAXED);
+            __atomic_store_n(&out->pressure_at,
+                             (uint32_t)(((local.tm_hour * 60 + local.tm_min) * 60 + local.tm_sec) * 1000 +
+                                        time.tv_usec / 1000),
+                             __ATOMIC_RELAXED);
+            __atomic_store_n(&out->pressure, 1u, __ATOMIC_RELAXED);
+          }
           __atomic_store_n(&out->sequence, sequence + 2, __ATOMIC_RELEASE);
         }
       }

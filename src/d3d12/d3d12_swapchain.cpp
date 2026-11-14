@@ -149,8 +149,9 @@ MemorySample() {
   }();
   return sample;
 }
-// the last sample a Present wrote the lines of, of any swap chain
+// the last sample a Present wrote the lines of, of any swap chain, and whether the pressure line was written
 static std::atomic<uint32_t> memory_seen{0};
+static std::atomic<bool> memory_pressed{false};
 
 // the swap chain whose Presents the line counts: the first to present, until it goes. Two swap chains presenting
 // would otherwise both close windows over the same counters
@@ -358,7 +359,7 @@ public:
   }
 
   // a sample the bridge's memory sampler wrote since the last: its lines (mullion_memory.hpp), from the Present that
-  // sees it first. Otherwise two loads and a compare
+  // sees it first. Otherwise the sample's guard, a load and a compare
   void
   MemoryLines() {
     WMTMemorySample *sample = MemorySample();
@@ -366,17 +367,21 @@ public:
     uint32_t seen = memory_seen.load(std::memory_order_relaxed);
     if (sequence == seen || (sequence & 1))
       return;
-    WMTMemorySample copy = *sample;
-    // the sampler wrote again while this copied: the next Present reads the newer one
+    auto get = [](const uint64_t &field) { return __atomic_load_n(&field, __ATOMIC_RELAXED); };
+    memory::Numbers numbers{.footprint = get(sample->footprint), .footprint_peak = get(sample->footprint_peak),
+                            .swap_used = get(sample->swap_used), .compressed = get(sample->compressed),
+                            .free_memory = get(sample->free_memory), .pageouts = get(sample->pageouts),
+                            .swapouts = get(sample->swapouts)};
+    bool pressure = __atomic_load_n(&sample->pressure, __ATOMIC_RELAXED);
+    memory::Pressure pressed{get(sample->pressure_swap_used), get(sample->pressure_footprint),
+                             get(sample->physical_memory),
+                             memory::TimeOfDay(__atomic_load_n(&sample->pressure_at, __ATOMIC_RELAXED))};
+    // the sampler wrote again while this read: the next Present reads the newer one
     std::atomic_thread_fence(std::memory_order_acquire);
     if (__atomic_load_n(&sample->sequence, __ATOMIC_RELAXED) != sequence ||
         !memory_seen.compare_exchange_strong(seen, sequence))
       return;
-    static memory::Lines lines(memory::seconds != 0);
-    memory::Numbers numbers{.footprint = copy.footprint, .footprint_peak = copy.footprint_peak,
-                            .swap_used = copy.swap_used, .compressed = copy.compressed,
-                            .free_memory = copy.free_memory, .pageouts = copy.pageouts, .swapouts = copy.swapouts,
-                            .physical_memory = copy.physical_memory};
+    std::string text;
     if (memory::seconds) {
       auto device = device_->GetMTLDevice();
       numbers.frame = PresentsSoFar();
@@ -390,11 +395,14 @@ public:
       numbers.budget = info.Budget, numbers.usage = info.CurrentUsage;
       numbers.heaps = memory::heaps.load(std::memory_order_relaxed);
       numbers.heap_bytes = memory::heap_bytes.load(std::memory_order_relaxed);
+      SYSTEMTIME local{};
+      GetLocalTime(&local);
+      text = memory::Line(numbers, {local.wHour, local.wMinute, local.wSecond, local.wMilliseconds});
     }
-    SYSTEMTIME local{};
-    GetLocalTime(&local);
+    // once a process, whichever swap chain sees it first
+    if (pressure && !memory_pressed.exchange(true, std::memory_order_relaxed))
+      text += (text.empty() ? "" : "\n") + memory::PressureLine(pressed);
     // one message: its lines stay together
-    auto text = lines.Take(numbers, {local.wHour, local.wMinute, local.wSecond, local.wMilliseconds});
     if (!text.empty())
       Logger::warn(text);
   }

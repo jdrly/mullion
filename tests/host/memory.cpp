@@ -1,7 +1,7 @@
 // contract: the DIAG MEM line (src/mullion/mullion_memory.hpp) has the fields and order docs/swtor/README.md gives,
-// with frame= and allocatedMiB= as SWTOR on Mac's session report reads them from d9mt's line; MULLION-MEMORY-PRESSURE
-// comes once a process, at the first sample that swapped out while the footprint was over half the RAM, whether the
-// DIAG MEM line is on or not; MULLION_MEMSTATS's grammar; no line reaches 900 bytes; and the DIAG MEM lines of
+// with frame= and allocatedMiB= as SWTOR on Mac's session report reads them from d9mt's line; MULLION-MEMORY-PRESSURE's
+// rule, which the bridge applies to each sample (src/winemetal/memory_pressure.h), and its line; paging since the sample
+// before, from the system's totals; MULLION_MEMSTATS's grammar; no line reaches 900 bytes; and the DIAG MEM lines of
 // tests/swtor/fixtures/session.log are what the sampler's samples of its session write
 #include "../../src/mullion/mullion_memory.hpp"
 #include <fstream>
@@ -30,7 +30,6 @@ constexpr uint64_t kMiB = 1 << 20;
 // more, on a 128 GiB M5 Max that never swaps
 static std::vector<std::string>
 Session() {
-  memory::Lines lines(true);
   std::vector<std::string> written;
   uint64_t peak = 0;
   for (unsigned second = 5; second <= 60; second += 5) {
@@ -45,9 +44,8 @@ Session() {
     n.free_memory = (92000ull - settled * 20) * kMiB;
     n.heaps = settled / 5 * 4;
     n.heap_bytes = n.heaps * 64 * kMiB;
-    n.physical_memory = 131072 * kMiB;
     unsigned ms = 4000 + second * 1000 + second % 7 + 1;
-    written.push_back("warn:  " + lines.Take(n, {20, ms / 60000, ms / 1000 % 60, ms % 1000}));
+    written.push_back("warn:  " + memory::Line(n, {20, ms / 60000, ms / 1000 % 60, ms % 1000}));
   }
   return written;
 }
@@ -63,8 +61,7 @@ main(int argc, char **argv) {
   memory::Numbers n{.frame = 1326, .allocated = 2400 * kMiB + 512 * 1024, .footprint = 4010 * kMiB,
                     .footprint_peak = 4100 * kMiB, .budget = 110592 * kMiB, .usage = 2400 * kMiB,
                     .working_set = 110592 * kMiB, .swap_used = 0, .compressed = 812 * kMiB, .free_memory = 91520 * kMiB,
-                    .pageouts = 3, .swapouts = 0, .heaps = 24, .heap_bytes = 1536 * kMiB,
-                    .physical_memory = 131072 * kMiB};
+                    .pageouts = 3, .swapouts = 0, .heaps = 24, .heap_bytes = 1536 * kMiB};
   equal(memory::Line(n, {20, 0, 29, 6}),
         "DIAG MEM frame=1326 allocatedMiB=2400 footprintMiB=4010 footprintPeakMiB=4100 budgetMiB=110592 usageMiB=2400"
         " workingSetMiB=110592 | system: swapMiB=0 compressedMiB=812 freeMiB=91520 pageouts=3 swapouts=0"
@@ -72,46 +69,40 @@ main(int argc, char **argv) {
 
   // the pressure rule, on a 16 GiB Mac: a swapout while the footprint is over 8 GiB
   {
-    memory::Numbers mac{.footprint = 9216 * kMiB, .swap_used = 2048 * kMiB, .swapouts = 0,
-                        .physical_memory = 16384 * kMiB};
-    check(!memory::Pressure(mac), "no swapout: no pressure");
-    mac.swapouts = 1;
-    check(memory::Pressure(mac), "a swapout over half the RAM: pressure");
-    mac.footprint = 8192 * kMiB;
-    check(!memory::Pressure(mac), "exactly half: no pressure");
-    mac.footprint = 8192 * kMiB + 1;
-    check(memory::Pressure(mac), "a byte over half: pressure");
-    mac.physical_memory = 0;
-    check(!memory::Pressure(mac), "RAM unknown: no pressure");
+    constexpr uint64_t ram = 16384 * kMiB;
+    check(!memory_pressure(0, 9216 * kMiB, ram), "no swapout: no pressure");
+    check(memory_pressure(1, 9216 * kMiB, ram), "a swapout over half the RAM: pressure");
+    check(!memory_pressure(1, 8192 * kMiB, ram), "exactly half: no pressure");
+    check(memory_pressure(1, 8192 * kMiB + 1, ram), "a byte over half: pressure");
+    check(!memory_pressure(1, 9216 * kMiB, 0), "RAM unknown: no pressure");
   }
 
-  // the line on: DIAG MEM each sample, the pressure line once, at the first sample with it
+  // paging since the sample before: nothing at the first; a total that was 0 there still counts after
   {
-    memory::Lines lines(true);
-    memory::Numbers mac{.frame = 90000, .footprint = 9216 * kMiB, .swap_used = 2048 * kMiB, .swapouts = 0,
-                        .physical_memory = 16384 * kMiB};
-    std::string text = lines.Take(mac, {21, 4, 0, 123});
-    check(text.starts_with("DIAG MEM frame=90000 ") && text.find('\n') == std::string::npos,
-          "no pressure yet: DIAG MEM alone: " + text);
-    mac.swapouts = 12;
-    text = lines.Take(mac, {21, 4, 5, 123});
-    check(text.starts_with("DIAG MEM frame=90000 "), "DIAG MEM first: " + text);
-    check(text.ends_with("\nMULLION-MEMORY-PRESSURE at=21:04:05.123 swapMiB=2048 footprintMiB=9216 ramMiB=16384"),
-          "then the pressure line: " + text);
-    text = lines.Take(mac, {21, 4, 10, 123});
-    check(text.find("PRESSURE") == std::string::npos, "once a process: " + text);
+    memory_paging last{};
+    uint64_t pageouts = 99, swapouts = 99;
+    memory_paging_take(&last, 0, 0, &pageouts, &swapouts);
+    check(pageouts == 0 && swapouts == 0, "the first sample: nothing");
+    memory_paging_take(&last, 7, 12, &pageouts, &swapouts);
+    check(pageouts == 7 && swapouts == 12, "totals 0 then 7 and 12: " + std::to_string(pageouts) + " and " +
+                                               std::to_string(swapouts));
+    memory_paging_take(&last, 7, 12, &pageouts, &swapouts);
+    check(pageouts == 0 && swapouts == 0, "unchanged: nothing");
+    memory_paging last_started{};
+    memory_paging_take(&last_started, 500, 40, &pageouts, &swapouts);
+    check(pageouts == 0 && swapouts == 0, "a first sample with totals: nothing");
+    memory_paging_take(&last_started, 510, 43, &pageouts, &swapouts);
+    check(pageouts == 10 && swapouts == 3, "then the difference");
   }
 
-  // the line off: the pressure line alone, once
+  // the pressure line, from the sample the bridge kept and its time of day
   {
-    memory::Lines lines(false);
-    memory::Numbers mac{.footprint = 9216 * kMiB, .swap_used = 2048 * kMiB, .swapouts = 0,
-                        .physical_memory = 16384 * kMiB};
-    check(lines.Take(mac, {21, 4, 0, 123}).empty(), "off and no pressure: nothing");
-    mac.swapouts = 1;
-    equal(lines.Take(mac, {21, 4, 30, 123}),
-          "MULLION-MEMORY-PRESSURE at=21:04:30.123 swapMiB=2048 footprintMiB=9216 ramMiB=16384");
-    check(lines.Take(mac, {21, 5, 0, 123}).empty(), "off, after the pressure line: nothing");
+    check(memory::TimeOfDay(((21 * 60 + 4) * 60 + 5) * 1000 + 123).hour == 21, "21 h");
+    equal(memory::PressureLine({2048 * kMiB, 9216 * kMiB, 16384 * kMiB,
+                                memory::TimeOfDay(((21 * 60 + 4) * 60 + 5) * 1000 + 123)}),
+          "MULLION-MEMORY-PRESSURE at=21:04:05.123 swapMiB=2048 footprintMiB=9216 ramMiB=16384");
+    equal(memory::PressureLine({0, 0, 0, memory::TimeOfDay(24 * 3'600'000 - 1)}),
+          "MULLION-MEMORY-PRESSURE at=23:59:59.999 swapMiB=0 footprintMiB=0 ramMiB=0");
   }
 
   // MULLION_MEMSTATS: 0 off, 1 every 5 s, N every N s up to an hour; anything else off
@@ -129,12 +120,11 @@ main(int argc, char **argv) {
   // no line reaches 900 bytes, whatever the numbers
   {
     constexpr uint64_t most = std::numeric_limits<uint64_t>::max();
-    memory::Numbers full{most, most, most, most, most, most, most, most, most, most, most, most, most, most, most};
+    memory::Numbers full{most, most, most, most, most, most, most, most, most, most, most, most, most, most};
     memory::Clock at{99999, 99999, 99999, 99999};
     check(memory::Line(full, at).size() < 900 && memory::Line(full, at).ends_with(" | at=99:99:99.999"),
           "DIAG MEM whole and shorter than 900: " + memory::Line(full, at));
-    full.physical_memory = 2;
-    auto pressure = memory::PressureLine(full, at);
+    auto pressure = memory::PressureLine({most, most, 2, at});
     check(pressure.size() < 900 && pressure.ends_with(" ramMiB=0"), "the pressure line whole: " + pressure);
   }
 
