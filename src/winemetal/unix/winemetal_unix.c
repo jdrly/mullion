@@ -21,6 +21,7 @@
 #include "../airconv_thunks.h"
 #include "layer.h"
 #include "../memory_pressure.h"
+#include "texture_compression.h"
 
 typedef int NTSTATUS;
 #define STATUS_SUCCESS 0
@@ -402,6 +403,17 @@ MTLPixelFormat to_metal_pixel_format(enum WMTPixelFormat format) {
   return (MTLPixelFormat)ORIGINAL_FORMAT(format);
 }
 
+// jdrly/mullion: MULLION_TEX_NO_COMPRESSION=1, read once per process: no texture the bridge makes, or sizes for a
+// heap, has Metal's lossless compression (texture_compression.h). said once, here, so a Direct3D 11 process says it too
+static bool texture_compression_off;
+
+__attribute__((constructor)) static void
+init_texture_compression(void) {
+  texture_compression_off = texture_compression_off_by_switch();
+  if (texture_compression_off)
+    fprintf(stderr, "mullion: textures compression=off\n");
+}
+
 void
 fill_texture_descriptor(MTLTextureDescriptor *desc, struct WMTTextureInfo *info) {
   desc.textureType = (MTLTextureType)info->type;
@@ -418,6 +430,7 @@ fill_texture_descriptor(MTLTextureDescriptor *desc, struct WMTTextureInfo *info)
   desc.resourceOptions = (MTLResourceOptions)info->options;
   if (@available(macOS 26.0, *))
     desc.placementSparsePageSize = (MTLSparsePageSize)info->placement_sparse_page_size;
+  texture_compression_apply(desc, info, texture_compression_off);
 };
 
 void

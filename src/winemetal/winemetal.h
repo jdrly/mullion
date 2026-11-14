@@ -547,8 +547,13 @@ struct WMTTextureInfo {
   enum WMTResourceOptions options;
   enum WMTSparsePageSize placement_sparse_page_size; // nonzero: a placement sparse texture, mapped to heap tiles
   mach_port_t mach_port; // in/out
+  // jdrly/mullion: 1 makes the texture without Metal's lossless compression (allowGPUOptimizedContents NO,
+  // src/winemetal/unix/texture_compression.h); 0 leaves Metal's default. both sides of the bridge read the struct
+  // where the caller has it, 32-bit callers too, so its layout has no field whose size differs between them
+  uint32_t uncompressed;
   uint64_t gpu_resource_id; // out
 };
+STATIC_ASSERT(sizeof(struct WMTTextureInfo) == 56);
 
 WINEMETAL_API obj_handle_t MTLDevice_newTexture(obj_handle_t device, struct WMTTextureInfo *info);
 

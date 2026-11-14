@@ -934,6 +934,13 @@ public:
   // (MTLDevice_sparseTailHolds)
   virtual bool SparseTailHolds(const WMTTextureInfo &Info, DXGI_FORMAT Format, std::pair<uint64_t, uint64_t> &Tail) = 0;
 
+  // jdrly/mullion: whether a texture of `Desc`, with the sample count `Info` makes it with, is made without Metal's
+  // lossless compression (MULLION_TEX_MSAA_COMPRESSION, mullion_compression.hpp)
+  virtual bool TextureUncompressed(const D3D12_RESOURCE_DESC &Desc, const WMTTextureInfo &Info) = 0;
+  // a texture of `Desc` was made with `Info`: a multisampled one makes later textures of its group and size resolve
+  // targets, and a rule's first uncompressed texture is logged
+  virtual void TextureMade(const D3D12_RESOURCE_DESC &Desc, const WMTTextureInfo &Info) = 0;
+
   virtual FormatCapability GetMTLPixelFormatCapability(WMTPixelFormat Format) = 0;
 
   // sums occlusion queries' visibility counts into their heaps (sum_occlusion)

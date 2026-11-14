@@ -1,0 +1,12 @@
+# MULLION_TEX_MSAA_COMPRESSION=auto turns compression off on Apple10 too: the family is left out
+--- a/src/mullion/mullion_compression.hpp
++++ b/src/mullion/mullion_compression.hpp
+@@ -45,7 +45,7 @@
+ // is Apple10 or newer
+ inline bool
+ MsaaUncompressed(const std::string &value, bool apple10) {
+-  return value == "0" || (value == "auto" && !apple10);
++  return value == "0" || value == "auto";
+ }
+ 
+ enum class Rule { None, Msaa, Resolve };

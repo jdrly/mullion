@@ -28,6 +28,7 @@
 #include "com/com_object.hpp"
 #include "dxgi_interfaces.h"
 #include "mullion_format.hpp"
+#include "mullion_compression.hpp"
 #include "util_env.hpp"
 #include "util_switch.hpp"
 #include "mullion_info.hpp"
@@ -62,6 +63,30 @@ GuardStaticRangesFlag() {
     return on;
   }();
   return guard ? SM50_SHADER_FLAG_GUARD_STATIC_RANGES : SM50_SHADER_FLAG{};
+}
+
+// jdrly/mullion: Metal's lossless texture compression (mullion_compression.hpp). MULLION_TEX_NO_COMPRESSION=1 turns
+// it off for every texture; the bridge reads it (texture_compression.h), so it reaches Direct3D 11 too, and it is
+// declared here for the session header and the line below. MULLION_TEX_MSAA_COMPRESSION turns it off for
+// multisampled textures and resolve targets: 1, Metal's default, until the GPU gate turns `auto` on. Both read as
+// each device is made
+static sw::Switch<bool> kTexNoCompression{"MULLION_TEX_NO_COMPRESSION", false, sw::exactlyOne};
+static sw::Switch<std::string> kTexMsaaCompression{"MULLION_TEX_MSAA_COMPRESSION", compression::kMsaaDefault,
+                                                   compression::MsaaSwitch};
+
+static compression::Textures
+TextureCompression(WMT::Device device) {
+  std::string msaa = kTexMsaaCompression();
+  bool apple10 = device.supportsFamily(WMTGPUFamilyApple10);
+  bool uncompressed = compression::MsaaUncompressed(msaa, apple10);
+  Logger::info(compression::SettingsLine(kTexNoCompression(), uncompressed, msaa, apple10));
+  return compression::Textures(uncompressed);
+}
+
+static compression::Shape
+TextureShape(const D3D12_RESOURCE_DESC &Desc, const WMTTextureInfo &Info) {
+  return {DXGIFormatType(Desc.Format), Desc.Width, Desc.Height, Info.sample_count,
+          Desc.Dimension == D3D12_RESOURCE_DIMENSION_TEXTURE2D};
 }
 
 // Copyright (c) Microsoft Corporation. Licensed under the MIT License.
@@ -299,6 +324,10 @@ class MTLD3D12DeviceImpl : public MTLD3D12Object<ComObject<MTLD3D12Device, ID3DD
   // SparseTailHolds' answers, by texture type, pixel format, size, mips and page size
   mullion::mutex sparse_tails_lock_;
   std::map<std::array<uint64_t, 7>, std::pair<bool, std::pair<uint64_t, uint64_t>>> sparse_tails_;
+  // jdrly/mullion: which textures are made without lossless compression (TextureUncompressed), under its lock:
+  // resources are made on any thread
+  mullion::mutex textures_lock_;
+  compression::Textures textures_;
   // allocations were added or removed since the set was last committed (CommitResidency)
   bool residency_dirty_ = false;
   // the buffers by GPU address and the sparse ones' mapped tiles, under a lock of their own: every index buffer, root
@@ -341,7 +370,8 @@ class MTLD3D12DeviceImpl : public MTLD3D12Object<ComObject<MTLD3D12Device, ID3DD
 
 public:
   MTLD3D12DeviceImpl(IMTLDXGIAdapter *adapter)
-      : adapter_(adapter), command_library(adapter_->GetMTLDevice()),
+      : adapter_(adapter), textures_(TextureCompression(adapter_->GetMTLDevice())),
+        command_library(adapter_->GetMTLDevice()),
         metal_version_(SM50_SHADER_METAL_VERSION(ShaderMetalVersion(adapter_->GetMTLDevice()))),
         shader_flags_(SM50_SHADER_FLAG(GPUShaderFlags(adapter_->GetMTLDevice()) | GuardStaticRangesFlag())) {
     mesh_bytes_per_draw = MeshBytesPerDraw(adapter_->GetMTLDevice());
@@ -2543,6 +2573,16 @@ public:
           if (plane)
             PopulateWMTTextureInfo(this, texture_info, *desc, plane);
           auto size_and_align = GetMTLDevice().heapTextureSizeAndAlign(texture_info);
+          // jdrly/mullion: a texture that becomes a resolve target when a multisampled one is made before it is
+          // placed (TextureUncompressed) has room for either descriptor
+          if (textures_.msaaUncompressed() && !texture_info.uncompressed && texture_info.sample_count == 1 &&
+              desc->Dimension == D3D12_RESOURCE_DIMENSION_TEXTURE2D) {
+            WMTTextureInfo uncompressed = texture_info;
+            uncompressed.uncompressed = 1;
+            auto other = GetMTLDevice().heapTextureSizeAndAlign(uncompressed);
+            size_and_align.align = std::max(size_and_align.align, other.align);
+            size_and_align.size = std::max(size_and_align.size, other.size);
+          }
           resource_info.SizeInBytes = align(resource_info.SizeInBytes, size_and_align.align) + size_and_align.size;
           resource_info.Alignment = std::max<UINT64>(resource_info.Alignment, size_and_align.align);
         }
@@ -2878,7 +2918,7 @@ public:
   SparseTailHolds(const WMTTextureInfo &Info, DXGI_FORMAT Format, std::pair<uint64_t, uint64_t> &Tail) final {
     std::array<uint64_t, 7> key{uint64_t(Info.type), uint64_t(Info.pixel_format), Info.width, Info.height,
                                 uint64_t(Info.depth) << 32 | Info.array_length, Info.mipmap_level_count,
-                                uint64_t(Info.placement_sparse_page_size)};
+                                uint64_t(Info.placement_sparse_page_size) | uint64_t(Info.uncompressed) << 32};
     std::unique_lock<mullion::mutex> lock(sparse_tails_lock_);
     if (auto found = sparse_tails_.find(key); found != sparse_tails_.end()) {
       Tail = found->second.second;
@@ -2894,6 +2934,24 @@ public:
            ": such reserved textures hold all their memory");
     sparse_tails_[key] = {holds, Tail};
     return holds;
+  }
+
+  bool
+  TextureUncompressed(const D3D12_RESOURCE_DESC &Desc, const WMTTextureInfo &Info) final {
+    if (!textures_.msaaUncompressed())
+      return false;
+    std::unique_lock<mullion::mutex> lock(textures_lock_);
+    return textures_.rule(TextureShape(Desc, Info)) != compression::Rule::None;
+  }
+
+  void
+  TextureMade(const D3D12_RESOURCE_DESC &Desc, const WMTTextureInfo &Info) final {
+    if (!textures_.msaaUncompressed())
+      return;
+    auto shape = TextureShape(Desc, Info);
+    std::unique_lock<mullion::mutex> lock(textures_lock_);
+    if (auto first = textures_.made(shape, Info.uncompressed); first != compression::Rule::None)
+      Logger::info(compression::UncompressedLine(first, shape, Desc.Format));
   }
 
   virtual FormatCapability

@@ -1,0 +1,11 @@
+# the bridge leaves out WMTTextureInfo.uncompressed: a texture asked for without lossless compression keeps it
+--- a/src/winemetal/unix/texture_compression.h
++++ b/src/winemetal/unix/texture_compression.h
+@@ -25,6 +25,6 @@
+ // `all`: MULLION_TEX_NO_COMPRESSION, as read once by the bridge
+ static inline void
+ texture_compression_apply(MTLTextureDescriptor *desc, const struct WMTTextureInfo *info, bool all) {
+-  if (info->uncompressed || all)
++  if (all)
+     desc.allowGPUOptimizedContents = NO;
+ }

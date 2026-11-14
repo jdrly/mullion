@@ -38,7 +38,11 @@ exe = executable('d3d12_metalfx', ['d3d12_metalfx.cpp'], dependencies: d3d12_tes
 # and through Mullion's NGX core where the build has it, which loads with NVEXT on only
 test('d3d12_metalfx', exe, args: get_option('enable_nvngx') ? ['ngx'] : [],
      env: get_option('enable_nvngx') ? ['MULLION_ENABLE_NVEXT=1'] : [], timeout: 600)
-exe = executable('d3d12_trace_log', ['d3d12_trace_log.cpp'], dependencies: d3d12_test_deps + [cpp.find_library('d3d11')])
+# jdrly/mullion: the textures MULLION_TEX_MSAA_COMPRESSION=auto makes without lossless compression, by GPU family
+exe = executable('d3d12_texture_compression', ['d3d12_texture_compression.cpp'],
+                 dependencies: d3d12_test_deps + [winemetal_dep], include_directories: include_directories('../../src/util'))
+test('d3d12_texture_compression', exe, env: ['MULLION_TEX_MSAA_COMPRESSION=auto'], timeout: 600)
+exe = executable('d3d12_trace_log',['d3d12_trace_log.cpp'], dependencies: d3d12_test_deps + [cpp.find_library('d3d11')])
 test('d3d12_trace_log', exe, timeout: 600)
 exe = executable('d3d12_copy_memory', ['d3d12_copy_memory.cpp'], dependencies: d3d12_test_deps)
 test('d3d12_copy_memory_dxbc', exe, args: ['dxbc'], timeout: 600)
