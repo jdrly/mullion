@@ -28,13 +28,14 @@ constexpr uint32_t kRGBA8 = 27, kRGBA16 = 9, kD24S8 = 44;
 
 int
 main() {
-  // the grammar: 0, 1 and auto; anything else, and unset, is the default, Metal's on every GPU
+  // the grammar: 0, 1 and auto; anything else, and unset, is the default, auto
   for (auto value : {"0", "1", "auto"})
     equal(MsaaSwitch(value, kMsaaDefault), value);
   for (auto value : {"", "2", "AUTO", "off", " 0"})
     equal(MsaaSwitch(value, kMsaaDefault), kMsaaDefault);
   for (bool apple10 : {false, true}) {
-    check(!MsaaUncompressed(MsaaSwitch("", kMsaaDefault), apple10), "unset keeps Metal's default");
+    check(MsaaUncompressed(MsaaSwitch("", kMsaaDefault), apple10) == !apple10,
+          "unset is auto: off before Apple10, Metal's default on Apple10");
     check(!MsaaUncompressed("1", apple10), "1 keeps Metal's default");
     check(MsaaUncompressed("0", apple10), "0 turns it off on every GPU");
   }
