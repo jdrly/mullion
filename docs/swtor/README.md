@@ -559,7 +559,8 @@ past a buffer and 4 texels past a texture. Both run on the rented M1 under Metal
   `winemetal.so` without LLVM assertion text, built for macOS 15.0 (`minos`), with an ad hoc signature that `codesign`
   verifies; and the internal Metal library (below). The job uploads `mullion-swtor-<commit>` (7 days). For a pull
   request it also runs the host tests in `tests/host` (`meson test 'host_*'`; `host_tessellator` and `host_mutate`
-  below), breaks eleven checks on purpose and requires each to fail, and fails on a compiler warning that
+  below), breaks five checks on purpose and requires each to fail, runs each host test on every break of it in
+  `tests/breaks/` and requires it to fail (below, the host breaks), and fails on a compiler warning that
   `.github/swtor/warnings-x86_64.txt` doesn't list. A push run builds, checks and uploads only: the pull request's run
   of the same tree has already passed the rest.
 
@@ -572,7 +573,8 @@ past a buffer and 4 texels past a texture. Both run on the rented M1 under Metal
   `host_tessellator` takes about 200 s on the runner, which is arm64 and runs the x86_64 host tests under Rosetta; the
   others take about 18 s together. It runs only when the pull request changes what it compiles or how (`src/airconv`,
   `libs/DXBCParser`, `tests/tessellator.hpp`, `tests/reference`, `tests/host`, `tests/meson.build`, `meson.build`,
-  `meson.options`, `build-win64.txt`) or the workflow, or when the step can't tell. `host_dxbc_hash` skips itself there:
+  `meson.options`, `build-win64.txt`), one of its breaks or the workflow, or when the step can't tell; its three breaks
+  run only when it does, about 200 s each. `host_dxbc_hash` skips itself there:
   it needs directories of real shaders (`MULLION_HASHED`). `host_mutate` never runs there: it tests upstream's mutation
   and test-runner tools, not the driver, and its `test_runner_schedule` needs two short processes to overlap under
   `tests/run.py`'s admission, which reads the machine's real memory pressure; on the runner they once ran one after the
@@ -592,60 +594,63 @@ past a buffer and 4 texels past a texture. Both run on the rented M1 under Metal
   without `SOURCE`, its `winemetal.so` unsigned, with an LLVM source path appended and `minos` 26.0, and
   `d3d12core.dll`'s internal library tagged 2.9 with its first function AIR 2.9. Each of the seven has to fail.
 
-  The fifth break guards `host_layer_apply`, which runs the bridge's layer setters (`src/winemetal/unix/layer.c`) on
-  a `CAMetalLayer` without a device while the test's main thread is held for 2 s without its run loop. Its four patches
-  in `tests/breaks/` put `dispatch_sync` back on `MULLION_LAYER_WAIT=0`'s path, compare a change only with the
-  layer, not with the change still on its way to the main thread, leave `STATS`' `mainWaitMaxMs` without its reset,
-  and leave out of it a change still waiting. The test has to fail on each.
-
   The build checks also compute the converter's codegen id again from the checkout (`tools/codegen_id.py`,
   [caches.md](caches.md)) and require it in `d3d11.dll` and `d3d12core.dll`, which key the shader cache on it, and in
-  `VERSION`. The sixth break is a converter change the build's id doesn't follow: the id of the checkout with one
+  `VERSION`. The fifth break is a converter change the build's id doesn't follow: the id of the checkout with one
   comment more in `src/airconv/dxbc_converter.cpp`, against this build. Both DLLs and `VERSION` have to fail.
 
-  The seventh break guards `MULLION_D3D12_GUARD_STATIC_RANGES` in the converter. `host_guard_static_ranges` builds a
+  The host breaks. Every `tests/breaks/host_<test>[.<n>].patch` is a break of the host test `host_<test>`, and the
+  step finds them by name, upstream's and the fork's: it applies each, rebuilds and runs only that test, reverts the
+  patch, and requires meson to count the test as failed. A break that doesn't apply, a test that doesn't build, a
+  timeout, a skip, a test meson doesn't know and a patch named otherwise each fail the step. A new break needs no
+  line in the workflow: the file in `tests/breaks/` is enough, and a break its test doesn't notice fails the pull
+  request. The converter's `tests/breaks/d3d12_bounds_guarded.patch` and `.2.patch` run against
+  `host_guard_static_ranges` too, named in the step. The breaks below also have to fail at a line the step names.
+
+  `host_layer_apply` runs the bridge's layer setters (`src/winemetal/unix/layer.c`) on a `CAMetalLayer` without a
+  device while the test's main thread is held for 2 s without its run loop. Its four breaks put `dispatch_sync` back
+  on `MULLION_LAYER_WAIT=0`'s path, compare a change only with the layer, not with the change still on its way to the
+  main thread, leave `STATS`' `mainWaitMaxMs` without its reset, and leave out of it a change still waiting.
+
+  `MULLION_D3D12_GUARD_STATIC_RANGES` in the converter: `host_guard_static_ranges` builds a
   compute shader that reads a constant buffer by a dynamic index, loads from a structured SRV, and stores and adds to
   a structured UAV, all through one descriptor table, and has the build's native `airconv` write it as LLVM assembly
   for that table's ranges static and volatile, with and without `-guard-static-ranges`. Static with the flag has to be
-  volatile's output byte for byte, static without it has to differ, and the flag must not change volatile's. The
-  control applies each of `tests/breaks/d3d12_bounds_guarded.patch`, `.2.patch` and
-  `host_guard_static_ranges.patch`, which leave a static range's SRVs, UAVs and constant buffers unchecked under the
-  flag, and requires the test to fail on each.
+  volatile's output byte for byte, static without it has to differ, and the flag must not change volatile's. Its
+  breaks, `tests/breaks/d3d12_bounds_guarded.patch`, `.2.patch` and `host_guard_static_ranges.patch`, leave a static
+  range's SRVs, UAVs and constant buffers unchecked under the flag.
 
-  The eighth break guards the shader cache's key against the same switch. `host_compile_key` compiles
+  The shader cache's key against the same switch: `host_compile_key` compiles
   `CompileFunction`'s own loop over the compile arguments, which `tests/host/compile_key.py` copies out of
   `src/d3d12/d3d12_pipeline_graphics.cpp` at build time, and requires two argument chains that differ only in
-  `SM50_SHADER_FLAG_GUARD_STATIC_RANGES` to give two keys, and prints both. The control,
-  `tests/breaks/host_compile_key.patch`, leaves the flags out of the key, and the test has to fail.
+  `SM50_SHADER_FLAG_GUARD_STATIC_RANGES` to give two keys, and prints both. Its break,
+  `tests/breaks/host_compile_key.patch`, leaves the flags out of the key.
 
-  The ninth break guards lossless texture compression. `host_texture_compression` builds the bridge's
+  Lossless texture compression: `host_texture_compression` builds the bridge's
   `texture_compression.h` natively, requires a descriptor whose `WMTTextureInfo.uncompressed` is 1, or any with
   `MULLION_TEX_NO_COMPRESSION=1`, to have `allowGPUOptimizedContents` NO and one with neither to keep Metal's YES, and,
   where the runner has a Metal device, has Metal make a 4x and a single-sampled target each way and requires the one
   asked for back without compression (it prints whether the device compresses the other). `host_compression` runs
-  `MULLION_TEX_MSAA_COMPRESSION`'s rule and lines. Its controls: `tests/breaks/host_texture_compression.patch` leaves
+  `MULLION_TEX_MSAA_COMPRESSION`'s rule and lines. Their breaks: `tests/breaks/host_texture_compression.patch` leaves
   the field out of the bridge, `host_compression.patch` lets `auto` ignore the family, `host_compression.2.patch`
-  leaves a resolve target's type group out. Each test has to fail on its patches.
+  leaves a resolve target's type group out.
 
-  The tenth break guards `MULLION_D3D12_CHECK_RANGES`'s arithmetic. `host_ranges` builds
+  `MULLION_D3D12_CHECK_RANGES`'s arithmetic: `host_ranges` builds
   [`mullion_ranges.hpp`](../../src/mullion/mullion_ranges.hpp) natively and checks ranges of bytes (a sum that wraps
   past 2^64 among them), views and the address ranges they keep, the buffer a command list last found an address in,
-  boxes, block-compressed extents, footprints, the bridge's Metal 4 lengths, the
-  `MULLION-RANGE` line and the `RANGE` section.
-  Its controls: `tests/breaks/host_ranges.patch` computes a range's end as `offset + size`, which wraps,
+  boxes, block-compressed extents, footprints, the bridge's Metal 4 lengths, the `MULLION-RANGE` line and the `RANGE`
+  section. Its breaks: `tests/breaks/host_ranges.patch` computes a range's end as `offset + size`, which wraps,
   `host_ranges.2.patch` counts one slice of a footprint whatever its depth, `host_ranges.3.patch` computes a view's
-  end as `address + size`, and `host_ranges.4.patch` gives the bridge's Metal 4 length from an offset as
-  `length - offset`, which wraps past the end, `host_ranges.5.patch` keeps found address ranges after a buffer is
-  made or released, and `host_ranges.8.patch` keeps a command list's found buffer after one is. The test has to fail
-  on each.
+  end as `address + size`, `host_ranges.4.patch` gives the bridge's Metal 4 length from an offset as
+  `length - offset`, which wraps past the end, `host_ranges.5.patch` keeps found address ranges after a buffer is made
+  or released, and `host_ranges.8.patch` keeps a command list's found buffer after one is.
 
-  The eleventh break guards the window lines. `host_window_lines` builds
-  [`window_lines.h`](../../src/winemetal/unix/window_lines.h) natively and checks the two lines against the report's
-  patterns, the limit, and the fixture's lines. Its controls: `tests/breaks/host_window_lines.patch` writes an
-  activation alone as d9mt's visibility line, which the report would count as a switch, and
-  `host_window_lines.2.patch` updates the watch's last state only for the lines it writes, so the line after the limit
-  starts from the wrong state, and `host_window_lines.3.patch` lets an activation line clear the count of lines left
-  out, so the visibility line after it doesn't carry it. The test has to fail on each.
+  The window lines: `host_window_lines` builds [`window_lines.h`](../../src/winemetal/unix/window_lines.h) natively
+  and checks the two lines against the report's patterns, the limit, and the fixture's lines. Its breaks:
+  `tests/breaks/host_window_lines.patch` writes an activation alone as d9mt's visibility line, which the report would
+  count as a switch, `host_window_lines.2.patch` updates the watch's last state only for the lines it writes, so the
+  line after the limit starts from the wrong state, and `host_window_lines.3.patch` lets an activation line clear the
+  count of lines left out, so the visibility line after it doesn't carry it.
 - **Publish** (`ubuntu-24.04`, after the other jobs): packs the artifact into `mullion-swtor-<commit>.tar.xz` and
   checks that it unpacks to the same files, hash for hash. Only for a push to `swtor-on-mac` does it upload the archive
   (§ Releases). It is the only job with `contents: write`.
@@ -653,7 +658,8 @@ past a buffer and 4 texels past a texture. Both run on the rented M1 under Metal
 **Runner time.** One run at a time for each branch (`swtor-<ref>`): a run in progress is never cancelled, and GitHub
 keeps one more of that branch waiting, which a newer push to the same branch replaces. Another pull request's push
 never drops a run, and nothing drops a push run of `swtor-on-mac` but a later push to it. With three pull requests
-open that is up to four runs at once, about 8 minutes each with warm caches. A push run's Publish waits in
+open that is up to four runs at once, about 8 minutes each with warm caches, measured before the step ran every host
+break; `host_tessellator`'s three breaks add about 10 minutes when they run. A push run's Publish waits in
 `swtor-publish`, one for the whole repository, so two uploads never overlap. No schedule, no manual trigger. Toolchain caches are saved only on a miss. On a miss LLVM takes about 25
 minutes to build; push nothing else while that runs. GitHub lets a pull request's run read only its own caches and
 `swtor-on-mac`'s, so after a toolchain change LLVM builds twice: once in that pull request, once in the first push to
