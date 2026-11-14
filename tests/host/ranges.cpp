@@ -68,6 +68,9 @@ main() {
   check(FootprintBytes(0, 4, 1, 256, 1, 4) == 0, "an empty footprint");
   // numbers no buffer holds don't wrap to a small size
   check(FootprintBytes(UINT32_MAX, UINT32_MAX, UINT32_MAX, UINT32_MAX, 1, 16) == UINT64_MAX, "a footprint too large");
+  // nor does a width whose rounding up to whole blocks would pass 2^64
+  check(FootprintBytes(UINT64_MAX, 1, 1, 256, 4, 8) == UINT64_MAX, "a footprint whose blocks pass 2^64");
+  check(BlocksOf(UINT64_MAX, 4) == (UINT64_MAX >> 2) + 1, "whole blocks of the largest width");
   // the footprint check as CopyTextureRegion makes it: at offset 192 of a 1024-byte buffer it ends at the end, at 512 it
   // runs past
   equal(said(Bytes(192, FootprintBytes(16, 4, 1, 256, 1, 4), 1024)), "fits");

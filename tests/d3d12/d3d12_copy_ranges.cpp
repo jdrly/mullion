@@ -27,6 +27,8 @@ main(int, char **) {
   CHECK(device->CreateCommandQueue(&q, IID_PPV_ARGS(&queue)));
   CHECK(device->CreateCommandAllocator(q.Type, IID_PPV_ARGS(&allocator)));
   CHECK(device->CreateCommandList(0, q.Type, allocator.Get(), nullptr, IID_PPV_ARGS(&list)));
+  // each case resets it
+  CHECK(list->Close());
 
   // the copies' sources hold value(i), the seeds ~value(i); 1024 bytes hold a 4x4 RGBA8 footprint at 0 or 128
   const UINT64 bytes = 256, upload_bytes = 1024, pitch = D3D12_TEXTURE_DATA_PITCH_ALIGNMENT;
@@ -34,6 +36,13 @@ main(int, char **) {
   auto seed = buffer(device.Get(), D3D12_HEAP_TYPE_UPLOAD, upload_bytes, D3D12_RESOURCE_STATE_GENERIC_READ);
   auto target = buffer(device.Get(), D3D12_HEAP_TYPE_DEFAULT, bytes, D3D12_RESOURCE_STATE_COPY_DEST);
   auto small = buffer(device.Get(), D3D12_HEAP_TYPE_UPLOAD, bytes, D3D12_RESOURCE_STATE_GENERIC_READ);
+  // a buffer whose memory is longer than its width: a write-watched one is rounded up to the allocation granularity
+  D3D12_HEAP_PROPERTIES upload{D3D12_HEAP_TYPE_UPLOAD};
+  D3D12_RESOURCE_DESC watched_desc{D3D12_RESOURCE_DIMENSION_BUFFER, 0, bytes, 1, 1, 1, DXGI_FORMAT_UNKNOWN, {1, 0},
+                                   D3D12_TEXTURE_LAYOUT_ROW_MAJOR};
+  ComPtr<ID3D12Resource> watched;
+  device->CreateCommittedResource(&upload, D3D12_HEAP_FLAG_ALLOW_WRITE_WATCH, &watched_desc,
+                                  D3D12_RESOURCE_STATE_GENERIC_READ, nullptr, IID_PPV_ARGS(&watched));
   auto back = buffer(device.Get(), D3D12_HEAP_TYPE_READBACK, upload_bytes, D3D12_RESOURCE_STATE_COPY_DEST);
   D3D12_HEAP_PROPERTIES heap{D3D12_HEAP_TYPE_DEFAULT};
   D3D12_RESOURCE_DESC texture_desc{D3D12_RESOURCE_DIMENSION_TEXTURE2D, 0, 4, 4, 1, 1, DXGI_FORMAT_R8G8B8A8_UNORM,
@@ -41,10 +50,11 @@ main(int, char **) {
   ComPtr<ID3D12Resource> texture;
   device->CreateCommittedResource(&heap, D3D12_HEAP_FLAG_NONE, &texture_desc, D3D12_RESOURCE_STATE_COPY_DEST, nullptr,
                                   IID_PPV_ARGS(&texture));
-  if (!expect(source && seed && target && small && back && texture, "resources"))
+  if (!expect(source && seed && target && small && watched && back && texture, "resources"))
     return verdict();
   for (auto [resource, size, flip] : {std::tuple{source.Get(), upload_bytes, false},
-                                      std::tuple{small.Get(), bytes, false}, std::tuple{seed.Get(), upload_bytes, true}}) {
+                                      std::tuple{small.Get(), bytes, false}, std::tuple{watched.Get(), bytes, false},
+                                      std::tuple{seed.Get(), upload_bytes, true}}) {
     UINT8 *data;
     CHECK(resource->Map(0, nullptr, (void **)&data));
     for (UINT64 i = 0; i < size; i++)
@@ -75,15 +85,18 @@ main(int, char **) {
     const char *what;
     UINT64 dst, src, count;
     bool lands;
+    ID3D12Resource *from;
   };
-  for (auto c : {BufferCase{"the source past its end", 0, 192, 128, false},
-                 BufferCase{"the destination past its end", 200, 0, 64, false},
-                 BufferCase{"an offset past the source", 0, 260, 4, false}, BufferCase{"in range", 16, 32, 64, true}}) {
+  for (auto c : {BufferCase{"the source past its end", 0, 192, 128, false, small.Get()},
+                 BufferCase{"the destination past its end", 200, 0, 64, false, small.Get()},
+                 BufferCase{"an offset past the source", 0, 260, 4, false, small.Get()},
+                 BufferCase{"an offset past the source's width, inside its memory", 0, 256, 16, false, watched.Get()},
+                 BufferCase{"in range", 16, 32, 64, true, small.Get()}}) {
     step("CopyBufferRegion: %s", c.what);
     CHECK(run(
         [&] {
           list->CopyBufferRegion(target.Get(), 0, seed.Get(), 0, bytes);
-          list->CopyBufferRegion(target.Get(), c.dst, small.Get(), c.src, c.count);
+          list->CopyBufferRegion(target.Get(), c.dst, c.from, c.src, c.count);
           transition(list.Get(), target.Get(), D3D12_RESOURCE_STATE_COPY_DEST, D3D12_RESOURCE_STATE_COPY_SOURCE);
           list->CopyBufferRegion(back.Get(), 0, target.Get(), 0, bytes);
           transition(list.Get(), target.Get(), D3D12_RESOURCE_STATE_COPY_SOURCE, D3D12_RESOURCE_STATE_COPY_DEST);

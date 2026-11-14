@@ -2265,18 +2265,19 @@ public:
     return true;
   }
 
-  // MULLION_D3D12_CHECK_RANGES: whether CopyBufferRegion's two ranges lie in their resources, both buffers. A
-  // texture has no `buffer`, which the copy would read through
+  // MULLION_D3D12_CHECK_RANGES: whether CopyBufferRegion's two ranges lie in their resources, both buffers, by the
+  // width Direct3D gave them: a buffer's Metal allocation may be longer. A texture has no `buffer`, which the copy
+  // would read through
   bool
   BufferCopyInRange(
       ID3D12Resource *pDstBuffer, UINT64 DstOffset, ID3D12Resource *pSrcBuffer, UINT64 SrcOffset, UINT64 ByteCount
   ) {
     for (auto [resource, offset, site] :
          {std::tuple{pSrcBuffer, SrcOffset, &kBufferCopySrc}, std::tuple{pDstBuffer, DstOffset, &kBufferCopyDst}}) {
-      auto &buffer = static_cast<MTLD3D12Resource *>(resource)->buffer;
-      auto overrun = buffer ? ranges::Bytes(offset, ByteCount, buffer->length())
-                            : ranges::Overrun{"Resource", uint64_t(resource->GetDesc().Dimension),
-                                              D3D12_RESOURCE_DIMENSION_BUFFER};
+      auto desc = resource->GetDesc();
+      auto overrun = desc.Dimension == D3D12_RESOURCE_DIMENSION_BUFFER && static_cast<MTLD3D12Resource *>(resource)->buffer
+                         ? ranges::Bytes(offset, ByteCount, desc.Width)
+                         : ranges::Overrun{"Resource", uint64_t(desc.Dimension), D3D12_RESOURCE_DIMENSION_BUFFER};
       if (overrun) {
         RangeFired(*site, overrun);
         return false;
@@ -2285,43 +2286,42 @@ public:
     return true;
   }
 
-  // MULLION_D3D12_CHECK_RANGES: whether CopyTextureRegion's source box lies in its subresource or footprint, the region
-  // it writes from (DstX, DstY, DstZ) in the destination's, and each placed footprint in its buffer. A copy that
+  // MULLION_D3D12_CHECK_RANGES: whether each placed footprint of a CopyTextureRegion lies in its buffer, its source box
+  // in its subresource or footprint, and the region it writes from (DstX, DstY, DstZ) in the destination's. A copy that
   // CopyTextureRegion drops anyway (no texture or buffer, an empty box, a format Metal lacks) passes, to be dropped there
   bool
   TextureCopyInRange(
       const D3D12_TEXTURE_COPY_LOCATION *pDst, UINT DstX, UINT DstY, UINT DstZ, const D3D12_TEXTURE_COPY_LOCATION *pSrc,
       const D3D12_BOX *pSrcBox
   ) {
-    // a location's extent in whole blocks and its block's width; nothing where CopyTextureRegion drops the copy
+    // a location's extent in whole blocks, its block's width and bytes; a footprint's description and its buffer's
+    // width. nothing where CopyTextureRegion drops the copy
     struct Extent {
       ranges::Box box;
-      uint64_t block;
+      uint64_t block, bytes;
+      const D3D12_PLACED_SUBRESOURCE_FOOTPRINT *footprint = nullptr;
+      uint64_t width = 0;
     };
-    bool fits = true;
-    auto extent_of = [&](const D3D12_TEXTURE_COPY_LOCATION &location, ranges::Site &footprint_site) -> std::optional<Extent> {
+    auto extent_of = [&](const D3D12_TEXTURE_COPY_LOCATION &location) -> std::optional<Extent> {
       auto resource = static_cast<MTLD3D12Resource *>(location.pResource);
+      auto desc = location.pResource->GetDesc();
       MTL_DXGI_FORMAT_DESC format;
+      auto unit = [&](ranges::Box box) {
+        bool bc = format.Flag & MTL_DXGI_FORMAT_BC;
+        uint64_t block = bc ? 4 : 1;
+        return Extent{ranges::InBlocks(box, block), block, bc ? format.BlockSize : format.BytesPerTexel};
+      };
       if (location.Type == D3D12_TEXTURE_COPY_TYPE_PLACED_FOOTPRINT) {
         auto &footprint = location.PlacedFootprint.Footprint;
         if (!resource->buffer || FAILED(MTLQueryDXGIFormat(device_->GetMTLDevice(), footprint.Format, format)))
           return std::nullopt;
-        bool bc = format.Flag & MTL_DXGI_FORMAT_BC;
-        uint64_t block = bc ? 4 : 1;
-        auto bytes = ranges::FootprintBytes(
-            footprint.Width, footprint.Height, footprint.Depth, footprint.RowPitch, block,
-            bc ? format.BlockSize : format.BytesPerTexel
-        );
-        if (auto overrun = ranges::Bytes(location.PlacedFootprint.Offset, bytes, resource->buffer->length())) {
-          overrun.part = "Footprint";
-          RangeFired(footprint_site, overrun);
-          fits = false;
-        }
-        return Extent{ranges::InBlocks({0, 0, 0, footprint.Width, footprint.Height, footprint.Depth}, block), block};
+        auto extent = unit({0, 0, 0, footprint.Width, footprint.Height, footprint.Depth});
+        extent.footprint = &location.PlacedFootprint;
+        extent.width = desc.Width;
+        return extent;
       }
       if (!resource->texture)
         return std::nullopt;
-      auto desc = location.pResource->GetDesc();
       UINT level = 0, slice = 0, plane = 0;
       DecomposeSubresource(desc, location.SubresourceIndex, &level, &slice, &plane);
       if (FAILED(MTLQueryDXGIFormat(device_->GetMTLDevice(), desc.Format, format, plane)))
@@ -2333,14 +2333,26 @@ public:
         box.right = resource->texture->plane(plane)->width();
         box.bottom = resource->texture->plane(plane)->height();
       }
-      uint64_t block = format.Flag & MTL_DXGI_FORMAT_BC ? 4 : 1;
-      return Extent{ranges::InBlocks(box, block), block};
+      return unit(box);
     };
-    auto src = extent_of(*pSrc, kTextureCopySrcFootprint), dst = extent_of(*pDst, kTextureCopyDstFootprint);
-    if (!fits)
-      return false;
+    auto src = extent_of(*pSrc), dst = extent_of(*pDst);
     if (!src || !dst)
       return true;
+    // a footprint's bytes from its offset, by the larger unit of its format and the other end's: Metal moves a texel
+    // of the texture's format, which a footprint of another format would hold fewer bytes of
+    for (auto [at, other, site] : {std::tuple{&*src, &*dst, &kTextureCopySrcFootprint},
+                                   std::tuple{&*dst, &*src, &kTextureCopyDstFootprint}}) {
+      if (!at->footprint)
+        continue;
+      auto &footprint = at->footprint->Footprint;
+      auto bytes = ranges::FootprintBytes(footprint.Width, footprint.Height, footprint.Depth, footprint.RowPitch,
+                                          at->block, std::max(at->bytes, other->bytes));
+      if (auto overrun = ranges::Bytes(at->footprint->Offset, bytes, at->width)) {
+        overrun.part = "Footprint";
+        RangeFired(*site, overrun);
+        return false;
+      }
+    }
     auto box = pSrcBox ? ranges::Box{pSrcBox->left, pSrcBox->top,    pSrcBox->front,
                                      pSrcBox->right, pSrcBox->bottom, pSrcBox->back}
                        : src->box;

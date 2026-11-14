@@ -426,12 +426,12 @@ and a size whose sum passes 2^64 run past, as they should.
 
 | Call | Dropped when |
 |---|---|
-| `CopyBufferRegion` | Either resource isn't a buffer, or `SrcOffset` or `DstOffset` plus `NumBytes` runs past its buffer's length (`what=` `srcResource`, `srcOffset`, `srcSize` or their `dst` forms) |
-| `CopyTextureRegion` | A placed footprint runs past its buffer (`srcFootprint`, `dstFootprint`): its offset, then every row of every slice at `RowPitch` but the last row, which needs only its texels. The source box runs past the source's level or footprint (`srcX`, `srcY`, `srcZ`). The region it writes from `DstX`, `DstY`, `DstZ` runs past the destination's (`dstX`, `dstY`, `dstZ`). A block-compressed level counts in whole 4-texel blocks, small mips too, and a copy between a compressed format and another carries one block into one texel or back. A copy the call drops anyway (no texture or buffer, an empty box, a format Metal lacks) isn't counted |
+| `CopyBufferRegion` | Either resource isn't a buffer, or `SrcOffset` or `DstOffset` plus `NumBytes` runs past its buffer's width, as Direct3D gave it (`GetDesc().Width`; the Metal allocation may be longer) (`what=` `srcResource`, `srcOffset`, `srcSize` or their `dst` forms) |
+| `CopyTextureRegion` | A placed footprint runs past its buffer's width (`srcFootprint`, `dstFootprint`): its offset, then every row of every slice at `RowPitch` but the last row, which needs only its texels, each of the larger size of the footprint's format and the texture's at the other end, which Metal moves. The source box runs past the source's level or footprint (`srcX`, `srcY`, `srcZ`). The region it writes from `DstX`, `DstY`, `DstZ` runs past the destination's (`dstX`, `dstY`, `dstZ`). A block-compressed level counts in whole 4-texel blocks, small mips too, and a copy between a compressed format and another carries one block into one texel or back. A copy the call drops anyway (no texture or buffer, an empty box, a format Metal lacks) isn't counted |
 
 `MULLION-RANGE call=CopyBufferRegion what=srcSize given=4096 limit=256 action=dropped`: `call` the Direct3D call,
 `what` the side (`src`, `dst`) and the number, `given` the value the game gave, `limit` the most the resource takes
-there: the buffer's length for an offset, what it has past the offset for a size or a footprint, the level's or
+there: the buffer's width for an offset, what it has past the offset for a size or a footprint, the level's or
 footprint's extent for an edge, `1` (`D3D12_RESOURCE_DIMENSION_BUFFER`) where `given` is the dimension of a resource
 that isn't a buffer. One line per check per process, for the first call it drops: `CopyBufferRegion` has two checks,
 its source and its destination, and `CopyTextureRegion` four, its two footprints, its box and its region. `action` is

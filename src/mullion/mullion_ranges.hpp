@@ -10,7 +10,7 @@
 //
 //   MULLION-RANGE call=CopyBufferRegion what=srcSize given=4096 limit=256 action=dropped
 //
-// `what` is the side, src or dst, and the number: Offset or Size (a range of bytes, `limit` the buffer's length or
+// `what` is the side, src or dst, and the number: Offset or Size (a range of bytes, `limit` the buffer's width or
 // what it has past the offset), X, Y or Z (a box's or region's far edge, `limit` the level's), Footprint (a placed
 // footprint's offset or bytes, as Offset and Size), Resource (`given` its D3D12_RESOURCE_DIMENSION where a buffer,
 // 1, was asked for). `given` is the value the game gave. Every time it fires the call's counter goes up; with
@@ -65,9 +65,10 @@ Within(const Box &box, const Box &extent) {
   return {};
 }
 
+// whole blocks: a partial one counts. never wraps
 inline uint64_t
 BlocksOf(uint64_t texels, uint64_t block) {
-  return (texels + block - 1) / block;
+  return texels / block + (texels % block != 0);
 }
 
 // a level's extent in whole blocks: a block-compressed region counts full 4-texel blocks, including in mips smaller
