@@ -171,7 +171,9 @@ main(int argc, char **argv) {
   list->SetComputeRootConstantBufferView(0, constants->GetGPUVirtualAddress());
   list->SetComputeRootUnorderedAccessView(2, unordered->GetGPUVirtualAddress());
   list->SetComputeRootUnorderedAccessView(3, output->GetGPUVirtualAddress());
-  list->SetComputeRoot32BitConstants(4, 3, indices, 0);
+  // element 1, not 100: the view the command sets goes unchecked (its length is 0xffffffff), and it has to stay inside
+  const UINT inside[3] = {20, 1, 100};
+  list->SetComputeRoot32BitConstants(4, 3, inside, 0);
   list->SetComputeRootShaderResourceView(5, structured->GetGPUVirtualAddress());
   list->ExecuteIndirect(signature.Get(), 1, arguments.Get(), 0, nullptr, 0);
   list->SetComputeRootUnorderedAccessView(3, output->GetGPUVirtualAddress() + 128);
