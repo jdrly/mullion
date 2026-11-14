@@ -27,7 +27,19 @@ main(int argc, char **argv) {
     printf("skipped: dxcompiler.dll not found\n");
     return 77;
   }
-  auto cs = compiler.compile(hlsl, "cs", "cs");
+  std::string cs;
+  if (compiler.dxc)
+    cs = compiler.compile(hlsl, "cs", "cs");
+  else {
+    // D3DCOMPILE Constants: "Directs the compiler to enable unbounded descriptor tables" (as d3d12_root_ranges)
+    ComPtr<ID3DBlob> code, errors;
+    HRESULT hr = D3DCompile(hlsl, sizeof(hlsl) - 1, nullptr, nullptr, nullptr, "cs", "cs_5_1",
+                            D3DCOMPILE_ENABLE_UNBOUNDED_DESCRIPTOR_TABLES, 0, &code, &errors);
+    if (FAILED(hr) && errors)
+      printf("cs: %.*s\n", int(errors->GetBufferSize()), static_cast<const char *>(errors->GetBufferPointer()));
+    if (SUCCEEDED(hr))
+      cs = kept(std::string(static_cast<const char *>(code->GetBufferPointer()), code->GetBufferSize()), "cs");
+  }
   if (cs.empty()) {
     printf("failed: HLSL did not compile\n");
     return 1;

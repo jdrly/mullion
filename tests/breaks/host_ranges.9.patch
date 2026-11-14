@@ -1,0 +1,12 @@
+# a table's span is its last range's end: a range placed before another shortens it
+--- a/src/mullion/mullion_ranges.hpp
++++ b/src/mullion/mullion_ranges.hpp
+@@ -147,7 +147,7 @@
+       return ~0u;
+     uint64_t first = offsets[i] == ~0u ? next : offsets[i];
+     next = first + counts[i];
+-    span = std::max(span, next);
++    span = next;
+   }
+   return span >= ~0u ? ~0u : uint32_t(span);
+ }

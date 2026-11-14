@@ -462,6 +462,9 @@ public:
   // directly indexed heaps' counts, ~0u without the heap (SM50_SHADER_FLAG_CHECK_DESCRIPTOR_INDICES). Null and ~0u
   // without the switch, and for a local root signature
   uint32_t const *TableCountQwords = nullptr;
+  // and, for each descriptor table parameter, how many descriptors its ranges reach from the table's start, ~0u for an
+  // unbounded range or another parameter (MULLION-RANGE call=SetRootDescriptorTable)
+  uint32_t const *TableSpans = nullptr;
   uint32_t ResourceHeapCountQword = ~0u, SamplerHeapCountQword = ~0u;
   // the most any root signature uploads: a qword per parameter (a DWORD of root cost at least), then the two heaps and
   // the lock table. jdrly/mullion: with MULLION_D3D12_CHECK_RANGES=1 also a root view's length (a root view costs two

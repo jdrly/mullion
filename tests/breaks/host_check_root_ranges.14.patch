@@ -1,0 +1,12 @@
+# a UAV counter's descriptor index through a table is not clamped
+--- a/src/airconv/dxbc_binding_rootsig.cpp
++++ b/src/airconv/dxbc_binding_rootsig.cpp
+@@ -402,7 +402,7 @@
+     if (DescriptorOffset == ~0u)
+       return {}; // root descriptor can not have counters associated
+     auto Pointer = GetUAVCounterDescriptor(
+-        Builder, HeapPointer, Index, UAV.range.lower_bound, DescriptorOffset, DescriptorCount(Builder, UAV.arg_index)
++        Builder, HeapPointer, Index, UAV.range.lower_bound, DescriptorOffset, nullptr
+     );
+ 
+     return CounterDescriptor{Pointer};

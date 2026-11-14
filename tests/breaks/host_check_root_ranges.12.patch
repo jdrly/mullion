@@ -1,0 +1,12 @@
+# an SRV texture's descriptor index through a table is not clamped
+--- a/src/airconv/dxbc_binding_rootsig.cpp
++++ b/src/airconv/dxbc_binding_rootsig.cpp
+@@ -288,7 +288,7 @@
+ 
+     auto [Handle, Metadata, FormatRange] =
+         GetTextureDescriptor(Builder, HeapPointer, Index, ResourceKind, SRV.range.lower_bound, DescriptorOffset,
+-                             DescriptorCount(Builder, SRV.arg_index));
++                             nullptr);
+     return TextureDescirptor{Handle,       Metadata,   false, ResourceKind, ResourceKindLogical,
+                              MemoryAccess, SampleType, FormatRange};
+   }

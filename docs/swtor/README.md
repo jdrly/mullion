@@ -527,7 +527,12 @@ declares them under `SM50_SHADER_FLAG_CHECK_DESCRIPTOR_INDICES`. A table's is th
 its base has from there (`ranges::DescriptorsLeft`), written when the table is set, when `SetDescriptorHeaps` binds
 heaps and when a root signature is set; a heap's is its `NumDescriptors`. An index at or past the count reads the
 last descriptor the heap has: another resource of the game's, never memory past the heap's buffer. A table whose base
-lies in no heap the list has bound gets no clamp (`UINT32_MAX`), as upstream. The root arguments may now hold twice as
+lies in no heap the list has bound gets no clamp (`UINT32_MAX`), as upstream. A root signature of no parameters that
+indexes the heaps directly gets its heaps' counts all the same. The clamp happens on the GPU, which says nothing back,
+so what the list sees is what it says: `MULLION-RANGE call=SetRootDescriptorTable what=tableSize given=<n> limit=<n>
+action=clamped` the first time a table is set whose ranges declare more descriptors than its heap has from its base
+(`given` the ranges' reach, `ranges::TableSpan`; `limit` what the heap has), counted in `RANGE` as
+`SetRootDescriptorTable`. A table of an unbounded range declares no end and writes no line. The root arguments may now hold twice as
 many qwords as a root signature's cost, so the staging tables of each command list are `2 × 64 + 5` qwords, with the
 switch on or off.
 
@@ -669,7 +674,8 @@ past a buffer and 4 texels past a texture. Both run on the rented M1 under Metal
   end as `address + size`, and `host_ranges.4.patch` gives the bridge's Metal 4 length from an offset as
   `length - offset`, which wraps past the end, `host_ranges.5.patch` keeps found address ranges after a buffer is
   made or released, `host_ranges.6.patch` binds a root view by its buffer's whole length, past the 32 bits a
-  descriptor keeps, `host_ranges.7.patch` counts a table at its heap's end as in the heap, and `host_ranges.8.patch`
+  descriptor keeps, `host_ranges.7.patch` counts a table at its heap's end as in the heap, `host_ranges.9.patch` cuts a table's span to
+  its last range, and `host_ranges.8.patch`
   keeps a command list's found buffer after one is. The test has to fail on each.
 
   The eleventh break guards the window lines. `host_window_lines` builds
@@ -692,8 +698,9 @@ past a buffer and 4 texels past a texture. Both run on the rented M1 under Metal
   or UAV unchecked under the flag, and `.4` to `.7` take the fallback away from the view or from one load path each.
   For `-check-descriptor-indices` it converts the shader for root signatures that put one kind in a table and the
   others in root descriptors, and traces each load of a descriptor through the table: with the flag every one has an
-  index that depends on the table's count, and without it none does. `.8` clamps no index, `.9` to `.11` leave the
-  constant buffer's, the SRV's or the UAV's out. The test has to fail on each, at that view, at the trace or at that
+  index that depends on the table's count, and without it none does; a third shader does the same for a texture, a
+  UAV's counter and a sampler through two tables. `.8` clamps no index, `.9` to `.14` leave the constant buffer's, the
+  SRV's, the UAV's, the texture's, the sampler's or the counter's out. The test has to fail on each, at that view, at the trace or at that
   kind.
 - **Publish** (`ubuntu-24.04`, after the other jobs): packs the artifact into `mullion-swtor-<commit>.tar.xz` and
   checks that it unpacks to the same files, hash for hash. Only for a push to `swtor-on-mac` does it upload the archive

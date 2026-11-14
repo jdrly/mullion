@@ -438,6 +438,7 @@ class MTLD3D12RootSignatureImpl : public MTLD3D12DeviceChild<MTLD3D12RootSignatu
   std::vector<uint32_t> qword_offsets_;
   std::vector<uint32_t> root_length_qwords_;
   std::vector<uint32_t> table_count_qwords_;
+  std::vector<uint32_t> table_spans_;
 
   std::vector<Rc<Sampler>> static_samplers_; // which is not really "static"
   /**
@@ -627,10 +628,22 @@ public:
       RootLengthQwords = root_length_qwords_.data();
       // then each descriptor table's count, and the directly indexed heaps'
       table_count_qwords_.assign(desc.NumParameters, ~0u);
-      for (unsigned i = 0; i < desc.NumParameters; i++)
-        if (desc.pParameters[i].ParameterType == D3D12_ROOT_PARAMETER_TYPE_DESCRIPTOR_TABLE)
-          table_count_qwords_[i] = total_qwords++;
+      table_spans_.assign(desc.NumParameters, ~0u);
+      for (unsigned i = 0; i < desc.NumParameters; i++) {
+        if (desc.pParameters[i].ParameterType != D3D12_ROOT_PARAMETER_TYPE_DESCRIPTOR_TABLE)
+          continue;
+        table_count_qwords_[i] = total_qwords++;
+        // the descriptors the table's ranges reach
+        auto &table = desc.pParameters[i].DescriptorTable;
+        std::vector<uint32_t> offsets, counts;
+        for (unsigned r = 0; r < table.NumDescriptorRanges; r++) {
+          offsets.push_back(table.pDescriptorRanges[r].OffsetInDescriptorsFromTableStart);
+          counts.push_back(table.pDescriptorRanges[r].NumDescriptors);
+        }
+        table_spans_[i] = ranges::TableSpan(offsets.data(), counts.data(), offsets.size());
+      }
       TableCountQwords = table_count_qwords_.data();
+      TableSpans = table_spans_.data();
       if (ResourceHeapQword != ~0u)
         ResourceHeapCountQword = total_qwords++;
       if (SamplerHeapQword != ~0u)

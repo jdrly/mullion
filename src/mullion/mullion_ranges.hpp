@@ -136,6 +136,22 @@ DescriptorsLeft(uint64_t base, uint64_t start, uint64_t end, uint64_t increment)
   return std::min<uint64_t>((end - base) / increment, UINT32_MAX);
 }
 
+// how many descriptors a table's ranges reach from its start: each range of `counts[i]` descriptors at
+// `offsets[i]`, or right after the range before it where that is ~0u (D3D12_DESCRIPTOR_RANGE_OFFSET_APPEND). ~0u for
+// a table with an unbounded range (a count of ~0u), which declares no end
+inline uint32_t
+TableSpan(const uint32_t *offsets, const uint32_t *counts, size_t ranges) {
+  uint64_t next = 0, span = 0;
+  for (size_t i = 0; i < ranges; i++) {
+    if (counts[i] == ~0u)
+      return ~0u;
+    uint64_t first = offsets[i] == ~0u ? next : offsets[i];
+    next = first + counts[i];
+    span = std::max(span, next);
+  }
+  return span >= ~0u ? ~0u : uint32_t(span);
+}
+
 // the address ranges of live buffers a check found, newest first, kept while buffer_generation is the one they were
 // found at, for the device they were found in. Numbers only, never a
 // buffer: a range outlives nothing. Not thread-safe: each command list has its own, each thread making views its own
@@ -237,6 +253,7 @@ enum class Call : unsigned {
   CreateConstantBufferView,
   WriteBufferImmediate,
   SetRootView,
+  SetRootDescriptorTable,
   Count
 };
 
@@ -257,6 +274,8 @@ CallName(Call call) {
     return "WriteBufferImmediate";
   case Call::SetRootView:
     return "SetRootView";
+  case Call::SetRootDescriptorTable:
+    return "SetRootDescriptorTable";
   default:
     return "?";
   }

@@ -196,7 +196,8 @@ static ranges::Site kBufferCopySrc{ranges::Call::CopyBufferRegion, "src"},
     kTextureCopyDstRegion{ranges::Call::CopyTextureRegion, "dst"},
     kIndexView{ranges::Call::IASetIndexBuffer, "view"}, kVertexView{ranges::Call::IASetVertexBuffers, "view"},
     kImmediate{ranges::Call::WriteBufferImmediate, "dest"},
-    kRootViewAddress{ranges::Call::SetRootView, "view", "clamped"};
+    kRootViewAddress{ranges::Call::SetRootView, "view", "clamped"},
+    kTableSpan{ranges::Call::SetRootDescriptorTable, "table", "clamped"};
 
 // a check fired at `site`: counted, and its line written the first time
 static void
@@ -3189,7 +3190,12 @@ public:
   void
   SetTableCount(MTLD3D12RootSignature *rootsig, uint64_t *staging, DirtyState dirty, UINT Index, uint64_t Base) {
     auto &count = staging[rootsig->TableCountQwords[Index]];
-    if (auto left = TableDescriptors(Base); count != left) {
+    auto left = TableDescriptors(Base);
+    // a table whose ranges declare more descriptors than its heap has from its base: an index into the rest is clamped
+    // on the GPU, which says nothing back, so this says it here. unbounded ranges declare no end
+    if (auto span = rootsig->TableSpans[Index]; span != ~0u && left != UINT32_MAX && span > left)
+      RangeFired(kTableSpan, ranges::Overrun{"Size", span, left});
+    if (count != left) {
       count = left;
       dirty_state_.set(dirty);
     }
@@ -3198,9 +3204,10 @@ public:
   // MULLION_D3D12_CHECK_RANGES: every descriptor count a root signature carries, its tables' and its heaps'
   void
   WriteDescriptorCounts(MTLD3D12RootSignature *rootsig, uint64_t *staging, DirtyState dirty) {
-    if (!rootsig || !rootsig->TableCountQwords)
+    if (!rootsig)
       return;
-    for (UINT i = 0; i < rootsig->ParameterSlots; i++)
+    // a root signature of no parameters may still index the heaps directly: its heaps' counts don't wait for tables
+    for (UINT i = 0; rootsig->TableCountQwords && i < rootsig->ParameterSlots; i++)
       if (rootsig->TableCountQwords[i] != ~0u)
         staging[rootsig->TableCountQwords[i]] = TableDescriptors(staging[rootsig->SlotQwordOffsets[i]]);
     if (rootsig->ResourceHeapCountQword != ~0u)

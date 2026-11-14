@@ -1,0 +1,12 @@
+# a sampler's descriptor index through a table is not clamped
+--- a/src/airconv/dxbc_binding_rootsig.cpp
++++ b/src/airconv/dxbc_binding_rootsig.cpp
+@@ -226,7 +226,7 @@
+     auto HeapPointer = GetArgument(Builder, RootSignatureArgumentIndex, Sampler.arg_index);
+     return GetSamplerDescriptor(
+         Builder, HeapPointer, Index, Sampler.range.lower_bound, DescriptorOffset,
+-        DescriptorCount(Builder, Sampler.arg_index)
++        nullptr
+     );
+   }
+ 

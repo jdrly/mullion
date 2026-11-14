@@ -17,10 +17,12 @@
 #include "../dxbc_hash.hpp"
 #include <algorithm>
 #include <cstdio>
+#include <cstring>
 #include <functional>
 #include <map>
 #include <set>
 #include <sstream>
+#include <tuple>
 #include <cstdlib>
 #include <filesystem>
 #include <fstream>
@@ -205,6 +207,51 @@ fallback_program() {
   return p;
 }
 
+// cs_5_0, the descriptors the other shaders don't fetch through a table: a texture, a sampler and a UAV's counter
+//   dcl_sampler s0, mode_default
+//   dcl_resource_texture2d (float,float,float,float) t0
+//   dcl_uav_structured u0, 4 (with an order-preserving counter)
+//   dcl_temps 2
+//   dcl_thread_group 1, 1, 1
+//   sample_l r0.x, l(0.5, 0.5, 0, 0), t0.xyzw, s0, l(0)
+//   imm_atomic_alloc r1.x, u0
+//   store_structured u0.x, r1.x, l(0), r0.x
+//   ret
+static Words
+heap_program() {
+  constexpr uint32_t x = D3D10_SB_OPERAND_4_COMPONENT_MASK_X;
+  Words p{ENCODE_D3D10_SB_TOKENIZED_PROGRAM_VERSION_TOKEN(D3D11_SB_COMPUTE_SHADER, 5, 0), 0};
+  instruction(p, D3D10_SB_OPCODE_DCL_SAMPLER, {empty(D3D10_SB_OPERAND_TYPE_SAMPLER, 0)},
+              ENCODE_D3D10_SB_SAMPLER_MODE(D3D10_SB_SAMPLER_MODE_DEFAULT));
+  uint32_t returns = 0;
+  for (uint32_t c = 0; c < 4; c++)
+    returns |= ENCODE_D3D10_SB_RESOURCE_RETURN_TYPE(D3D10_SB_RETURN_TYPE_FLOAT, c);
+  instruction(p, D3D10_SB_OPCODE_DCL_RESOURCE, {empty(D3D10_SB_OPERAND_TYPE_RESOURCE, 0), {returns}},
+              ENCODE_D3D10_SB_RESOURCE_DIMENSION(D3D10_SB_RESOURCE_DIMENSION_TEXTURE2D));
+  instruction(p, D3D11_SB_OPCODE_DCL_UNORDERED_ACCESS_VIEW_STRUCTURED,
+              {empty(D3D11_SB_OPERAND_TYPE_UNORDERED_ACCESS_VIEW, 0), {4}}, D3D11_SB_UAV_HAS_ORDER_PRESERVING_COUNTER);
+  instruction(p, D3D10_SB_OPCODE_DCL_TEMPS, {{2}});
+  instruction(p, D3D11_SB_OPCODE_DCL_THREAD_GROUP, {{1, 1, 1}});
+  const float half = 0.5f;
+  uint32_t h;
+  memcpy(&h, &half, sizeof(h));
+  Words coordinates{four(D3D10_SB_OPERAND_TYPE_IMMEDIATE32, D3D10_SB_OPERAND_4_COMPONENT_NOSWIZZLE,
+                         D3D10_SB_OPERAND_4_COMPONENT_SWIZZLE_MODE, D3D10_SB_OPERAND_INDEX_0D),
+                    h, h, 0, 0};
+  instruction(p, D3D10_SB_OPCODE_SAMPLE_L,
+              {masked(D3D10_SB_OPERAND_TYPE_TEMP, 0, x), coordinates,
+               swizzled(D3D10_SB_OPERAND_TYPE_RESOURCE, 0, D3D10_SB_OPERAND_4_COMPONENT_NOSWIZZLE),
+               empty(D3D10_SB_OPERAND_TYPE_SAMPLER, 0), immediate(0)});
+  instruction(p, D3D11_SB_OPCODE_IMM_ATOMIC_ALLOC,
+              {masked(D3D10_SB_OPERAND_TYPE_TEMP, 1, x), empty(D3D11_SB_OPERAND_TYPE_UNORDERED_ACCESS_VIEW, 0)});
+  instruction(p, D3D11_SB_OPCODE_STORE_STRUCTURED,
+              {masked(D3D11_SB_OPERAND_TYPE_UNORDERED_ACCESS_VIEW, 0, x), selected(D3D10_SB_OPERAND_TYPE_TEMP, 1, 0),
+               immediate(0), selected(D3D10_SB_OPERAND_TYPE_TEMP, 0, 0)});
+  instruction(p, D3D10_SB_OPCODE_RET);
+  p[1] = p.size();
+  return p;
+}
+
 // a container of parts, each a name and its words, signed with the hash Direct3D checks
 static std::string
 container(std::initializer_list<std::pair<const char *, Words>> parts) {
@@ -294,8 +341,9 @@ trace(const std::string &ir, std::initializer_list<uint32_t> views, uint32_t loc
   std::istringstream lines(ir);
   bool in_function = false;
   for (std::string line; std::getline(lines, line);) {
+    // the shader's own function: helpers after it reuse its names
     if (line.rfind("define ", 0) == 0) {
-      in_function = true;
+      in_function = line.find("@shader_main(") != std::string::npos;
       continue;
     }
     if (line == "}")
@@ -310,7 +358,7 @@ trace(const std::string &ir, std::initializer_list<uint32_t> views, uint32_t loc
     for (std::string word; words >> word;) {
       while (!word.empty() && (word.back() == ',' || word.back() == ')'))
         word.pop_back();
-      if (word.size() > 1 && word[0] == '%')
+      if (word.size() > 1 && word[0] == '%' && word.rfind("%struct.", 0) != 0)
         def.operands.push_back(word);
     }
     if (def.op == "getelementptr" && line.find("%argument_buffer_struct, ") != std::string::npos) {
@@ -394,8 +442,11 @@ descriptors(const std::string &ir, int table, int count) {
   std::istringstream lines(ir);
   bool in_function = false;
   for (std::string line; std::getline(lines, line);) {
+    // the shader's own function: helpers after it reuse its names
     if (line.rfind("define ", 0) == 0) {
-      in_function = true;
+      in_function = line.find("@shader_main(") != std::string::npos;
+      if (!in_function)
+        continue;
       auto at = line.find("%argument_buffer_struct addrspace(2)* %");
       if (at != std::string::npos) {
         arguments = line.substr(line.find('%', at + 1));
@@ -415,7 +466,9 @@ descriptors(const std::string &ir, int table, int count) {
     for (std::string word; words >> word;) {
       while (!word.empty() && (word.back() == ',' || word.back() == ')'))
         word.pop_back();
-      if (word.size() > 1 && word[0] == '%' && word.find("argument_buffer_struct") == std::string::npos)
+      // a value, not a named type (%argument_buffer_struct, %struct._texture_2d_t and their kind)
+      if (word.size() > 1 && word[0] == '%' && word.find("argument_buffer_struct") == std::string::npos &&
+          word.rfind("%struct.", 0) != 0)
         def.operands.push_back(word);
     }
     if (def.op == "getelementptr" && line.find("%argument_buffer_struct, ") != std::string::npos)
@@ -426,13 +479,18 @@ descriptors(const std::string &ir, int table, int count) {
       loads.push_back(name);
     defs[name] = def;
   }
-  // the field a value was loaded from, -1 for none
+  // the field a value was loaded from, through bitcasts of the field's address, -1 for none
   auto field_of = [&](const std::string &value) {
     auto it = defs.find(value);
     if (it == defs.end() || it->second.op != "load" || it->second.operands.empty())
       return -1;
-    auto at = defs.find(it->second.operands[0]);
-    return at == defs.end() ? -1 : at->second.field;
+    for (auto at = defs.find(it->second.operands[0]); at != defs.end(); at = defs.find(at->second.operands[0])) {
+      if (at->second.field >= 0)
+        return at->second.field;
+      if (at->second.op != "bitcast" || at->second.operands.empty())
+        break;
+    }
+    return -1;
   };
   // whether a value depends on a load of field `field`, through any arithmetic, compare, cast or select
   std::set<std::string> seen;
@@ -579,6 +637,34 @@ main(int argc, char **argv) {
     std::printf("%s: %u descriptor loads, %u clamped without the flag; %u, %u clamped with it\n", name, before.loads,
                 before.clamped, after.loads, after.clamped);
     check(after.loads && after.clamped == after.loads && !before.clamped, what);
+  }
+  // a texture, a UAV with its counter through one table, a sampler through another: every descriptor load through
+  // either is clamped with the flag. fields: the resource table 0, the sampler table 1, the lock table 2, their counts
+  // 3 and 4
+  constexpr uint32_t range_sampler = 3;
+  write("heaps.dxbc", container({{"ISGN", {0, 8}}, {"OSGN", {0, 8}}, {"SHEX", heap_program()}}));
+  write("heaps.rs", container({{"RTS0", root_signature({{table, {range_srv, range_uav}}, {table, {range_sampler}}})}}));
+  auto convert_heaps = [&](bool clamped) {
+    std::string out = clamped ? "heaps.clamped.ll" : "heaps.unclamped.ll";
+    std::string command = "\"" + std::string(argv[1]) + "\" -S" + (clamped ? " -check-descriptor-indices" : "") +
+                          " -root-signature \"" + (dir / "heaps.rs").string() + "\" -o \"" + (dir / out).string() +
+                          "\" \"" + (dir / "heaps.dxbc").string() + "\"";
+    if (std::system(command.c_str()) != 0) {
+      std::printf("FAILED: %s\n", command.c_str());
+      failures++;
+      return std::string();
+    }
+    return read(dir / out);
+  };
+  if (auto plain = convert_heaps(false), clamped = convert_heaps(true); !plain.empty() && !clamped.empty()) {
+    for (auto [field, count, what] :
+         {std::tuple{0, 3, "every descriptor load through the resource table is clamped with the flag"},
+          std::tuple{1, 4, "every descriptor load through the sampler table is clamped with the flag"}}) {
+      auto before = descriptors(plain, field, count), after = descriptors(clamped, field, count);
+      std::printf("table %d: %u descriptor loads, %u clamped without the flag; %u, %u clamped with it\n", field,
+                  before.loads, before.clamped, after.loads, after.clamped);
+      check(after.loads && after.clamped == after.loads && !before.clamped, what);
+    }
   }
   // MULLION_KEEP_OUTPUT: the outputs stay, for a pull request to attach
   if (std::getenv("MULLION_KEEP_OUTPUT"))
