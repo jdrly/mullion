@@ -5275,8 +5275,10 @@ _WMTFlightWrite(void *obj) {
       fputc('\n', file);
     }
     fclose(file);
+    params->ret = 1;
+    // the file's name alone: the folder is the app's, or the user's home (docs/swtor/README.md § Log lines)
     fprintf(stderr, "mullion: flight record of %s in %s\n", (const char *)params->reason.ptr,
-            path.fileSystemRepresentation);
+            path.lastPathComponent.UTF8String);
     return STATUS_SUCCESS;
   }
 }

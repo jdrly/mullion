@@ -2718,6 +2718,9 @@ struct WMTFlightEntry {
 WINEMETAL_API const void *WMTFlightSite(const char *format);
 WINEMETAL_API void WMTFlightRecord(const void *site, uint64_t a, uint64_t b, uint64_t c, uint64_t d);
 WINEMETAL_API void WMTFlightDump(const char *reason);
+// a dump that also gives the file's name, <executable>.flight without its folder, in `file`, or "" when it wrote none
+// or the name doesn't fit in `size` bytes with its 0
+WINEMETAL_API void WMTFlightDumpFile(const char *reason, char *file, uint32_t size);
 
 // what a presenter's frames did on screen, in host seconds (CACurrentMediaTime): the number of the last frame shown
 // (frames count from 1) and when it was, when counting began, and the time the statistics were read

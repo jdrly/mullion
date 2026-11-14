@@ -1,0 +1,12 @@
+# cause= renamed why=: the removal line no longer matches the fixture
+--- a/src/mullion/mullion_device_lines.hpp
++++ b/src/mullion/mullion_device_lines.hpp
+@@ -101,7 +101,7 @@
+   char reason[16];
+   std::snprintf(reason, sizeof(reason), "0x%08x", removal.reason);
+   return "MULLION-DEVICE-REMOVED at=" + At(removal.at) + " reason=" + ReasonName(removal.reason) + "(" + reason +
+-         ") cause=" + Name(removal.cause) + " frame=" + std::to_string(removal.frame) +
++         ") why=" + Name(removal.cause) + " frame=" + std::to_string(removal.frame) +
+          " flight=" + Flight(removal.flight, removal.names);
+ }
+ 

@@ -55,6 +55,10 @@ removed with `DXGI_ERROR_DEVICE_HUNG`. A release build doesn't have it.
 | `MULLION-PIPELINE at= kind= ms= late= variant= name= [[n earlier lines suppressed]]` | Always, for each pipeline made that took 20 ms or more, or was made after the first Present, at most 30 lines in 10 s. Replaces `D3D12 pipeline made: <kind>; <name>; <ms> ms`, which only `MULLION_D3D12_GPU_ERRORS` wrote, and only for late pipelines | `d3d12.log` (`wine.log`), at `info` | Me, after a stutter: which pipeline, and which variant |
 | `MULLION-PIPELINE-TOTALS late= ms= longestMs=` | With `MULLION_D3D12_GPU_ERRORS`, at each queue's release: the pipelines made after the first Present, their total and longest ms. Replaces `D3D12 pipeline totals: …` | The same | Me |
 | `MULLION-GPU-ERROR at= queue= cmdbuf= frame= error=Name(code) [domain=] first= gpu= encoders= [#i state 'label' …] [+k more] \| <Metal's text> [[n earlier lines suppressed]]` | Always, for each command buffer the GPU failed, at most 30 lines in 10 s. Replaces Direct3D 12's `Device error: queue <pointer>, command buffer <n>: …` and its `fails too` lines in the trace log | `d3d12.log`, at `err`, whatever `MULLION_LOG_LEVEL` is short of `none`; the trace log too while one is open | The app's session report; me, after a GPU fault |
+| `MULLION-DEVICE-REMOVED at= reason=Name(0x…) cause= frame= flight=` | Always, once per device, by the call that removes it, after the flight dump. Replaces `A 64-bit atomic gave up waiting for its lock; removing the device` | `d3d12.log`, at `err`, whatever `MULLION_LOG_LEVEL` is short of `none` | The app's session report; me, when the game quits with `DXGI_ERROR_DEVICE_*` |
+| `MULLION-GPU-HUNG at= queue= cmdbuf= waitedMs= status=name(n) encoders=r/c/b present= flight=` | Always, once for a command buffer the queue has waited on for 10 s (2 s, or `MULLION_TRACE_GPU_HANG_MS`, with `MULLION_TRACE_GPU`), after the flight dump. Mullion goes on waiting and the device stays. Replaces `command buffer <n> of queue <pointer> has not completed for …` | `d3d12.log`, at `warn` | The same, on a freeze |
+| `MULLION-FEATURE-LEVEL asked= reaches= tiledResourcesTier= macOS=` | Always, each time `D3D12CreateDevice` refuses the feature level asked for. Replaces `D3D12CreateDevice: feature level <n> is not supported` | `d3d12.log`, at `warn` | The same, when the game won't start |
+| `mullion: flight record of <reason> in <executable>.flight` | Each flight dump. The file's name only: the folder is `MULLION_DIAG_PATH`, or `~/Library/Logs/Mullion` | The process's stderr (`wine.log`): the bridge writes it | Me: which dump to open |
 
 ### The session header
 
@@ -254,6 +258,51 @@ written now whether `MULLION_D3D12_GPU_ERRORS` is set or not (they need `MULLION
 before), and the first Present is always noted (one load a Present once it is). A mesh shader pipeline's kind there is
 `mesh` now. Ray tracing pipelines are always named, which before only `MULLION_D3D12_GPU_ERRORS` did: one SHA-1 of each
 library added.
+
+### The removed device, the hung command buffer and the refused feature level
+
+Three lines, each with an answer the game's own message doesn't give.
+[`tests/swtor/fixtures/session.log`](../../tests/swtor/fixtures/session.log) has a sample of each, which
+`host_device_lines` formats from fixed values; the field names and their order are the contract, as for the header.
+The formatter is [`mullion_device_lines.hpp`](../../src/mullion/mullion_device_lines.hpp).
+
+`MULLION-DEVICE-REMOVED`: why the game's next call gets `DXGI_ERROR_DEVICE_REMOVED` or `…_HUNG`. Written once per
+device, by the call that removes it; a later call on a removed device writes nothing.
+
+- `at`: the local time, `HH:MM:SS.mmm`, as `MULLION-GPU-ERROR`'s.
+- `reason`: what `GetDeviceRemovedReason` returns, by name and HRESULT: `DXGI_ERROR_DEVICE_HUNG`,
+  `DXGI_ERROR_DEVICE_REMOVED` (the game's own `RemoveDevice`) or `DXGI_ERROR_INVALID_CALL`.
+- `cause`, from the code that removes it:
+
+  | `cause` | When |
+  |---|---|
+  | `gpu-error` | Metal failed a command buffer; the `MULLION-GPU-ERROR` line just before says how |
+  | `atomic-lock` | A 64-bit atomic gave up waiting for its lock |
+  | `app-RemoveDevice` | The game called `ID3D12Device5::RemoveDevice` |
+  | `no-command-buffer` | Metal gave no command buffer: for a submission on a Metal 4 queue, or for a part of one on either |
+  | `buffer-allocation` | Metal gave no buffer for what a submission needs: the sparse buffer table, or an indirect pass's omitted commands |
+  | `open-list-executed` | The game executed a command list it hadn't closed |
+
+- `frame`: the process's Presents so far, as `MULLION-GPU-ERROR`'s.
+- `flight`: the flight file's name, `<executable>.flight`, without its folder; `none` when the dump wrote no file.
+
+`MULLION-GPU-HUNG`: a command buffer the queue has waited on for `waitedMs` without Metal completing it. d9mt ends the
+process at this point (`D9MT-GPU-HUNG`, exit `0xD9D9`); Mullion doesn't. The queue goes on waiting and the device
+isn't removed, so the game may still recover, freeze, or later get a `MULLION-GPU-ERROR` for the same command buffer.
+
+- `queue`, `cmdbuf`: as `MULLION-GPU-ERROR`'s, so the two lines match.
+- `status`: Metal's status of the command buffer, by name and number (`committed` 2, `scheduled` 3).
+- `encoders`: its passes as the queue encoded them, render (draws and clears) / compute / blit. Resolves, the
+  upscaler, acceleration structures and the driver's own small passes aren't counted.
+- `present`: `yes` when the command buffer presents.
+- `flight`: as above.
+
+`MULLION-FEATURE-LEVEL`: `D3D12CreateDevice` refused the level the game asked for (`asked`), and the device reaches
+`reaches`. Level 12_0 needs tiled resources tier 2 (`tiledResourcesTier`), which the device has where Metal has
+placement sparse resources: macOS 26.4. On an older `macOS` this line is why the game won't start.
+
+None of the three holds a pointer or a host path. The flight file's name keeps `MULLION-GPU-ERROR`'s text rules, cut to
+40 bytes, a space as `_`.
 
 ## CI
 

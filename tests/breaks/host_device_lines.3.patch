@@ -1,0 +1,12 @@
+# reaches= renamed max=: the feature level line no longer matches the fixture
+--- a/src/mullion/mullion_device_lines.hpp
++++ b/src/mullion/mullion_device_lines.hpp
+@@ -140,7 +140,7 @@
+ inline std::string
+ FeatureLevel(const Refusal &refusal) {
+   auto &macos = refusal.macos;
+-  return "MULLION-FEATURE-LEVEL asked=" + Level(refusal.asked) + " reaches=" + Level(refusal.reaches) +
++  return "MULLION-FEATURE-LEVEL asked=" + Level(refusal.asked) + " max=" + Level(refusal.reaches) +
+          " tiledResourcesTier=" + std::to_string(refusal.tiled_resources_tier) + " macOS=" + std::to_string(macos[0]) +
+          "." + std::to_string(macos[1]) + (macos[2] ? "." + std::to_string(macos[2]) : "");
+ }

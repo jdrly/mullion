@@ -619,6 +619,7 @@ struct unixcall_wmttrace_write {
 struct unixcall_wmtflight_write {
   struct WMTConstMemoryPointer reason, directory, executable, records;
   uint64_t count, frequency, now, lost, overwritten;
+  uint32_t ret; // whether it wrote the file
 };
 struct unixcall_metal4_new {
   obj_handle_t queue, fence, event, residency;
