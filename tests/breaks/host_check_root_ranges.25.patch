@@ -1,0 +1,12 @@
+# a checked root CBV's row past its length reads the shader's own row of zeros, not the device's before the lock table
+--- a/src/airconv/dxbc_binding_rootsig.cpp
++++ b/src/airconv/dxbc_binding_rootsig.cpp
+@@ -266,7 +266,7 @@ public:
+           ),
+           Pointer->getType()
+       );
+-      return ConstantBufferDescriptor{Pointer, Length, SM50_CHECK_ROOT_VIEW, Zero};
++      return ConstantBufferDescriptor{Pointer, Length, SM50_CHECK_ROOT_VIEW, nullptr};
+     }
+     auto HeapPointer = GetArgument(Builder, RootSignatureArgumentIndex, CBuf.arg_index);
+     auto [Pointer, Metadata] = GetBufferDescriptor(

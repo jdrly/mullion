@@ -3111,7 +3111,8 @@ convert_dxil(
       );
       if (buffer.Metadata) {
         auto end = ir.CreateAdd(offset, ir.getInt64(ctx.module.getDataLayout().getTypeStoreSize(ty).getFixedSize()));
-        auto zero = ir.CreatePointerCast(dxbc.ZeroRow(), ir.getInt8Ty()->getPointerTo(space));
+        auto zero =
+            ir.CreatePointerCast(buffer.Zero ? buffer.Zero : dxbc.ZeroRow(), ir.getInt8Ty()->getPointerTo(space));
         auto within = ir.CreateICmpULE(end, buffer.Metadata);
         dxbc.CountMiss(buffer.Counted, within);
         pointer = ir.CreateSelect(within, pointer, zero);
