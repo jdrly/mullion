@@ -1,0 +1,12 @@
+# the shader cache's key leaves out the compile flags: a shader converted with MULLION_D3D12_GUARD_STATIC_RANGES=1 is served to a run without it
+--- a/src/d3d12/d3d12_pipeline_graphics.cpp
++++ b/src/d3d12/d3d12_pipeline_graphics.cpp
+@@ -481,7 +481,7 @@ CompileFunction(
+     switch (arg->type) {
+     case SM50_SHADER_COMMON: {
+       auto &[next, type, metal, flags, width] = *(SM50_SHADER_COMMON_DATA *)arg;
+-      hash(metal, flags, width);
++      hash(metal, width);
+       break;
+     }
+     case SM50_SHADER_PSO_PIXEL_SHADER: {

@@ -20,6 +20,18 @@ test('host_cache_prepare', executable('host_cache_prepare', 'cache_prepare.c', l
 test('host_guard_static_ranges', executable('host_guard_static_ranges', 'guard_static_ranges.cpp',
                                             override_options : ['cpp_std=c++20'], native : true),
      args : [airconv_cli_darwin], timeout : 120)
+# jdrly/mullion: the shader cache's key changes with the compile flags. its argument loop is CompileFunction's own,
+# copied out of src/d3d12/d3d12_pipeline_graphics.cpp at build time
+compile_key_arguments = custom_target('compile_key_arguments',
+                                      input : '../../src/d3d12/d3d12_pipeline_graphics.cpp',
+                                      output : 'compile_key_arguments.inc',
+                                      command : [find_program('python3', native : true), files('compile_key.py'),
+                                                 '@INPUT@', '@OUTPUT@'])
+test('host_compile_key', executable('host_compile_key',
+                                    ['compile_key.cpp', compile_key_arguments, '../../src/util/sha1/sha1_util.cpp',
+                                     '../../src/util/sha1/sha1.c'],
+                                    include_directories : include_directories('../../src/util'),
+                                    override_options : ['cpp_std=c++20'], native : true))
 # the converter's codegen id (tools/codegen_id.py)
 test('host_codegen_id', find_program('python3', native : true),
      args : files('codegen_id.py') + [meson.project_source_root() / 'tools/codegen_id.py'])

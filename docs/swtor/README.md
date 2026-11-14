@@ -367,7 +367,7 @@ then.
   `winemetal.so` without LLVM assertion text, built for macOS 15.0 (`minos`), with an ad hoc signature that `codesign`
   verifies; and the internal Metal library (below). The job uploads `mullion-swtor-<commit>` (7 days). For a pull
   request it also runs the host tests in `tests/host` (`meson test 'host_*'`; `host_tessellator` and `host_mutate`
-  below), breaks seven checks on purpose and requires each to fail, and fails on a compiler warning that
+  below), breaks eight checks on purpose and requires each to fail, and fails on a compiler warning that
   `.github/swtor/warnings-x86_64.txt` doesn't list. A push run builds, checks and uploads only: the pull request's run
   of the same tree has already passed the rest.
 
@@ -418,6 +418,12 @@ then.
   control applies each of `tests/breaks/d3d12_bounds_guarded.patch`, `.2.patch` and
   `host_guard_static_ranges.patch`, which leave a static range's SRVs, UAVs and constant buffers unchecked under the
   flag, and requires the test to fail on each.
+
+  The eighth break guards the shader cache's key against the same switch. `host_compile_key` compiles
+  `CompileFunction`'s own loop over the compile arguments, which `tests/host/compile_key.py` copies out of
+  `src/d3d12/d3d12_pipeline_graphics.cpp` at build time, and requires two argument chains that differ only in
+  `SM50_SHADER_FLAG_GUARD_STATIC_RANGES` to give two keys, and prints both. The control,
+  `tests/breaks/host_compile_key.patch`, leaves the flags out of the key, and the test has to fail.
 - **Publish** (`ubuntu-24.04`, after the other jobs): packs the artifact into `mullion-swtor-<commit>.tar.xz` and
   checks that it unpacks to the same files, hash for hash. Only for a push to `swtor-on-mac` does it upload the archive
   (§ Releases). It is the only job with `contents: write`.
