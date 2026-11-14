@@ -1,0 +1,11 @@
+# a constant buffer's row past its view is not counted
+--- a/src/airconv/nt/dxbc_converter_base.cpp
++++ b/src/airconv/nt/dxbc_converter_base.cpp
+@@ -100,7 +100,6 @@ Converter::LoadConstantBuffer(const ConstantBufferDescriptor &Buffer, llvm::Valu
+   }();
+   if (Buffer.Metadata && !skip) {
+     auto InBounds = ir.CreateICmpULT(Row, ir.CreateTrunc(ir.CreateLShr(Buffer.Metadata, 4), air.getIntTy()));
+-    CountMiss(Buffer.Counted, InBounds);
+     RowPointer = ir.CreateSelect(InBounds, RowPointer, ZeroRow());
+   }
+   auto Load = [&](unsigned Dword) -> llvm::Value * {

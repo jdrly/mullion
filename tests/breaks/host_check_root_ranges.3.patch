@@ -1,12 +1,12 @@
 # a root UAV is checked against nothing with the flag, as upstream's
 --- a/src/airconv/dxbc_binding_rootsig.cpp
 +++ b/src/airconv/dxbc_binding_rootsig.cpp
-@@ -333,7 +333,7 @@
+@@ -469,7 +469,7 @@ public:
      auto DescriptorOffset = Iter->second.second;
      auto HeapPointer = GetArgument(Builder, RootSignatureArgumentIndex, UAV.arg_index);
      if (DescriptorOffset == ~0u) {
 -      if (auto Length = RootViewLength(Builder, D3D12_DESCRIPTOR_RANGE_TYPE_UAV, Range))
 +      if (auto Length = (llvm::Value *)nullptr)
          return BufferDescriptor{
-             HeapPointer, Length, UAV.structure_stride, UAV.global_coherent, true, GetAtomicLocks(Builder)
-         };
+             HeapPointer, Length, UAV.structure_stride, UAV.global_coherent, true, GetAtomicLocks(Builder),
+             SM50_CHECK_ROOT_VIEW

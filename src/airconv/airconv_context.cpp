@@ -44,6 +44,8 @@
 // dxbc_converter.hpp
 namespace mullion::dxbc {
 void FinishFeedbackLanes(llvm::Module &module);
+// nt/dxbc_binding_map.hpp
+void FinishCheckCounts(llvm::Module &M);
 }
 
 using namespace llvm;
@@ -81,6 +83,8 @@ bool
 runOptimizationPasses(llvm::Module &M, llvm::raw_ostream &Error) {
   // a pixel shader that was not shaded coarsely keeps every lane's writes
   mullion::dxbc::FinishFeedbackLanes(M);
+  // jdrly/mullion: a function's failed checks counted once, at its returns
+  mullion::dxbc::FinishCheckCounts(M);
   // Metal says of ill-formed IR only "Failed to materializeAll"
   if (verifyModule(M, &Error))
     return false;

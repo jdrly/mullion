@@ -1,0 +1,11 @@
+# a store or an atomic past its view is not counted
+--- a/src/airconv/nt/dxbc_converter_base.cpp
++++ b/src/airconv/nt/dxbc_converter_base.cpp
+@@ -4161,7 +4161,6 @@ Converter::CreateGEPInt32WithBoundCheck(AtomicBufferResourceHandle &Buffer, llvm
+   auto ByteLength = DecodeRawBufferByteLength(Buffer.Metadata);
+   auto Dwords = ir.CreateZExtOrTrunc(ir.CreateLShr(ByteLength, 2), Index->getType());
+   auto Within = ir.CreateICmpULT(Index, Dwords);
+-  CountMiss(Buffer.Counted, Within);
+   return ir.CreateSelect(Within, Addr, llvm::Constant::getNullValue(Addr->getType()));
+ }
+ 

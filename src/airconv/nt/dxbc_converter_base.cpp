@@ -100,6 +100,7 @@ Converter::LoadConstantBuffer(const ConstantBufferDescriptor &Buffer, llvm::Valu
   }();
   if (Buffer.Metadata && !skip) {
     auto InBounds = ir.CreateICmpULT(Row, ir.CreateTrunc(ir.CreateLShr(Buffer.Metadata, 4), air.getIntTy()));
+    CountMiss(Buffer.Counted, InBounds);
     RowPointer = ir.CreateSelect(InBounds, RowPointer, ZeroRow());
   }
   auto Load = [&](unsigned Dword) -> llvm::Value * {
@@ -536,7 +537,7 @@ Converter::LoadBuffer(const AtomicDstOperandUAV &DstOp) {
 
   return llvm::Optional<AtomicBufferResourceHandle>(
       {descriptor->Pointer, descriptor->Metadata, descriptor->StructureStride, DstOp.mask,
-       descriptor->GlobalCoherent && SupportsMemoryCoherency(), descriptor->Bounded}
+       descriptor->GlobalCoherent && SupportsMemoryCoherency(), descriptor->Bounded, descriptor->Counted}
   );
 }
 
@@ -3417,6 +3418,7 @@ Converter::operator()(const InstLoadStructured &load) {
     auto Within = ir.CreateICmpULT(
         Element, ir.CreateUDiv(DecodeRawBufferByteLength(Buf->Metadata), ir.getInt32(Buf->StructureStride))
     );
+    CountMiss(Buf->Counted, Within);
     At = ir.CreateSelect(Within, At, ir.getInt32(0));
     auto Read = FallingBack(*Buf, Within);
     return LoadBufferWords(Read, ir.CreateZExt(At, ir.getInt64Ty()), load.dst, load.feedback, Within);
@@ -4103,6 +4105,7 @@ Converter::CreateGEPInt32WithBoundCheck(BufferResourceHandle &Buffer, llvm::Valu
   auto Within = Buffer.StructureStride
                     ? ir.CreateICmpULT(Index, ir.CreateZExtOrTrunc(Dwords, Index->getType()))
                     : ir.CreateICmpULT(ir.CreateZExtOrTrunc(Index, Dwords->getType()), Dwords);
+  CountMiss(Buffer.Counted, Within);
   return ir.CreateSelect(Within, Addr, llvm::Constant::getNullValue(Addr->getType()));
 }
 
@@ -4140,6 +4143,7 @@ Converter::LoadBufferUnits(
   auto Bytes = DecodeRawBufferByteLength(Buffer.Metadata);
   auto Units = ir.CreateZExtOrTrunc(ir.CreateUDiv(Bytes, llvm::ConstantInt::get(Bytes->getType(), UnitBytes)), Last->getType());
   auto Whole = ir.CreateICmpULT(Last, Units);
+  CountMiss(Buffer.Counted, Whole);
   // Read reads through `Buffer`, which its caller passed: with a fallback, the start it reads from when not whole is that
   auto Start = Buffer.Pointer;
   Buffer.Pointer = FallingBack(Buffer, Whole).Pointer;
@@ -4156,7 +4160,15 @@ Converter::CreateGEPInt32WithBoundCheck(AtomicBufferResourceHandle &Buffer, llvm
   }
   auto ByteLength = DecodeRawBufferByteLength(Buffer.Metadata);
   auto Dwords = ir.CreateZExtOrTrunc(ir.CreateLShr(ByteLength, 2), Index->getType());
-  return ir.CreateSelect(ir.CreateICmpULT(Index, Dwords), Addr, llvm::Constant::getNullValue(Addr->getType()));
+  auto Within = ir.CreateICmpULT(Index, Dwords);
+  CountMiss(Buffer.Counted, Within);
+  return ir.CreateSelect(Within, Addr, llvm::Constant::getNullValue(Addr->getType()));
+}
+
+void
+Converter::CountMiss(const std::optional<uint32_t> &Counted, llvm::Value *Within) {
+  if (Counted)
+    CountFailedCheck(ctx.binding, air, Within, *Counted);
 }
 
 std::unique_ptr<llvm::IRBuilder<>::FastMathFlagGuard>

@@ -1,0 +1,11 @@
+# a raw load's unit past its view is not counted
+--- a/src/airconv/nt/dxbc_converter_base.cpp
++++ b/src/airconv/nt/dxbc_converter_base.cpp
+@@ -4105,7 +4105,6 @@ Converter::CreateGEPInt32WithBoundCheck(BufferResourceHandle &Buffer, llvm::Valu
+   auto Within = Buffer.StructureStride
+                     ? ir.CreateICmpULT(Index, ir.CreateZExtOrTrunc(Dwords, Index->getType()))
+                     : ir.CreateICmpULT(ir.CreateZExtOrTrunc(Index, Dwords->getType()), Dwords);
+-  CountMiss(Buffer.Counted, Within);
+   return ir.CreateSelect(Within, Addr, llvm::Constant::getNullValue(Addr->getType()));
+ }
+ 

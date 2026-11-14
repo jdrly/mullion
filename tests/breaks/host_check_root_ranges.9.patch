@@ -1,12 +1,12 @@
 # a constant buffer's descriptor index through a table is not clamped
 --- a/src/airconv/dxbc_binding_rootsig.cpp
 +++ b/src/airconv/dxbc_binding_rootsig.cpp
-@@ -167,7 +167,7 @@
+@@ -262,7 +262,7 @@ public:
      auto HeapPointer = GetArgument(Builder, RootSignatureArgumentIndex, CBuf.arg_index);
      auto [Pointer, Metadata] = GetBufferDescriptor(
          Builder, HeapPointer, Index, Builder.getIntTy(4)->getPointerTo(2), CBuf.range.lower_bound, DescriptorOffset,
 -        false, DescriptorCount(Builder, CBuf.arg_index)
 +        false, nullptr
      );
-     return ConstantBufferDescriptor{Pointer, Unbounded.count({D3D12_DESCRIPTOR_RANGE_TYPE_CBV, Range}) ? nullptr : Metadata};
-   }
+     return ConstantBufferDescriptor{
+         Pointer, Unbounded.count({D3D12_DESCRIPTOR_RANGE_TYPE_CBV, Range}) ? nullptr : Metadata,

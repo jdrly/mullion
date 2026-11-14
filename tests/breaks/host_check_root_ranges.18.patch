@@ -1,0 +1,11 @@
+# a structured load at a constant offset past its view is not counted
+--- a/src/airconv/nt/dxbc_converter_base.cpp
++++ b/src/airconv/nt/dxbc_converter_base.cpp
+@@ -3418,7 +3418,6 @@ Converter::operator()(const InstLoadStructured &load) {
+     auto Within = ir.CreateICmpULT(
+         Element, ir.CreateUDiv(DecodeRawBufferByteLength(Buf->Metadata), ir.getInt32(Buf->StructureStride))
+     );
+-    CountMiss(Buf->Counted, Within);
+     At = ir.CreateSelect(Within, At, ir.getInt32(0));
+     auto Read = FallingBack(*Buf, Within);
+     return LoadBufferWords(Read, ir.CreateZExt(At, ir.getInt64Ty()), load.dst, load.feedback, Within);

@@ -555,6 +555,16 @@ enum SM50_SHADER_FLAG {
   SM50_SHADER_FLAG_CHECK_DESCRIPTOR_INDICES = 1 << 28,
 };
 
+/* jdrly/mullion: where a check the three flags above add fails, the shader adds 1 to its kind's word of the lock table
+   of 64-bit atomics, after the flag of an atomic that gave up: word `mask + 3 + kind`, word 0 holding the mask. the
+   device reads them at each STATS line (docs/swtor/README.md § Ranges) */
+enum SM50_CHECK_KIND {
+  SM50_CHECK_STATIC_RANGE = 0,     /* a static range's buffer view (SM50_SHADER_FLAG_GUARD_STATIC_RANGES) */
+  SM50_CHECK_ROOT_VIEW = 1,        /* a root CBV, SRV or UAV (SM50_SHADER_FLAG_CHECK_ROOT_RANGES) */
+  SM50_CHECK_DESCRIPTOR_INDEX = 2, /* a descriptor index (SM50_SHADER_FLAG_CHECK_DESCRIPTOR_INDICES) */
+  SM50_CHECK_KINDS = 3,
+};
+
 struct SM50_SHADER_COMMON_DATA {
   void *next;
   enum SM50_SHADER_COMPILATION_ARGUMENT_TYPE type;

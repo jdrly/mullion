@@ -5,7 +5,9 @@
 // held to:
 // - volatile, with or without the flag: one output. the flag changes nothing upstream already guards;
 // - static without the flag differs from volatile: upstream drops the checks there (6e4b44d), so this test can tell;
-// - static with the flag is volatile's output, byte for byte: every check a volatile range has is back.
+// - static with the flag is volatile's output, byte for byte: every check a volatile range has is back. All four are
+//   converted with MULLION_AIRCONV_SKIP=check-counts, which leaves out the count a static range's failed check adds
+//   (private ticket 33, host_check_root_ranges).
 //
 //   host_guard_static_ranges <airconv>
 //
@@ -126,6 +128,9 @@ main(int argc, char **argv) {
     }
     return read(dir / out);
   };
+  // with its checks' counting left out (private ticket 33): a check the flag keeps counts where it fails, and a volatile
+  // range's doesn't. host_check_root_ranges holds the counting
+  setenv("MULLION_AIRCONV_SKIP", "check-counts", 1);
   auto unguarded = convert("static", false), guarded = convert("static", true);
   auto volatile_ = convert("volatile", false), volatile_flagged = convert("volatile", true);
   if (!failures) {

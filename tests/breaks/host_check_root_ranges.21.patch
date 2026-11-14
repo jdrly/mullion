@@ -1,0 +1,12 @@
+# a static range's checks that the guard keeps are not counted
+--- a/src/airconv/dxbc_binding_rootsig.cpp
++++ b/src/airconv/dxbc_binding_rootsig.cpp
+@@ -541,7 +541,7 @@ public:
+   // what a failed check of a view through a table counts as: a static range's that the guard keeps, else nothing
+   std::optional<uint32_t>
+   GuardCounted(D3D12_DESCRIPTOR_RANGE_TYPE Type, RangeId Range) {
+-    return Guarded.count({Type, Range}) ? std::optional<uint32_t>(SM50_CHECK_STATIC_RANGE) : std::nullopt;
++    return std::nullopt;
+   }
+   // jdrly/mullion: a root CBV, SRV or UAV's length in the root arguments (SM50_SHADER_FLAG_CHECK_ROOT_RANGES); a root
+   // view not in it carries none, as upstream's never do. A load past a root SRV or UAV reads its dropped value from

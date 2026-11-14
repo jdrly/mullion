@@ -1,0 +1,12 @@
+# a check counts whether it fails or passes
+--- a/src/airconv/dxbc_binding_rootsig.cpp
++++ b/src/airconv/dxbc_binding_rootsig.cpp
+@@ -88,7 +88,7 @@ CountFailedCheck(BindingMap &Binding, llvm::air::AIRBuilder &AIR, llvm::Value *W
+     return;
+   auto &B = AIR.builder;
+   B.CreateCall(
+-      CountChecks(AIR, Locks->getType()), {Locks, B.CreateSelect(Within, B.getInt32(0), B.getInt32(1u << Kind))}
++      CountChecks(AIR, Locks->getType()), {Locks, B.getInt32(1u << Kind)}
+   );
+ }
+ 

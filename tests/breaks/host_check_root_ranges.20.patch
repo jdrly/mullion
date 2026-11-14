@@ -1,0 +1,11 @@
+# a descriptor index clamped is not counted
+--- a/src/airconv/dxbc_binding_rootsig.cpp
++++ b/src/airconv/dxbc_binding_rootsig.cpp
+@@ -163,7 +163,6 @@ public:
+       return Index;
+     auto &B = AIR.builder;
+     auto Within = B.CreateICmpULT(Index, Count);
+-    CountFailedCheck(*this, AIR, Within, SM50_CHECK_DESCRIPTOR_INDEX);
+     return B.CreateSelect(Within, Index, B.CreateSub(Count, AIR.getInt(1)));
+   }
+ 

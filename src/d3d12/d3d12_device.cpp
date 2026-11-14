@@ -55,6 +55,10 @@ namespace mullion {
 // cache keys on it
 static sw::Switch<bool> kGuardStaticRanges{"MULLION_D3D12_GUARD_STATIC_RANGES", false, sw::exactlyOne};
 
+// jdrly/mullion: the words shaders count their checks in, and the names the CPU gives them, in one order
+static_assert(ranges::kShaderChecks == SM50_CHECK_KINDS && SM50_CHECK_STATIC_RANGE == 0 && SM50_CHECK_ROOT_VIEW == 1 &&
+              SM50_CHECK_DESCRIPTOR_INDEX == 2);
+
 static SM50_SHADER_FLAG
 GuardStaticRangesFlag() {
   static const bool guard = [] {
@@ -296,6 +300,9 @@ class MTLD3D12DeviceImpl : public MTLD3D12Object<ComObject<MTLD3D12Device, ID3DD
   WMT::Reference<WMT::Buffer> atomic_locks_;
   uint64_t atomic_locks_address_ = 0;
   uint32_t *atomic_locks_given_up_ = nullptr;
+  // jdrly/mullion: the words after the flag where its shaders count the checks that failed (SM50_CHECK_KIND), read at
+  // each STATS line while it lives and once at its end
+  ranges::ShaderChecks shader_checks_;
   WMT::Reference<WMT::Buffer> null_buffer_;
   uint64_t null_buffer_address_ = 0;
   WMTSparsePageSize sparse_page_size_ = {};
@@ -385,6 +392,9 @@ public:
   ~MTLD3D12DeviceImpl() {
     // MULLION-SHADER-TOTALS: the process's, at each device's end
     Logger::info(ShaderTotalsLine());
+    // what its shaders' checks counted since the last STATS line, before its lock table goes
+    for (auto &line : ranges::shader_check_words.remove(&shader_checks_, ranges::counts))
+      WARN(line);
     if (archive_writer_.joinable()) {
       {
         std::lock_guard lock(archive_mutex_);
@@ -467,12 +477,14 @@ public:
     // each GPU core runs four SIMD groups at once; Metal reports neither, so it is an estimate, as on other drivers
     total_lanes_ = GetMTLDevice().gpuCoreCount() * 4 * simd_width_;
     // the lock words of 64-bit atomics (dxil_converter.cpp): as many as lanes run at once, a power of two, whose mask
-    // is word 0, and after them the flag of an atomic that gave up waiting
+    // is word 0, and after them the flag of an atomic that gave up waiting, then a word for each kind of check shaders
+    // count (SM50_CHECK_KIND, jdrly/mullion)
     // before them, where every shader finds it, the header of the structure of nothing
     // (SM50_NULL_ACCELERATION_STRUCTURE_HEADER_SIZE)
     auto locks = std::bit_ceil(total_lanes_);
     WMTBufferInfo locks_info{
-        sizeof(AccelerationStructureHeader) + sizeof(uint32_t) * (locks + 2), WMTResourceStorageModeShared
+        sizeof(AccelerationStructureHeader) + sizeof(uint32_t) * (locks + 2 + SM50_CHECK_KINDS),
+        WMTResourceStorageModeShared
     };
     atomic_locks_ = GetMTLDevice().newBuffer(locks_info);
     if (!atomic_locks_) {
@@ -483,8 +495,12 @@ public:
     *nothing = {};
     auto words = reinterpret_cast<uint32_t *>(nothing + 1);
     words[0] = locks - 1;
-    std::fill_n(words + 1, locks + 1, 0u);
+    std::fill_n(words + 1, locks + 1 + SM50_CHECK_KINDS, 0u);
     atomic_locks_given_up_ = words + locks + 1;
+    shader_checks_.words = words + locks + 2;
+    if (shader_flags_ & (SM50_SHADER_FLAG_GUARD_STATIC_RANGES | SM50_SHADER_FLAG_CHECK_ROOT_RANGES |
+                         SM50_SHADER_FLAG_CHECK_DESCRIPTOR_INDICES))
+      ranges::shader_check_words.add(&shader_checks_);
     atomic_locks_address_ = locks_info.gpu_address + sizeof(AccelerationStructureHeader);
     RegisterResidency(atomic_locks_);
     WMTBufferInfo null_info{D3D12_REQ_CONSTANT_BUFFER_ELEMENT_COUNT * 4 * sizeof(uint32_t), WMTResourceStorageModeShared};

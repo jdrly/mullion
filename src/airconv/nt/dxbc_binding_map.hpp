@@ -9,6 +9,8 @@ namespace mullion::dxbc {
 struct ConstantBufferDescriptor {
   llvm::Value *Pointer;
   llvm::Value *Metadata; // may be null
+  // jdrly/mullion: the SM50_CHECK_KIND a failed check of its bounds counts as, where a flag added the check
+  std::optional<uint32_t> Counted = std::nullopt;
 };
 
 struct SamplerDescriptor {
@@ -45,6 +47,9 @@ struct BufferDescriptor {
   // jdrly/mullion: where a load whose bounds check fails reads, and drops, instead of the view's start, null for the
   // start: a root view's (SM50_SHADER_FLAG_CHECK_ROOT_RANGES), whose start may have fewer bytes than one load
   llvm::Value *Fallback = nullptr;
+  // jdrly/mullion: the SM50_CHECK_KIND a failed check of its bounds counts as, where a flag added the check: a static
+  // range's view (SM50_SHADER_FLAG_GUARD_STATIC_RANGES) or a root view's (SM50_SHADER_FLAG_CHECK_ROOT_RANGES)
+  std::optional<uint32_t> Counted = std::nullopt;
 };
 
 struct CounterDescriptor {
@@ -80,5 +85,14 @@ public:
     return nullptr;
   }
 };
+
+// jdrly/mullion: a check of `Kind` (SM50_CHECK_KIND) that fails where `Within` is false is counted in its word of the
+// lock table, once per call of the function it is in: FinishCheckCounts gathers a function's checks into one value,
+// which each of its returns adds to the words of the kinds that failed, behind one branch. The access takes no branch,
+// and a check that passes costs a select and an or. Nothing where the binding has no lock table, or in a pass whose
+// writes are discarded
+void CountFailedCheck(BindingMap &Binding, llvm::air::AIRBuilder &AIR, llvm::Value *Within, uint32_t Kind);
+// before the optimizer (runOptimizationPasses): without it, at -O0, each check adds to its word where it fails
+void FinishCheckCounts(llvm::Module &M);
 
 } // namespace mullion::dxbc

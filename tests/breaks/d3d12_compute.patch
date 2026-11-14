@@ -1,10 +1,10 @@
 # a constant row past the view reads the view's first row instead of 0
 --- a/src/airconv/nt/dxbc_converter_base.cpp
 +++ b/src/airconv/nt/dxbc_converter_base.cpp
-@@ -95,7 +95,7 @@
-   }();
+@@ -101,7 +101,7 @@ Converter::LoadConstantBuffer(const ConstantBufferDescriptor &Buffer, llvm::Valu
    if (Buffer.Metadata && !skip) {
      auto InBounds = ir.CreateICmpULT(Row, ir.CreateTrunc(ir.CreateLShr(Buffer.Metadata, 4), air.getIntTy()));
+     CountMiss(Buffer.Counted, InBounds);
 -    RowPointer = ir.CreateSelect(InBounds, RowPointer, ZeroRow());
 +    RowPointer = ir.CreateSelect(InBounds, RowPointer, ir.CreateGEP(TyIntVec4, Buffer.Pointer, ir.getInt32(0)));
    }
