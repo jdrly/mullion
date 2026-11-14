@@ -385,9 +385,10 @@ jobs:
           # MULLION_D3D12_CHECK_RANGES: with a range's end computed as offset + size, which wraps
           # (tests/breaks/host_ranges.patch), a footprint of one slice whatever its depth (host_ranges.2.patch), or a
           # view's end as address + size (host_ranges.3.patch), the bridge's Metal 4 length from an offset as
-          # length - offset, which wraps past the end (host_ranges.4.patch), or kept address ranges that outlive a
-          # buffer released (host_ranges.5.patch), host_ranges has to fail
-          for p in host_ranges host_ranges.2 host_ranges.3 host_ranges.4 host_ranges.5; do
+          # length - offset, which wraps past the end (host_ranges.4.patch), kept address ranges that outlive a
+          # buffer released (host_ranges.5.patch), or a command list's found buffer that outlives one
+          # (host_ranges.8.patch), host_ranges has to fail
+          for p in host_ranges host_ranges.2 host_ranges.3 host_ranges.4 host_ranges.5 host_ranges.8; do
             git apply "tests/breaks/$p.patch"
             status=0
             meson test -C build host_ranges --print-errorlogs >"$RUNNER_TEMP/$p.txt" 2>&1 || status=$?
@@ -400,6 +401,7 @@ jobs:
           grep -qxF '  Size 18446744073709551360 256' "$RUNNER_TEMP/host_ranges.3.txt"
           grep -qF 'failed: nothing past its end, not a length that wraps' "$RUNNER_TEMP/host_ranges.4.txt"
           grep -qF 'failed: a buffer made or released forgets every range' "$RUNNER_TEMP/host_ranges.5.txt"
+          grep -qF 'failed: a buffer released or made forgets the buffer found' "$RUNNER_TEMP/host_ranges.8.txt"
           [[ -z $(git status --porcelain -- src/winemetal) ]]
           [[ -z $(git status --porcelain -- src/mullion) ]]
           # the window lines: with an activation alone written as d9mt's visibility line

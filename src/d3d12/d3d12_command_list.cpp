@@ -226,23 +226,21 @@ class MTLD3D12GraphicsCommandListImpl : public MTLD3D12DeviceChild<MTLD3D12Graph
   uint64_t index_offset;
   D3D12_INDEX_BUFFER_VIEW index_view_{}; // what tessellation's object stage reads indices through
   // the buffer the last address was found in and the addresses that find it too (LookupBufferByVA's pEnd): index
-  // buffers and immediate writes mostly look up one buffer after another. a buffer the list uses lives until it has
-  // run, so the entry stays right until Reset, or an aliasing barrier, after which another may take the addresses
-  BufferAllocation *va_found_ = nullptr;
-  uint64_t va_found_end_ = 0;
+  // buffers and immediate writes mostly look up one buffer after another. a game may release a buffer while the list
+  // records, and its allocation ends at once when no queue has work: the entry holds only while no buffer was made or
+  // released (ranges::buffer_generation), and until Reset, or an aliasing barrier, after which another may take the
+  // addresses
+  ranges::FoundBuffer<BufferAllocation> va_found_ = nullptr;
 
   BufferAllocation *
   LookupBuffer(D3D12_GPU_VIRTUAL_ADDRESS VA, uint64_t *pOffset) {
-    if (va_found_ && VA >= va_found_->gpuAddress() && VA < va_found_end_) {
-      *pOffset = VA - va_found_->gpuAddress();
-      return va_found_;
-    }
+    auto generation = ranges::buffer_generation.load(std::memory_order_acquire);
+    if (auto found = va_found_.at(generation, VA, *pOffset))
+      return found;
     uint64_t end;
     auto allocation = device_->LookupBufferByVA(VA, pOffset, &end);
-    if (allocation && VA < end) {
-      va_found_ = allocation;
-      va_found_end_ = end;
-    }
+    if (allocation && VA < end)
+      va_found_.keep(allocation, generation, VA - *pOffset, end);
     return allocation;
   }
   D3D12_STREAM_OUTPUT_BUFFER_VIEW so_views_[4]{};
@@ -3332,9 +3330,8 @@ public:
   IASetIndexBuffer(const D3D12_INDEX_BUFFER_VIEW *pView) {
     if (Bundled() && Record([view = pView ? std::optional(*pView) : std::nullopt](auto *l) { l->IASetIndexBuffer(view ? &*view : nullptr); }))
       return;
-    // the view bound already: games set one per draw
-    if (pView ? index_buffer_address && !memcmp(pView, &index_view_, sizeof(*pView)) : !index_buffer_address)
-      return;
+    // looked up again even for the view bound already, which games set once a draw: its buffer may have been released
+    // and another made at its address. LookupBuffer's entry makes that a few compares
     auto index_buffer_allocation = pView ? LookupBuffer(pView->BufferLocation, &index_offset) : nullptr;
     if (kRangesOn && pView && pView->BufferLocation &&
         !ViewInRange(kIndexView, pView->BufferLocation, pView->SizeInBytes))

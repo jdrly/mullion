@@ -97,6 +97,30 @@ main() {
     check(held.end(&device, buffer_generation.load(), 0x10100) == 0,
           "a device at a destroyed one's address keeps none of its ranges");
   }
+  // the buffer a command list last found an address in (private ticket 30): found for its addresses while no buffer is
+  // made or released. a game releases buffer A while the list records, and its allocation ends; B is made at A's
+  // address. the list has to look B up, not hand back A's ended allocation
+  {
+    struct Allocation {
+      int id;
+    } a{1}, b{2};
+    FoundBuffer<Allocation> found;
+    uint64_t offset = 0;
+    auto generation = buffer_generation.load();
+    check(!found.at(generation, 0x10100, offset), "no buffer is found at first");
+    found.keep(&a, generation, 0x10000, 0x10200);
+    check(found.at(generation, 0x10100, offset) == &a && offset == 0x100, "a found buffer holds its addresses");
+    check(!found.at(generation, 0x10200, offset) && !found.at(generation, 0xff00, offset),
+          "but not its end, nor an address before it");
+    buffer_generation.fetch_add(1); // A released
+    buffer_generation.fetch_add(1); // B made where A was
+    generation = buffer_generation.load();
+    check(!found.at(generation, 0x10100, offset), "a buffer released or made forgets the buffer found");
+    found.keep(&b, generation, 0x10000, 0x10200);
+    check(found.at(generation, 0x10100, offset) == &b, "the buffer found after it is held");
+    found = nullptr;
+    check(!found.at(generation, 0x10100, offset), "Reset and an aliasing barrier forget it");
+  }
 
   // the bridge's Metal 4 lengths: what a buffer has from an offset, before, at and past its end
   check(buffer_remaining(256, 0) == 256, "a buffer's length from its start");
