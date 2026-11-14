@@ -55,6 +55,12 @@ static cl::opt<bool> NoCustomBorder(
   cl::desc("Leave out custom border colors, as a pipeline made before any sampler has one does")
 );
 
+// jdrly/mullion: MULLION_D3D12_GUARD_STATIC_RANGES=1, as the device passes it
+static cl::opt<bool> GuardStaticRanges(
+  "guard-static-ranges", cl::init(false),
+  cl::desc("Keep the bounds checks of buffers in descriptor ranges root signature 1.1 calls static")
+);
+
 static cl::opt<bool>
   EmitLLVM("S", cl::init(false), cl::desc("Write output as LLVM assembly"));
 
@@ -262,6 +268,8 @@ int main(int argc, char **argv) {
   SM50_SHADER_COMMON_DATA data;
   data.metal_version = SM50_SHADER_METAL_320;
   data.flags = NoCustomBorder ? SM50_SHADER_FLAG_NO_CUSTOM_BORDER : SM50_SHADER_FLAG{};
+  if (GuardStaticRanges)
+    data.flags = SM50_SHADER_FLAG(data.flags | SM50_SHADER_FLAG_GUARD_STATIC_RANGES);
   data.simd_width = 0; // no device to ask; a vertex shader's wave has no lane count here
   data.next = 0;
   data.type = SM50_SHADER_COMMON;

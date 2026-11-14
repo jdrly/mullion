@@ -544,6 +544,9 @@ enum SM50_SHADER_FLAG {
   /* no sampler reduces where Metal cannot (SM50_SAMPLER_REDUCTION): samples leave out the minimum and maximum filters'
      emulation */
   SM50_SHADER_FLAG_NO_MINMAX_FILTER = 1 << 9,
+  /* jdrly/mullion: buffer views of descriptor ranges root signature 1.1 calls static keep their bounds checks, as
+     volatile ranges do (MULLION_D3D12_GUARD_STATIC_RANGES=1, docs/swtor/README.md). a high bit, clear of upstream's */
+  SM50_SHADER_FLAG_GUARD_STATIC_RANGES = 1 << 30,
 };
 
 struct SM50_SHADER_COMMON_DATA {

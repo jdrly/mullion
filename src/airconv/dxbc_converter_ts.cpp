@@ -350,7 +350,7 @@ convert_dxbc_vertex_hull_shader(
 
   auto binding_map = rootsig_vs ? setup_binding_rootsig(
                                    &vertex_shader_info, func_signature, module, D3D10_SB_VERTEX_SHADER,
-                                   rootsig_vs->bytecode, rootsig_vs->bytecode_length
+                                   rootsig_vs->bytecode, rootsig_vs->bytecode_length, shader_flags
                                )
                              : setup_binding_table2(
                                    &vertex_shader_info, func_signature, module, SM50_BINDING_INDEX_CONSTANT_BUFFER2,
@@ -360,7 +360,7 @@ convert_dxbc_vertex_hull_shader(
     return llvm::make_error<UnsupportedFeature>("invalid root signature or missing resource binding");
   auto binding_map_hs = rootsig ? setup_binding_rootsig(
                                       &hull_shader_info, func_signature, module, D3D11_SB_HULL_SHADER,
-                                      rootsig->bytecode, rootsig->bytecode_length
+                                      rootsig->bytecode, rootsig->bytecode_length, shader_flags
                                   )
                                 : setup_binding_table2(&hull_shader_info, func_signature, module);
   if (!binding_map_hs)
@@ -1055,7 +1055,7 @@ convert_dxbc_tesselator_domain_shader(
 
   auto binding_map = rootsig ? setup_binding_rootsig(
                                    shader_info, func_signature, module, D3D11_SB_DOMAIN_SHADER, rootsig->bytecode,
-                                   rootsig->bytecode_length
+                                   rootsig->bytecode_length, shader_flags
                                )
                              : setup_binding_table2(shader_info, func_signature, module);
   if (!binding_map)

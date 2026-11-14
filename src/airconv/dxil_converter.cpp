@@ -4833,7 +4833,7 @@ convert_dxil_mesh_stage(
 
   auto binding_map = rootsig ? setup_binding_rootsig(
                                    shader_info, func_signature, module, pShaderInternal->shader_type, rootsig->bytecode,
-                                   rootsig->bytecode_length
+                                   rootsig->bytecode_length, shader_flags
                                )
                              : setup_binding_table2(shader_info, func_signature, module);
   if (!binding_map)
@@ -4988,7 +4988,7 @@ convert_dxil_ray_shader(
   auto binding = [&](SM50_SHADER_ROOT_SIGNATURE_DATA *rootsig, bool local) {
     return rootsig ? setup_binding_rootsig(
                          shader_info, unused, module, pShaderInternal->shader_type, rootsig->bytecode,
-                         rootsig->bytecode_length, SM50_BINDING_INDEX_ROOT_ARGUMENTS,
+                         rootsig->bytecode_length, shader_flags, SM50_BINDING_INDEX_ROOT_ARGUMENTS,
                          SM50_BINDING_INDEX_STATIC_SAMPLERS, local
                      )
                    : nullptr;

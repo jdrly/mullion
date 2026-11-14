@@ -802,6 +802,8 @@ std::unique_ptr<BindingMap> setup_binding_table2(
 std::unique_ptr<BindingMap> setup_binding_rootsig(
     const ShaderInfo *shader_info, air::FunctionSignatureBuilder &func_signature, llvm::Module &module,
     microsoft::D3D10_SB_TOKENIZED_PROGRAM_TYPE shader_type, const void *bytecode, size_t bytecode_length,
+    // SM50_SHADER_FLAG_GUARD_STATIC_RANGES: a static range's buffers are bounded as a volatile range's are
+    SM50_SHADER_FLAG shader_flags,
     uint32_t root_sig_slot = SM50_BINDING_INDEX_ROOT_ARGUMENTS,
     uint32_t static_sampler_slot = SM50_BINDING_INDEX_STATIC_SAMPLERS,
     // a local root signature, whose arguments are a shader record's (bind_rootsig_arguments)

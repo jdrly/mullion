@@ -11,6 +11,8 @@
 // read and stored, and must be what a bounded view gives for them. engines rely on
 // it: Unreal's vertex shaders read the GPU scene by an instance's number, and the number of an instance that is
 // not there reads zeros and nothing else happens.
+// jdrly/mullion: with MULLION_D3D12_GUARD_STATIC_RANGES=1 (d3d12_bounds_guarded) static descriptors are held to the
+// bounded views' contract too: the guards upstream dropped for them in 6e4b44d are back.
 // a structured, a raw and a typed buffer of ELEMENTS elements each, every word different and none 0; the views
 // begin FIRST elements in and have COUNT. a vertex shader, a pixel shader and a compute shader read element
 // `index` of each view; a pixel shader and a compute shader store `value` there. the indices: the view's first and
@@ -20,6 +22,7 @@
 // the view.
 #include "d3d12_test.hpp"
 #include <algorithm>
+#include <cstdlib>
 
 static const char hlsl[] = R"hlsl(
 struct Row { uint a, b; };
@@ -40,6 +43,12 @@ void stores() {
   raw_out.Store(4 * index, value);
   typed_out[index] = value;
 }
+// the structured and the raw buffer's atomics, which a store's guard does not cover; the typed one is left as it was
+void exchanges() {
+  uint old;
+  InterlockedExchange(rows_out[index].b, value, old);
+  raw_out.InterlockedExchange(4 * index, value, old);
+}
 struct V { float4 pos : SV_Position; nointerpolation uint4 read : READ; };
 V corner(uint id, uint4 read) {
   V v;
@@ -54,6 +63,7 @@ uint4 ps_reads(V v) : SV_Target { return reads(); }
 uint4 ps_stores(V v) : SV_Target { stores(); return 0; }
 [numthreads(1, 1, 1)] void cs_reads() { result[0] = reads(); }
 [numthreads(1, 1, 1)] void cs_stores() { stores(); }
+[numthreads(1, 1, 1)] void cs_exchanges() { exchanges(); }
 )hlsl";
 
 int
@@ -79,6 +89,9 @@ main(int argc, char **argv) {
   for (UINT i = 0; i < all_words; i++)
     pattern[i] = i + 1;
 
+  // jdrly/mullion: static descriptors keep their bounds checks
+  const char *guard = getenv("MULLION_D3D12_GUARD_STATIC_RANGES");
+  const bool guarded = guard && !strcmp(guard, "1");
   ComPtr<ID3D12Device> device;
   CHECK(D3D12CreateDevice(nullptr, D3D_FEATURE_LEVEL_11_0, IID_PPV_ARGS(&device)));
   D3D12_DESCRIPTOR_RANGE read_range{D3D12_DESCRIPTOR_RANGE_TYPE_SRV, Kinds}, stored_range{D3D12_DESCRIPTOR_RANGE_TYPE_UAV, Kinds};
@@ -114,15 +127,16 @@ main(int argc, char **argv) {
       {"1.0", root_signature(device.Get(), {(UINT)std::size(params), params}), true},
       {"1.1 volatile", versioned(D3D12_DESCRIPTOR_RANGE_FLAG_DESCRIPTORS_VOLATILE), true},
       {"1.1 keeping bounds checks", versioned(D3D12_DESCRIPTOR_RANGE_FLAG_DESCRIPTORS_STATIC_KEEPING_BUFFER_BOUNDS_CHECKS), true},
-      {"1.1 static", versioned(D3D12_DESCRIPTOR_RANGE_FLAG_NONE), false}};
+      {"1.1 static", versioned(D3D12_DESCRIPTOR_RANGE_FLAG_NONE), guarded}};
 
   // what reads or stores, and in which stage
   struct Way {
     const char *what, *vs, *ps, *cs;
-    bool stores;
+    bool stores, atomic;
     ComPtr<ID3D12PipelineState> pso;
   } ways[] = {{"a vertex shader reads", "vs_reads", "ps_passes"}, {"a pixel shader reads", "vs", "ps_reads"}, {"a compute shader reads", nullptr, nullptr, "cs_reads"},
-              {"a pixel shader stores", "vs", "ps_stores", nullptr, true}, {"a compute shader stores", nullptr, nullptr, "cs_stores", true}};
+              {"a pixel shader stores", "vs", "ps_stores", nullptr, true}, {"a compute shader stores", nullptr, nullptr, "cs_stores", true},
+              {"a compute shader exchanges", nullptr, nullptr, "cs_exchanges", true, true}};
   const DXGI_FORMAT target_format = DXGI_FORMAT_R32G32B32A32_UINT;
   auto make = [&](Way &way, ID3D12RootSignature *rs) {
     if (way.cs) {
@@ -278,7 +292,7 @@ main(int argc, char **argv) {
         std::vector<UINT> want = pattern;
         if (way.stores) {
           for (UINT kind = 0; kind < Kinds; kind++)
-            if (in_view(kind))
+            if (in_view(kind) && !(way.atomic && kind == Typed))
               want[element(1, kind) + words_of[kind] - 1] = value;
         } else {
           const UINT want_read[read_words] = {in_view(Rows) ? pattern[element(0, Rows)] : 0, in_view(Rows) ? pattern[element(0, Rows) + 1] : 0,

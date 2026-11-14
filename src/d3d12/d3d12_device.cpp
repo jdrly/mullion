@@ -29,6 +29,7 @@
 #include "dxgi_interfaces.h"
 #include "mullion_format.hpp"
 #include "util_env.hpp"
+#include "util_switch.hpp"
 #include "mullion_info.hpp"
 #include "mullion_shader_cache.hpp"
 #include "util_string.hpp"
@@ -44,6 +45,24 @@
 #include "d3d11_4.h"
 
 namespace mullion {
+
+// MULLION_D3D12_GUARD_STATIC_RANGES=1: shaders keep the bounds checks of buffer views in descriptor ranges root
+// signature 1.1 calls static, which upstream drops (6e4b44d): an out-of-range index reads 0 and stores nothing, as in a
+// volatile range, instead of reaching memory past the view. Off until the GPU gate has run d3d12_bounds_guarded and
+// its frame time is measured (docs/swtor/README.md). Read once per process; it is a compile flag, so the shader
+// cache keys on it
+static sw::Switch<bool> kGuardStaticRanges{"MULLION_D3D12_GUARD_STATIC_RANGES", false, sw::exactlyOne};
+
+static SM50_SHADER_FLAG
+GuardStaticRangesFlag() {
+  static const bool guard = [] {
+    bool on = kGuardStaticRanges();
+    if (on)
+      Logger::info("Mullion: guard staticRanges=1");
+    return on;
+  }();
+  return guard ? SM50_SHADER_FLAG_GUARD_STATIC_RANGES : SM50_SHADER_FLAG{};
+}
 
 // Copyright (c) Microsoft Corporation. Licensed under the MIT License.
 // declarations missing from the toolchain, from DirectX-Headers/include/directx/d3d12.idl
@@ -324,7 +343,7 @@ public:
   MTLD3D12DeviceImpl(IMTLDXGIAdapter *adapter)
       : adapter_(adapter), command_library(adapter_->GetMTLDevice()),
         metal_version_(SM50_SHADER_METAL_VERSION(ShaderMetalVersion(adapter_->GetMTLDevice()))),
-        shader_flags_(GPUShaderFlags(adapter_->GetMTLDevice())) {
+        shader_flags_(SM50_SHADER_FLAG(GPUShaderFlags(adapter_->GetMTLDevice()) | GuardStaticRangesFlag())) {
     mesh_bytes_per_draw = MeshBytesPerDraw(adapter_->GetMTLDevice());
   }
 

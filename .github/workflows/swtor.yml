@@ -228,7 +228,7 @@ jobs:
           { echo '### The build'; echo '```'; cat "$RUNNER_TEMP/check.txt"; echo '```'; } >>"$GITHUB_STEP_SUMMARY"
           exit "$status"
 
-      # tests/host/meson.build: twenty-two tests, each with meson's 30 s timeout but host_tessellator's
+      # tests/host/meson.build: twenty-four tests, each with meson's 30 s timeout but host_tessellator's
       # 300 s; none builds the tree or waits on a GPU
       - name: Host tests
         if: github.event_name == 'pull_request'
@@ -258,7 +258,7 @@ jobs:
 
       - name: The checks fail on a broken copy
         if: github.event_name == 'pull_request'
-        timeout-minutes: 10
+        timeout-minutes: 15
         run: |
           export PATH="$PATH:$PWD/toolchains/llvm-mingw/bin"
           # Rc's move assignment without its self-move guard, in the checkout after staging:
@@ -336,6 +336,27 @@ jobs:
           [[ -z $(git status --porcelain -- src/winemetal) ]]
           grep -qF 'failed: returned >= 0 && returned < 100' "$RUNNER_TEMP/layer.txt"
           grep -qF 'failed: CGSizeEqualToSize(layer.drawableSize, CGSizeMake(800, 600))' "$RUNNER_TEMP/layer.2.txt"
+          # MULLION_D3D12_GUARD_STATIC_RANGES in the converter: with it leaving a static range's SRVs, UAVs or
+          # constant buffers unchecked (tests/breaks/d3d12_bounds_guarded{,.2}.patch, host_guard_static_ranges.patch),
+          # host_guard_static_ranges has to fail on each, at the guarded output. and in the shader cache's key: with
+          # the key leaving out the compile flags (host_compile_key.patch), host_compile_key has to fail
+          git apply tests/breaks/host_compile_key.patch
+          status=0
+          meson test -C build host_compile_key --print-errorlogs >"$RUNNER_TEMP/key.txt" 2>&1 || status=$?
+          git apply -R tests/breaks/host_compile_key.patch
+          cat "$RUNNER_TEMP/key.txt"
+          [[ $status != 0 ]]
+          grep -qF "FAILED: the guard's flag alone gives another key" "$RUNNER_TEMP/key.txt"
+          for p in d3d12_bounds_guarded d3d12_bounds_guarded.2 host_guard_static_ranges; do
+            git apply "tests/breaks/$p.patch"
+            status=0
+            meson test -C build host_guard_static_ranges --print-errorlogs >"$RUNNER_TEMP/$p.txt" 2>&1 || status=$?
+            git apply -R "tests/breaks/$p.patch"
+            cat "$RUNNER_TEMP/$p.txt"
+            [[ $status != 0 ]]
+            grep -qF 'FAILED: static ranges with the flag convert as volatile ranges do' "$RUNNER_TEMP/$p.txt"
+          done
+          [[ -z $(git status --porcelain -- src/airconv src/d3d12) ]]
           # a converter change the build's codegen id doesn't follow: this build against the id of the tree with one
           # comment more in src/airconv. both DLLs and VERSION have to fail
           cv=src/airconv/dxbc_converter.cpp
@@ -351,7 +372,7 @@ jobs:
             grep -qxF "FAIL  x86_64-windows/$f: carries the codegen id ${changed:0:12}" "$RUNNER_TEMP/codegen.txt"
           done
           grep -qxF "FAIL  VERSION: codegen ${changed:0:12}" "$RUNNER_TEMP/codegen.txt"
-          echo "all six checks failed on their break"
+          echo "all eight checks failed on their break"
 
       # last, so that a run that only adds a warning still shows everything above
       - name: No new warnings

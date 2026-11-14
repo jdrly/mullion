@@ -60,6 +60,11 @@ foreach t : [['d3d12_sdk_configuration', []], ['d3d12_metal4_passes', []], ['d3d
       test(t[0] + '_metalfx', exe, args: [front_end], env: ['MULLION_METALFX_SPATIAL_SWAPCHAIN=1'], suite: t[1],
            timeout: 600)
     endif
+    # jdrly/mullion: static descriptor ranges keep their bounds checks (MULLION_D3D12_GUARD_STATIC_RANGES=1)
+    if t[0] == 'd3d12_bounds'
+      test(t[0] + '_guarded_' + front_end, exe, args: [front_end], env: ['MULLION_D3D12_GUARD_STATIC_RANGES=1'],
+           timeout: 600)
+    endif
     if t[0] == 'd3d12_streamout_arguments'
       test(t[0] + '_zero_' + front_end, exe, args: [front_end, 'zero'], timeout: 600)
       test(t[0] + '_predicated_' + front_end, exe, args: [front_end, 'predicated'], timeout: 600)
