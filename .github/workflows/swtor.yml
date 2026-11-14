@@ -231,6 +231,7 @@ jobs:
       # tests/host/meson.build: thirty-one tests, each with meson's 30 s timeout but host_tessellator's
       # 300 s; none builds the tree or waits on a GPU
       - name: Host tests
+        id: host
         if: github.event_name == 'pull_request'
         timeout-minutes: 15
         env:
@@ -245,20 +246,26 @@ jobs:
           skip=(--exclude host_mutate)
           # host_tessellator takes about 200 s here (x86_64 under Rosetta), the other ten before
           # host_layer_apply about 18 s, and host_layer_apply holds its main thread for 2 s twice: it runs
-          # when the pull request changes what it compiles or how, or when that can't be told. all of
-          # src/airconv, so that a header it comes to include there can't slip past
+          # when the pull request changes what it compiles or how, or one of its breaks, or when that can't be
+          # told; its breaks run with it (next step). all of src/airconv, so that a header it comes to include
+          # there can't slip past
           if git fetch -q origin "$BASE" && git diff --quiet "$BASE" HEAD -- \
             src/airconv libs/DXBCParser tests/tessellator.hpp tests/reference tests/host tests/meson.build \
-            meson.build meson.options build-win64.txt .github/workflows/swtor.yml; then
+            'tests/breaks/host_tessellator*' meson.build meson.options build-win64.txt .github/workflows/swtor.yml; then
             skip+=(--exclude host_tessellator)
+            echo "tessellator=left-out" >>"$GITHUB_OUTPUT"
             echo "host_tessellator left out: nothing it compiles changed since $BASE" | tee -a "$GITHUB_STEP_SUMMARY"
           fi
           # builds only what the host tests need, not the Windows test programs
           meson test -C build 'host_*' "${skip[@]}" --print-errorlogs
 
+      # each host break rebuilds and runs only its own test; host_tessellator's three take about 200 s each, and run
+      # only when host_tessellator ran
       - name: The checks fail on a broken copy
         if: github.event_name == 'pull_request'
-        timeout-minutes: 15
+        timeout-minutes: 30
+        env:
+          TESSELLATOR: ${{ steps.host.outputs.tessellator }}
         run: |
           export PATH="$PATH:$PWD/toolchains/llvm-mingw/bin"
           # Rc's move assignment without its self-move guard, in the checkout after staging:
@@ -322,148 +329,113 @@ jobs:
           grep -q '^FAIL  x86_64-unix/winemetal\.so: no ad hoc signature that verifies' "$RUNNER_TEMP/broken.txt"
           grep -qE '^FAIL  x86_64-windows/d3d12core\.dll: internal metallib at 0x[0-9a-f]+: container 2\.9 ' "$RUNNER_TEMP/broken.txt"
           grep -qE '^FAIL  x86_64-windows/d3d12core\.dll: internal metallib at 0x[0-9a-f]+: [0-9]+ of [0-9]+ functions AIR 2\.7 Metal 3\.2, 1 AIR 2\.9 Metal 3\.2$' "$RUNNER_TEMP/broken.txt"
-          # the layer's setters (tests/breaks/host_layer_apply*.patch): with MULLION_LAYER_WAIT=0 waiting for the main
-          # thread again, with a change compared only with the layer, with STATS' mainWaitMaxMs not reset, and with it
-          # leaving out a change still waiting. host_layer_apply has to fail on each, at the call that waited, at the
-          # size that landed last, at the call after the wait was taken, and at the wait so far
-          for n in "" .2 .3 .4; do
-            git apply "tests/breaks/host_layer_apply$n.patch"
-            status=0
-            meson test -C build host_layer_apply --print-errorlogs >"$RUNNER_TEMP/layer$n.txt" 2>&1 || status=$?
-            git apply -R "tests/breaks/host_layer_apply$n.patch"
-            cat "$RUNNER_TEMP/layer$n.txt"
-            [[ $status != 0 ]]
+          # every host break: tests/breaks/host_<test>[.<n>].patch, found by its name, against host_<test>, so a new
+          # one runs without a line here; and the converter's d3d12_bounds_guarded{,.2}.patch against
+          # host_guard_static_ranges. each has to apply, and its test has to build and fail on it: meson's own count
+          # of failed tests, as a build that fails, a timeout, a skip or a test meson doesn't know is no failure of
+          # the test. host_tessellator's only when that test ran. the cases below also have to fail at their line
+          missed=()
+          ran=0
+          for p in tests/breaks/host_*.patch tests/breaks/d3d12_bounds_guarded.patch tests/breaks/d3d12_bounds_guarded.2.patch; do
+            name=$(basename "$p" .patch)
+            if [[ $name == d3d12_bounds_guarded* ]]; then
+              test=host_guard_static_ranges
+            elif [[ $name =~ ^(host_[a-z0-9_]+)(\.[0-9]+)?$ ]]; then
+              test=${BASH_REMATCH[1]}
+            else
+              missed+=("$p: not tests/breaks/host_<test>[.<n>].patch")
+              continue
+            fi
+            if [[ $test == host_tessellator && $TESSELLATOR == left-out ]]; then
+              echo "$p left out with host_tessellator"
+              continue
+            fi
+            if ! git apply "$p"; then
+              missed+=("$p: doesn't apply")
+              continue
+            fi
+            meson test -C build "$test" --print-errorlogs >"$RUNNER_TEMP/$name.txt" 2>&1 || true
+            git apply -R "$p"
+            cat "$RUNNER_TEMP/$name.txt"
+            ran=$((ran + 1))
+            # lines: what it has to fail at, all of them; x: each a whole line
+            x=
+            case $name in
+              # MULLION_LAYER_WAIT=0 waiting for the main thread again, a change compared only with the layer,
+              # STATS' mainWaitMaxMs not reset, and it leaving out a change still waiting: at the call that waited,
+              # the size that landed last, the call after the wait was taken, and the wait so far
+              host_layer_apply) lines=('failed: returned >= 0 && returned < 100') ;;
+              host_layer_apply.2) lines=('failed: CGSizeEqualToSize(layer.drawableSize, CGSizeMake(800, 600))') ;;
+              host_layer_apply.3) lines=('failed: after == 0') ;;
+              host_layer_apply.4) lines=('failed: waiting >= 1000 && waiting < 10000') ;;
+              # MULLION_D3D12_GUARD_STATIC_RANGES leaving a static range's SRVs, UAVs or constant buffers unchecked,
+              # at the guarded output; and the shader cache's key leaving out the compile flags
+              d3d12_bounds_guarded* | host_guard_static_ranges)
+                lines=('FAILED: static ranges with the flag convert as volatile ranges do') ;;
+              host_compile_key) lines=("FAILED: the guard's flag alone gives another key") ;;
+              # the bridge leaving out WMTTextureInfo.uncompressed; MULLION_TEX_MSAA_COMPRESSION=auto ignoring the
+              # GPU family, or a resolve target's type group
+              host_texture_compression) lines=('failed: uncompressed = 1 turns compression off') ;;
+              host_compression) lines=('failed: auto keeps it on Apple10') ;;
+              host_compression.2) lines=('failed: another group keeps compression') ;;
+              # MULLION_D3D12_CHECK_RANGES with a range's end as offset + size, which wraps, a footprint of one slice
+              # whatever its depth, a view's end as address + size, the bridge's Metal 4 length from an offset as
+              # length - offset, which wraps past the end, a buffer made or released keeping the ranges, a root view's
+              # bound past 32 bits, a table at its heap's end counted as in it, a command list's found buffer outliving
+              # one, a table's span cut to its last range, and an ExecuteIndirect's last command counted as a whole
+              # stride
+              host_ranges) lines=('  Size 18446744073709551608 240') x=x ;;
+              host_ranges.2) lines=('failed: a 3D footprint') ;;
+              host_ranges.3) lines=('  Size 18446744073709551360 256') x=x ;;
+              host_ranges.4) lines=('failed: nothing past its end, not a length that wraps') ;;
+              host_ranges.5) lines=('failed: a buffer made or released forgets every range') ;;
+              host_ranges.6) lines=('failed: a root view in a buffer of 5 GiB is bound at 4 GiB') ;;
+              host_ranges.7) lines=("failed: a table at a heap's end is in no heap") ;;
+              host_ranges.8) lines=('failed: a buffer released or made forgets the buffer found') ;;
+              host_ranges.9) lines=("failed: a range placed before another doesn't shorten the table") ;;
+              host_ranges.10) lines=('failed: four commands of stride 32 and 12 bytes of arguments take 108') ;;
+              # the window lines with an activation alone written as d9mt's visibility line, what the watch said
+              # last following only the lines it wrote, and an activation line clearing the count of lines left out
+              host_window_lines) lines=("failed: an activation alone isn't a visibility line for the report") ;;
+              host_window_lines.2) lines=('failed: the report reads the 11 left out') ;;
+              host_window_lines.3) lines=('failed: the report reads the 2 left out after an activation line') ;;
+              # SM50_SHADER_FLAG_CHECK_ROOT_RANGES leaving a root CBV, SRV or UAV unchecked, at that view; and a failed
+              # check's load reading a root SRV's start instead of the lock table, at the trace of the loads
+              host_check_root_ranges) lines=('FAILED: a root CBV is checked with the flag') ;;
+              host_check_root_ranges.2) lines=('FAILED: a root SRV is checked with the flag') ;;
+              host_check_root_ranges.3) lines=('FAILED: a root UAV is checked with the flag') ;;
+              host_check_root_ranges.[4-7])
+                lines=('FAILED: every load past a root SRV reads the lock table with the flag') ;;
+              # and no descriptor index clamped, or a constant buffer's, an SRV's or a UAV's through a table, at that
+              # kind, or a texture's, a sampler's or a UAV counter's, at the table they go through
+              host_check_root_ranges.8)
+                lines=("FAILED: a constant buffer's descriptor index is clamped with the flag"
+                       "FAILED: an SRV's descriptor index is clamped with the flag"
+                       "FAILED: a UAV's descriptor index is clamped with the flag"
+                       'FAILED: every descriptor load through the resource table is clamped with the flag'
+                       'FAILED: every descriptor load through the sampler table is clamped with the flag') ;;
+              host_check_root_ranges.9)
+                lines=("FAILED: a constant buffer's descriptor index is clamped with the flag") ;;
+              host_check_root_ranges.10) lines=("FAILED: an SRV's descriptor index is clamped with the flag") ;;
+              host_check_root_ranges.11) lines=("FAILED: a UAV's descriptor index is clamped with the flag") ;;
+              host_check_root_ranges.1[24])
+                lines=('FAILED: every descriptor load through the resource table is clamped with the flag') ;;
+              host_check_root_ranges.13)
+                lines=('FAILED: every descriptor load through the sampler table is clamped with the flag') ;;
+              *) lines=() ;;
+            esac
+            if ! grep -qE '^Fail: +1 *$' "$RUNNER_TEMP/$name.txt"; then
+              missed+=("$p: $test didn't fail on it")
+            else
+              for l in "${lines[@]}"; do
+                grep -q${x}F -- "$l" "$RUNNER_TEMP/$name.txt" || missed+=("$p: $test failed, but not at: $l")
+              done
+            fi
           done
-          [[ -z $(git status --porcelain -- src/winemetal) ]]
-          grep -qF 'failed: returned >= 0 && returned < 100' "$RUNNER_TEMP/layer.txt"
-          grep -qF 'failed: CGSizeEqualToSize(layer.drawableSize, CGSizeMake(800, 600))' "$RUNNER_TEMP/layer.2.txt"
-          grep -qF 'failed: after == 0' "$RUNNER_TEMP/layer.3.txt"
-          grep -qF 'failed: waiting >= 1000 && waiting < 10000' "$RUNNER_TEMP/layer.4.txt"
-          # MULLION_D3D12_GUARD_STATIC_RANGES in the converter: with it leaving a static range's SRVs, UAVs or
-          # constant buffers unchecked (tests/breaks/d3d12_bounds_guarded{,.2}.patch, host_guard_static_ranges.patch),
-          # host_guard_static_ranges has to fail on each, at the guarded output. and in the shader cache's key: with
-          # the key leaving out the compile flags (host_compile_key.patch), host_compile_key has to fail
-          git apply tests/breaks/host_compile_key.patch
-          status=0
-          meson test -C build host_compile_key --print-errorlogs >"$RUNNER_TEMP/key.txt" 2>&1 || status=$?
-          git apply -R tests/breaks/host_compile_key.patch
-          cat "$RUNNER_TEMP/key.txt"
-          [[ $status != 0 ]]
-          grep -qF "FAILED: the guard's flag alone gives another key" "$RUNNER_TEMP/key.txt"
-          for p in d3d12_bounds_guarded d3d12_bounds_guarded.2 host_guard_static_ranges; do
-            git apply "tests/breaks/$p.patch"
-            status=0
-            meson test -C build host_guard_static_ranges --print-errorlogs >"$RUNNER_TEMP/$p.txt" 2>&1 || status=$?
-            git apply -R "tests/breaks/$p.patch"
-            cat "$RUNNER_TEMP/$p.txt"
-            [[ $status != 0 ]]
-            grep -qF 'FAILED: static ranges with the flag convert as volatile ranges do' "$RUNNER_TEMP/$p.txt"
-          done
-          [[ -z $(git status --porcelain -- src/airconv src/d3d12) ]]
-          # lossless texture compression: with the bridge leaving out WMTTextureInfo.uncompressed
-          # (tests/breaks/host_texture_compression.patch) host_texture_compression has to fail, and with
-          # MULLION_TEX_MSAA_COMPRESSION=auto ignoring the GPU family or a resolve target's type group
-          # (host_compression{,.2}.patch) host_compression has to
-          git apply tests/breaks/host_texture_compression.patch
-          status=0
-          meson test -C build host_texture_compression --print-errorlogs >"$RUNNER_TEMP/descriptor.txt" 2>&1 || status=$?
-          git apply -R tests/breaks/host_texture_compression.patch
-          cat "$RUNNER_TEMP/descriptor.txt"
-          [[ $status != 0 ]]
-          grep -qF 'failed: uncompressed = 1 turns compression off' "$RUNNER_TEMP/descriptor.txt"
-          for p in host_compression host_compression.2; do
-            git apply "tests/breaks/$p.patch"
-            status=0
-            meson test -C build host_compression --print-errorlogs >"$RUNNER_TEMP/$p.txt" 2>&1 || status=$?
-            git apply -R "tests/breaks/$p.patch"
-            cat "$RUNNER_TEMP/$p.txt"
-            [[ $status != 0 ]]
-          done
-          grep -qF 'failed: auto keeps it on Apple10' "$RUNNER_TEMP/host_compression.txt"
-          grep -qF 'failed: another group keeps compression' "$RUNNER_TEMP/host_compression.2.txt"
-          [[ -z $(git status --porcelain -- src/winemetal src/mullion) ]]
-          # MULLION_D3D12_CHECK_RANGES: with a range's end computed as offset + size, which wraps
-          # (tests/breaks/host_ranges.patch), a footprint of one slice whatever its depth (host_ranges.2.patch), or a
-          # view's end as address + size (host_ranges.3.patch), the bridge's Metal 4 length from an offset as
-          # length - offset, which wraps past the end (host_ranges.4.patch), kept address ranges that outlive a
-          # buffer released (host_ranges.5.patch), a root view's bound past 32 bits (host_ranges.6.patch), or a command
-          # list's found buffer that outlives one (host_ranges.8.patch), a table at its heap's end counted as in it
-          # (host_ranges.7.patch), a table's span cut to its last range (host_ranges.9.patch), or an ExecuteIndirect's
-          # last command counted as a whole stride (host_ranges.10.patch), host_ranges has to fail
-          for p in host_ranges host_ranges.2 host_ranges.3 host_ranges.4 host_ranges.5 host_ranges.6 host_ranges.7 \
-            host_ranges.8 host_ranges.9 host_ranges.10; do
-            git apply "tests/breaks/$p.patch"
-            status=0
-            meson test -C build host_ranges --print-errorlogs >"$RUNNER_TEMP/$p.txt" 2>&1 || status=$?
-            git apply -R "tests/breaks/$p.patch"
-            cat "$RUNNER_TEMP/$p.txt"
-            [[ $status != 0 ]]
-          done
-          grep -qxF '  Size 18446744073709551608 240' "$RUNNER_TEMP/host_ranges.txt"
-          grep -qF 'failed: a 3D footprint' "$RUNNER_TEMP/host_ranges.2.txt"
-          grep -qxF '  Size 18446744073709551360 256' "$RUNNER_TEMP/host_ranges.3.txt"
-          grep -qF 'failed: nothing past its end, not a length that wraps' "$RUNNER_TEMP/host_ranges.4.txt"
-          grep -qF 'failed: a buffer made or released forgets every range' "$RUNNER_TEMP/host_ranges.5.txt"
-          grep -qF 'failed: a root view in a buffer of 5 GiB is bound at 4 GiB' "$RUNNER_TEMP/host_ranges.6.txt"
-          grep -qF 'failed: a buffer released or made forgets the buffer found' "$RUNNER_TEMP/host_ranges.8.txt"
-          grep -qF "failed: a table at a heap's end is in no heap" "$RUNNER_TEMP/host_ranges.7.txt"
-          grep -qF "failed: a range placed before another doesn't shorten the table" "$RUNNER_TEMP/host_ranges.9.txt"
-          grep -qF 'failed: four commands of stride 32 and 12 bytes of arguments take 108' "$RUNNER_TEMP/host_ranges.10.txt"
-          [[ -z $(git status --porcelain -- src/winemetal) ]]
-          # the root views' checks in the converter (SM50_SHADER_FLAG_CHECK_ROOT_RANGES): with a root CBV, SRV or UAV
-          # left unchecked under the flag (tests/breaks/host_check_root_ranges{,.2,.3}.patch), host_check_root_ranges
-          # has to fail, at that view; and with a failed check's load reading a root SRV's start instead of the lock
-          # table, for the view or one load path (host_check_root_ranges.{4,5,6,7}.patch), at the trace of the loads;
-          # and with no descriptor index clamped, or a constant buffer's, an SRV's or a UAV's through a table
-          # (host_check_root_ranges.{8,9,10,11}.patch), at that kind, or a texture's, a sampler's or a UAV counter's
-          # (.12, .13, .14), at the table they go through
-          for n in "" .2 .3 .4 .5 .6 .7 .8 .9 .10 .11 .12 .13 .14; do
-            git apply "tests/breaks/host_check_root_ranges$n.patch"
-            status=0
-            meson test -C build host_check_root_ranges --print-errorlogs >"$RUNNER_TEMP/root$n.txt" 2>&1 || status=$?
-            git apply -R "tests/breaks/host_check_root_ranges$n.patch"
-            cat "$RUNNER_TEMP/root$n.txt"
-            [[ $status != 0 ]]
-          done
-          grep -qF 'FAILED: a root CBV is checked with the flag' "$RUNNER_TEMP/root.txt"
-          grep -qF 'FAILED: a root SRV is checked with the flag' "$RUNNER_TEMP/root.2.txt"
-          grep -qF 'FAILED: a root UAV is checked with the flag' "$RUNNER_TEMP/root.3.txt"
-          for n in .4 .5 .6 .7; do
-            grep -qF 'FAILED: every load past a root SRV reads the lock table with the flag' "$RUNNER_TEMP/root$n.txt"
-          done
-          for n in .8 .9; do
-            grep -qF "FAILED: a constant buffer's descriptor index is clamped with the flag" "$RUNNER_TEMP/root$n.txt"
-          done
-          for n in .8 .10; do
-            grep -qF "FAILED: an SRV's descriptor index is clamped with the flag" "$RUNNER_TEMP/root$n.txt"
-          done
-          for n in .8 .11; do
-            grep -qF "FAILED: a UAV's descriptor index is clamped with the flag" "$RUNNER_TEMP/root$n.txt"
-          done
-          for n in .8 .12 .14; do
-            grep -qF 'FAILED: every descriptor load through the resource table is clamped with the flag' "$RUNNER_TEMP/root$n.txt"
-          done
-          for n in .8 .13; do
-            grep -qF 'FAILED: every descriptor load through the sampler table is clamped with the flag' "$RUNNER_TEMP/root$n.txt"
-          done
-          [[ -z $(git status --porcelain -- src/airconv) ]]
-          [[ -z $(git status --porcelain -- src/mullion) ]]
-          # the window lines: with an activation alone written as d9mt's visibility line
-          # (tests/breaks/host_window_lines.patch), what the watch said last following only the lines it wrote
-          # (host_window_lines.2.patch), or an activation line clearing the count of lines left out
-          # (host_window_lines.3.patch), host_window_lines has to fail
-          for p in host_window_lines host_window_lines.2 host_window_lines.3; do
-            git apply "tests/breaks/$p.patch"
-            status=0
-            meson test -C build host_window_lines --print-errorlogs >"$RUNNER_TEMP/$p.txt" 2>&1 || status=$?
-            git apply -R "tests/breaks/$p.patch"
-            cat "$RUNNER_TEMP/$p.txt"
-            [[ $status != 0 ]]
-          done
-          grep -qF "failed: an activation alone isn't a visibility line for the report" "$RUNNER_TEMP/host_window_lines.txt"
-          grep -qF 'failed: the report reads the 11 left out' "$RUNNER_TEMP/host_window_lines.2.txt"
-          grep -qF 'failed: the report reads the 2 left out after an activation line' "$RUNNER_TEMP/host_window_lines.3.txt"
-          [[ -z $(git status --porcelain -- src/winemetal) ]]
+          for m in "${missed[@]}"; do echo "::error::$m"; done
+          # exit, not a bare [[ ]]: this runner's /bin/bash is 3.2, whose -e doesn't stop on a false [[ ]]
+          if [[ ${#missed[@]} != 0 || -n $(git status --porcelain -- src tools) ]]; then exit 1; fi
+          echo "$ran host breaks, each failed its test"
           # a converter change the build's codegen id doesn't follow: this build against the id of the tree with one
           # comment more in src/airconv. both DLLs and VERSION have to fail
           cv=src/airconv/dxbc_converter.cpp
@@ -479,7 +451,7 @@ jobs:
             grep -qxF "FAIL  x86_64-windows/$f: carries the codegen id ${changed:0:12}" "$RUNNER_TEMP/codegen.txt"
           done
           grep -qxF "FAIL  VERSION: codegen ${changed:0:12}" "$RUNNER_TEMP/codegen.txt"
-          echo "all twelve checks failed on their break"
+          echo "all five checks failed on their break, and $ran host breaks failed their tests"
 
       # last, so that a run that only adds a warning still shows everything above
       - name: No new warnings
