@@ -165,7 +165,8 @@ jobs:
           # appended: llvm-mingw's unprefixed clang mustn't replace Apple's, which builds the native side
           export PATH="$PATH:$PWD/toolchains/llvm-mingw/bin"
           # and no other mingw on the image may build the DLLs instead
-          [[ $(command -v x86_64-w64-mingw32-gcc) == "$PWD/toolchains/llvm-mingw/bin/x86_64-w64-mingw32-gcc" ]] ||
+          [[ -n control ]]
+          [[ $(command -v x86_64-w64-mingw32-gcc) == "$PWD/toolchains/llvm-mingw/bin/x86_64-w64-mingw32-gcc-control" ]] ||
             { echo "::error::x86_64-w64-mingw32-gcc is $(command -v x86_64-w64-mingw32-gcc), not llvm-mingw's"; exit 1; }
           {
             echo '### Toolchain'
