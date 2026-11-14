@@ -595,7 +595,10 @@ past a buffer and 4 texels past a texture. Both run on the rented M1 under Metal
 
 **Jobs.**
 
-- **Lint** (`ubuntu-24.04`, pull requests only): actionlint on `swtor.yml`, with shellcheck on its scripts.
+- **Lint** (`ubuntu-24.04`, pull requests only): actionlint on `swtor.yml`, with shellcheck on its scripts. It also
+  fails on a line of Build x86_64 that starts with `[[ ]]` or `(( ))` and doesn't go on with `||`: that job's
+  `/bin/bash` is 3.2, whose `-e` doesn't stop the step when one of them is false, so each check there ends in
+  `|| { echo ::error::…; exit 1; }`.
 - **Build x86_64** (`xcode-27`, Xcode 27.2): the release build the app installs, `meson setup --cross-file
   build-win64.txt -Denable_d3d12=true -Denable_nvapi=false -Denable_nvngx=false --buildtype release --strip`, with
   llvm-mingw for the DLLs, 3Shain's Wine `v8.16-3shain` for Wine's files and LLVM 15.0.7 built without assertions. It
