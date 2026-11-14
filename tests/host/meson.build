@@ -53,6 +53,8 @@ test('host_texture_compression', executable('host_texture_compression', 'texture
                                             link_args : ['-framework', 'Foundation', '-framework', 'Metal']
                                                         + (mullion_crossbuild ? ['-arch', native_compiler_arch] : []),
                                             native : true))
+# jdrly/mullion: MULLION_D3D12_CHECK_RANGES's arithmetic, its MULLION-RANGE line and its RANGE section
+test('host_ranges', executable('host_ranges', 'ranges.cpp', override_options : ['cpp_std=c++20'], native : true))
 # jdrly/mullion: which Direct3D 12 textures lose lossless compression (MULLION_TEX_MSAA_COMPRESSION), and its lines
 test('host_compression', executable('host_compression', 'compression.cpp', override_options : ['cpp_std=c++20'],
                                     native : true))

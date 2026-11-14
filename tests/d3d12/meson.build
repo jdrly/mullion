@@ -42,6 +42,9 @@ test('d3d12_metalfx', exe, args: get_option('enable_nvngx') ? ['ngx'] : [],
 exe = executable('d3d12_texture_compression', ['d3d12_texture_compression.cpp'],
                  dependencies: d3d12_test_deps + [winemetal_dep], include_directories: include_directories('../../src/util'))
 test('d3d12_texture_compression', exe, env: ['MULLION_TEX_MSAA_COMPRESSION=auto'], timeout: 600)
+# jdrly/mullion: MULLION_D3D12_CHECK_RANGES drops copies past their resources (private ticket 20 part 1)
+exe = executable('d3d12_copy_ranges', ['d3d12_copy_ranges.cpp'], dependencies: d3d12_test_deps)
+test('d3d12_copy_ranges', exe, env: ['MULLION_D3D12_CHECK_RANGES=1'], timeout: 600)
 exe = executable('d3d12_trace_log',['d3d12_trace_log.cpp'], dependencies: d3d12_test_deps + [cpp.find_library('d3d11')])
 test('d3d12_trace_log', exe, timeout: 600)
 exe = executable('d3d12_copy_memory', ['d3d12_copy_memory.cpp'], dependencies: d3d12_test_deps)

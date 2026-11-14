@@ -1,0 +1,12 @@
+# a footprint covers one slice whatever its depth
+--- a/src/mullion/mullion_ranges.hpp
++++ b/src/mullion/mullion_ranges.hpp
+@@ -96,7 +96,7 @@
+     return 0;
+   uint64_t rows = BlocksOf(height, block), row = 0, slices = 0, total = 0;
+   if (__builtin_mul_overflow(BlocksOf(width, block), bytes_per_block, &row) ||
+-      __builtin_mul_overflow(rows, depth, &slices) || __builtin_mul_overflow(slices - 1, row_pitch, &total) ||
++      __builtin_mul_overflow(rows, uint64_t(1), &slices) || __builtin_mul_overflow(slices - 1, row_pitch, &total) ||
+       __builtin_add_overflow(total, row, &total))
+     return UINT64_MAX;
+   return total;

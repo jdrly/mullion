@@ -25,6 +25,9 @@
 #include "mullion_format.hpp"
 #include "mullion_geometry.hpp"
 #include "mullion_command.hpp"
+#include "mullion_ranges.hpp"
+#include "mullion_stats.hpp"
+#include "util_switch.hpp"
 #include <span>
 #include <cmath>
 #include "util_env.hpp"
@@ -169,6 +172,33 @@ to_metal_primitive_type(D3D12_PRIMITIVE_TOPOLOGY topo, WMTPrimitiveType &primiti
     return false;
   }
   return true;
+}
+
+// jdrly/mullion: MULLION_D3D12_CHECK_RANGES=1 drops a call whose offsets, sizes or regions run past the resource they
+// point into, and says so once per check (src/mullion/mullion_ranges.hpp, docs/swtor/README.md § Ranges). Off until the
+// GPU gate turns it on (private ticket 15). Read once, when d3d12core.dll loads; each checked call then tests one flag
+static sw::Switch<bool> kCheckRanges{"MULLION_D3D12_CHECK_RANGES", false, sw::exactlyOne};
+static const bool kRangesOn = kCheckRanges();
+
+// RANGE after STATS: the calls the checks dropped in the window
+static stats::SectionRegistrar kRangeSection{"RANGE", [](double, uint64_t) {
+  static std::array<uint64_t, size_t(ranges::Call::Count)> last{};
+  return ranges::counts.section(last);
+}};
+
+// where each check fires, once per process each
+static ranges::Site kBufferCopySrc{ranges::Call::CopyBufferRegion, "src"},
+    kBufferCopyDst{ranges::Call::CopyBufferRegion, "dst"},
+    kTextureCopySrcFootprint{ranges::Call::CopyTextureRegion, "src"},
+    kTextureCopyDstFootprint{ranges::Call::CopyTextureRegion, "dst"},
+    kTextureCopySrcBox{ranges::Call::CopyTextureRegion, "src"},
+    kTextureCopyDstRegion{ranges::Call::CopyTextureRegion, "dst"};
+
+// a check fired at `site`: counted, and its line written the first time
+static void
+RangeFired(ranges::Site &site, const ranges::Overrun &overrun) {
+  if (auto line = site.fired(overrun); !line.empty())
+    WARN(line);
 }
 
 // `Graphics`CommandList is a really confusing name
@@ -2235,12 +2265,127 @@ public:
     return true;
   }
 
+  // MULLION_D3D12_CHECK_RANGES: whether CopyBufferRegion's two ranges lie in their resources, both buffers, by the
+  // width Direct3D gave them: a buffer's Metal allocation may be longer. A texture has no `buffer`, which the copy
+  // would read through
+  bool
+  BufferCopyInRange(
+      ID3D12Resource *pDstBuffer, UINT64 DstOffset, ID3D12Resource *pSrcBuffer, UINT64 SrcOffset, UINT64 ByteCount
+  ) {
+    for (auto [resource, offset, site] :
+         {std::tuple{pSrcBuffer, SrcOffset, &kBufferCopySrc}, std::tuple{pDstBuffer, DstOffset, &kBufferCopyDst}}) {
+      auto desc = resource->GetDesc();
+      auto overrun = desc.Dimension == D3D12_RESOURCE_DIMENSION_BUFFER && static_cast<MTLD3D12Resource *>(resource)->buffer
+                         ? ranges::Bytes(offset, ByteCount, desc.Width)
+                         : ranges::Overrun{"Resource", uint64_t(desc.Dimension), D3D12_RESOURCE_DIMENSION_BUFFER};
+      if (overrun) {
+        RangeFired(*site, overrun);
+        return false;
+      }
+    }
+    return true;
+  }
+
+  // MULLION_D3D12_CHECK_RANGES: whether each placed footprint of a CopyTextureRegion lies in its buffer, its source box
+  // in its subresource or footprint, and the region it writes from (DstX, DstY, DstZ) in the destination's. A copy that
+  // CopyTextureRegion drops anyway (no texture or buffer, an empty box, a format Metal lacks) passes, to be dropped there
+  bool
+  TextureCopyInRange(
+      const D3D12_TEXTURE_COPY_LOCATION *pDst, UINT DstX, UINT DstY, UINT DstZ, const D3D12_TEXTURE_COPY_LOCATION *pSrc,
+      const D3D12_BOX *pSrcBox
+  ) {
+    // a location's extent in whole blocks, its block's width and bytes; a footprint's description and its buffer's
+    // width. nothing where CopyTextureRegion drops the copy
+    struct Extent {
+      ranges::Box box;
+      uint64_t block, bytes;
+      const D3D12_PLACED_SUBRESOURCE_FOOTPRINT *footprint = nullptr;
+      uint64_t width = 0;
+    };
+    auto extent_of = [&](const D3D12_TEXTURE_COPY_LOCATION &location) -> std::optional<Extent> {
+      auto resource = static_cast<MTLD3D12Resource *>(location.pResource);
+      auto desc = location.pResource->GetDesc();
+      MTL_DXGI_FORMAT_DESC format;
+      auto unit = [&](ranges::Box box) {
+        bool bc = format.Flag & MTL_DXGI_FORMAT_BC;
+        uint64_t block = bc ? 4 : 1;
+        return Extent{ranges::InBlocks(box, block), block, bc ? format.BlockSize : format.BytesPerTexel};
+      };
+      if (location.Type == D3D12_TEXTURE_COPY_TYPE_PLACED_FOOTPRINT) {
+        auto &footprint = location.PlacedFootprint.Footprint;
+        if (!resource->buffer || FAILED(MTLQueryDXGIFormat(device_->GetMTLDevice(), footprint.Format, format)))
+          return std::nullopt;
+        auto extent = unit({0, 0, 0, footprint.Width, footprint.Height, footprint.Depth});
+        extent.footprint = &location.PlacedFootprint;
+        extent.width = desc.Width;
+        return extent;
+      }
+      if (!resource->texture)
+        return std::nullopt;
+      UINT level = 0, slice = 0, plane = 0;
+      DecomposeSubresource(desc, location.SubresourceIndex, &level, &slice, &plane);
+      if (FAILED(MTLQueryDXGIFormat(device_->GetMTLDevice(), desc.Format, format, plane)))
+        return std::nullopt;
+      auto full = GetResourceExtent(desc, level);
+      ranges::Box box{0, 0, 0, full.right, full.bottom, full.back};
+      // a plane of its own has its own size, as CopyTextureRegion reads it
+      if (resource->texture->chroma) {
+        box.right = resource->texture->plane(plane)->width();
+        box.bottom = resource->texture->plane(plane)->height();
+      }
+      auto extent = unit(box);
+      // a depth-stencil format's bytes are both planes', where a copy moves one: a stencil byte, or a depth texel of
+      // 4 bytes, which Metal keeps as a float32 and a D24 footprint as a UNORM24 code in 4 (CopyD24)
+      if (format.PlanarCount > 1)
+        extent.bytes = plane ? 1 : 4;
+      return extent;
+    };
+    auto src = extent_of(*pSrc), dst = extent_of(*pDst);
+    if (!src || !dst)
+      return true;
+    // a footprint's bytes from its offset, by the larger unit of its format and the other end's: Metal moves a texel
+    // of the texture's format, which a footprint of another format would hold fewer bytes of
+    for (auto [at, other, site] : {std::tuple{&*src, &*dst, &kTextureCopySrcFootprint},
+                                   std::tuple{&*dst, &*src, &kTextureCopyDstFootprint}}) {
+      if (!at->footprint)
+        continue;
+      auto &footprint = at->footprint->Footprint;
+      auto bytes = ranges::FootprintBytes(footprint.Width, footprint.Height, footprint.Depth, footprint.RowPitch,
+                                          at->block, std::max(at->bytes, other->bytes));
+      if (auto overrun = ranges::Bytes(at->footprint->Offset, bytes, at->width)) {
+        overrun.part = "Footprint";
+        RangeFired(*site, overrun);
+        return false;
+      }
+    }
+    auto box = pSrcBox ? ranges::Box{pSrcBox->left, pSrcBox->top,    pSrcBox->front,
+                                     pSrcBox->right, pSrcBox->bottom, pSrcBox->back}
+                       : src->box;
+    if (box.left >= box.right || box.top >= box.bottom || box.front >= box.back)
+      return true;
+    if (auto overrun = ranges::Within(box, src->box)) {
+      RangeFired(kTextureCopySrcBox, overrun);
+      return false;
+    }
+    ranges::Box region{
+        DstX, DstY, DstZ, DstX + ranges::InDestination(box.right - box.left, src->block, dst->block),
+        DstY + ranges::InDestination(box.bottom - box.top, src->block, dst->block), DstZ + (box.back - box.front)
+    };
+    if (auto overrun = ranges::Within(region, dst->box)) {
+      RangeFired(kTextureCopyDstRegion, overrun);
+      return false;
+    }
+    return true;
+  }
+
   void STDMETHODCALLTYPE
   CopyBufferRegion(
       ID3D12Resource *pDstBuffer, UINT64 DstOffset, ID3D12Resource *pSrcBuffer, UINT64 SrcOffset, UINT64 ByteCount
   ) {
     PredicatedPasses predicated(this);
     if (!pDstBuffer || !pSrcBuffer)
+      return;
+    if (kRangesOn && !BufferCopyInRange(pDstBuffer, DstOffset, pSrcBuffer, SrcOffset, ByteCount))
       return;
     Hoisted hoisted{this};
     if (!PreCopy(hoisted, pDstBuffer, 0, pSrcBuffer, 0))
@@ -2339,6 +2484,8 @@ public:
   ) {
     PredicatedPasses predicated(this);
     if (!pDst || !pSrc)
+      return;
+    if (kRangesOn && !TextureCopyInRange(pDst, DstX, DstY, DstZ, pSrc, pSrcBox))
       return;
     auto src_desc = pSrc->pResource->GetDesc();
     auto dst_desc = pDst->pResource->GetDesc();

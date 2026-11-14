@@ -33,6 +33,7 @@ are set.
 | `MULLION_TEX_MSAA_COMPRESSION` | `1` | `0`: Direct3D 12's multisampled textures and their resolve targets are made without lossless compression, on every GPU. `auto`: so on a GPU before Apple10 (the family the bridge answers as, so `MULLION_GPU_FAMILY=9` takes it on an M5), Metal's default on Apple10. `1`: Metal's default. d9mt's fix for the M4's flickering 4x MSAA lines (d9mt 3145b30). Direct3D 12 doesn't say which texture a resolve writes: a resolve target is a single-sampled 2D texture of the type group, width and height of a multisampled texture the device made before it (`src/mullion/mullion_compression.hpp`). With it on, `GetResourceAllocationInfo` gives a single-sampled 2D texture room for both descriptors, as a multisampled texture made before the texture is placed turns it into a resolve target. Read as each Direct3D 12 device is made. `1` until the GPU gate turns `auto` on (private ticket 15). Anything else is `1` | `1`: Metal's default for every texture, and each texture's field 0, as before |
 | `MULLION_D3D12_RESET_WAITS` | off (`1` turns it on) | A command allocator's `Reset` while lists recorded from it are still queued or on the GPU waits until they have completed, or the device is removed, then resets. Direct3D forbids that `Reset`; upstream logs `CommandAllocator: Reset while N of its submitted lists have not completed` and resets at once, giving the lists' recording back for the next list to record over while the queue may still encode it and the GPU read it ([ADR 0002](adr/0002-gpu-objects-live-until-the-gpu-is-done.md)). No time limit: a reset after a timeout is the same defect, and `MULLION-GPU-HUNG` already reports a command buffer that doesn't complete. A `Reset` with nothing pending reads one atomic, as before, and never reads the switch. Read once, at the first `Reset` with lists pending. Off until the GPU gate (private ticket 15) has run `d3d12_allocator_reset_in_flight` and its break on a Mac; then that ticket turns it on | Upstream's: the `ERR` line and the reset at once |
 | `MULLION_SHADER_DUMP_PATH` | unset | Upstream's variable, with a limit now. A folder: every shader of a `MULLION-SHADER` failure (below; not `cache-blob`, not `draw-skipped`) is written there as `<sha1>.dxbc`, each once, at most 32 a process, after which the line says `dumped=limit`. Upstream wrote only the shaders of a failed parse, conversion or Metal pipeline, and without a limit. With `MULLION_TRACE_SHADER=heavy` and no folder, `shaders/` next to the trace log, as upstream. `MULLION_SHADER_DUMP_ALL=1` still writes every shader, without a limit. With a folder, each pipeline keeps a copy of its shaders' bytes, one copy of each shader for the process, so that a pipeline whose Metal compile fails on a compile thread or at draw time, when the game may have freed its bytecode, is dumped too. Off by default: the files are the game's own shaders. SWTOR on Mac sets it only when I ask a player for them, to a folder its Collect Logs doesn't read, so they never go into a log bundle | Unset writes nothing, as upstream. No value brings back unlimited dumps of failures; `MULLION_SHADER_DUMP_ALL=1` writes every shader |
+| `MULLION_D3D12_CHECK_RANGES` | off (`1` turns it on) | Checks the offsets, sizes, boxes and footprints a call gives against the resource they point into, and drops the call when one runs past it, with a `MULLION-RANGE` line the first time each check fires and a count in the `RANGE` section ([§ Ranges](#ranges)). Today `CopyBufferRegion` and `CopyTextureRegion` (private ticket 20, part 1); the ticket's later parts add their calls to the same switch. Read once, when `d3d12core.dll` loads. Off until the GPU gate has run `d3d12_copy_ranges` and its control on the rented M1 (private ticket 15) | Upstream's: each call goes to Metal as given, after the one test of a flag |
 
 A test hook, not a switch, and only in a build with the tests (`-Denable_tests=true`): `MULLION_TEST_GPU_ERROR=<code>`
 makes the bridge read every command buffer that completes as failed with that code of `MTLCommandBufferErrorDomain`,
@@ -76,6 +77,8 @@ removed with `DXGI_ERROR_DEVICE_HUNG`. A release build doesn't have it.
 | `mullion: flight record of <reason> in <executable>.flight` | Each flight dump. The file's name only: the folder is `MULLION_DIAG_PATH`, or `~/Library/Logs/Mullion` | The process's stderr (`wine.log`): the bridge writes it | Me: which dump to open |
 | `DIAG MEM frame= allocatedMiB= footprintMiB= footprintPeakMiB= budgetMiB= usageMiB= workingSetMiB= \| system: swapMiB= compressedMiB= freeMiB= pageouts= swapouts= \| heaps=n/MiB \| at=` | With `MULLION_MEMSTATS` on, at the first Present after each sample of the bridge's memory sampler; none while nothing presents | `d3d12.log` (`wine.log`), at `warn` | The app's session report, which reads d9mt's line of that name (`frame`, `allocatedMiB`); me, when a session degrades |
 | `MULLION-MEMORY-PRESSURE at= swapMiB= footprintMiB= ramMiB=` | Always, once per process, at the first Present after the first sample in which the Mac swapped out while the process's footprint was over half its RAM, with that sample's numbers and time | The same, at `warn` | Me, on "it got slow after an hour" from an 8 or 16 GB Mac |
+| `MULLION-RANGE call= what= given= limit= action=dropped` | With `MULLION_D3D12_CHECK_RANGES=1`, the first time each check drops a call, once per process ([§ Ranges](#ranges)) | `d3d12.log` (`wine.log`), at `warn` | Me: a call the game made with numbers past its resource |
+| `RANGE <Call>=n …` | With `MULLION_STATS=1` and `MULLION_D3D12_CHECK_RANGES=1`, a section after `STATS` for a window in which a check dropped a call: how many, by call | `d3d12.log` (`wine.log`), at `warn` | Me: how often, which the `MULLION-RANGE` line doesn't say |
 
 ### The session header
 
@@ -413,6 +416,40 @@ relaxed atomics.
 Lines come at Presents: a process that stops presenting writes none until it presents again, and gets the pressure line
 then.
 
+### Ranges
+
+With `MULLION_D3D12_CHECK_RANGES=1` a call whose numbers run past the resource they point into is dropped: Metal never
+sees it. Direct3D calls such a call undefined and its debug layer rejects it; on Windows it can cost the game its
+device, on a Mac an out-of-range GPU read or write can restart WindowServer and log the user out. The arithmetic is
+[`mullion_ranges.hpp`](../../src/mullion/mullion_ranges.hpp); `host_ranges` tests it. A sum never wraps: an offset
+and a size whose sum passes 2^64 run past, as they should.
+
+| Call | Dropped when |
+|---|---|
+| `CopyBufferRegion` | Either resource isn't a buffer, or `SrcOffset` or `DstOffset` plus `NumBytes` runs past its buffer's width, as Direct3D gave it (`GetDesc().Width`; the Metal allocation may be longer) (`what=` `srcResource`, `srcOffset`, `srcSize` or their `dst` forms) |
+| `CopyTextureRegion` | A placed footprint runs past its buffer's width (`srcFootprint`, `dstFootprint`): its offset, then every row of every slice at `RowPitch` but the last row, which needs only its texels, each of the larger size of the footprint's format and the texture's at the other end, which Metal moves (a depth-stencil texture's plane by what a copy of it moves, a stencil byte or a 4-byte depth texel: the format's size is both planes'). The source box runs past the source's level or footprint (`srcX`, `srcY`, `srcZ`). The region it writes from `DstX`, `DstY`, `DstZ` runs past the destination's (`dstX`, `dstY`, `dstZ`). A block-compressed level counts in whole 4-texel blocks, small mips too, and a copy between a compressed format and another carries one block into one texel or back. A copy the call drops anyway (no texture or buffer, an empty box, a format Metal lacks) isn't counted |
+
+`MULLION-RANGE call=CopyBufferRegion what=srcSize given=4096 limit=256 action=dropped`: `call` the Direct3D call,
+`what` the side (`src`, `dst`) and the number, `given` the value the game gave, `limit` the most the resource takes
+there: the buffer's width for an offset, what it has past the offset for a size or a footprint, the level's or
+footprint's extent for an edge, `1` (`D3D12_RESOURCE_DIMENSION_BUFFER`) where `given` is the dimension of a resource
+that isn't a buffer. One line per check per process, for the first call it drops: `CopyBufferRegion` has two checks,
+its source and its destination, and `CopyTextureRegion` four, its two footprints, its box and its region. `action` is
+always `dropped` for these calls. `AtomicCopyBufferUINT` and `AtomicCopyBufferUINT64` copy through `CopyBufferRegion` and are checked
+and counted as it.
+
+`RANGE CopyBufferRegion=3 CopyTextureRegion=1`: the calls dropped in the `STATS` window, each call with a count that
+isn't 0; no section in a window without one.
+
+Cost. Off: each checked call tests one flag. On: a buffer copy compares two ranges; a texture copy asks for the two
+formats' descriptions and the subresources' extents, which the copy asks for again after it. A drop adds a relaxed
+atomic and, the first time at its check, writes one line. No lock.
+
+`tests/d3d12/d3d12_copy_ranges.cpp` runs every kind of drop above and one copy in range after each, and the planes of
+two depth-stencil formats through footprints of exactly their bytes, which must not drop, with the switch on;
+its control, `tests/breaks/d3d12_copy_ranges.patch`, turns the checks off, which hands Metal copies up to 272 bytes
+past a buffer and 4 texels past a texture. Both run on the rented M1 under Metal's validation only (private ticket 15).
+
 ## CI
 
 `.github/workflows/swtor.yml`, workflow `SWTOR`. It runs for a pull request into `swtor-on-mac` and for a push to
@@ -430,7 +467,7 @@ then.
   `winemetal.so` without LLVM assertion text, built for macOS 15.0 (`minos`), with an ad hoc signature that `codesign`
   verifies; and the internal Metal library (below). The job uploads `mullion-swtor-<commit>` (7 days). For a pull
   request it also runs the host tests in `tests/host` (`meson test 'host_*'`; `host_tessellator` and `host_mutate`
-  below), breaks nine checks on purpose and requires each to fail, and fails on a compiler warning that
+  below), breaks ten checks on purpose and requires each to fail, and fails on a compiler warning that
   `.github/swtor/warnings-x86_64.txt` doesn't list. A push run builds, checks and uploads only: the pull request's run
   of the same tree has already passed the rest.
 
@@ -496,6 +533,12 @@ then.
   `MULLION_TEX_MSAA_COMPRESSION`'s rule and lines. Its controls: `tests/breaks/host_texture_compression.patch` leaves
   the field out of the bridge, `host_compression.patch` lets `auto` ignore the family, `host_compression.2.patch`
   leaves a resolve target's type group out. Each test has to fail on its patches.
+
+  The tenth break guards `MULLION_D3D12_CHECK_RANGES`'s arithmetic. `host_ranges` builds
+  [`mullion_ranges.hpp`](../../src/mullion/mullion_ranges.hpp) natively and checks ranges of bytes (a sum that wraps
+  past 2^64 among them), boxes, block-compressed extents, footprints, the `MULLION-RANGE` line and the `RANGE` section.
+  Its controls: `tests/breaks/host_ranges.patch` computes a range's end as `offset + size`, which wraps, and
+  `host_ranges.2.patch` counts one slice of a footprint whatever its depth. The test has to fail on each.
 - **Publish** (`ubuntu-24.04`, after the other jobs): packs the artifact into `mullion-swtor-<commit>.tar.xz` and
   checks that it unpacks to the same files, hash for hash. Only for a push to `swtor-on-mac` does it upload the archive
   (§ Releases). It is the only job with `contents: write`.

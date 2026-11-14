@@ -1,0 +1,12 @@
+# MULLION_D3D12_CHECK_RANGES=1 checks nothing: every copy goes to Metal as given
+--- a/src/d3d12/d3d12_command_list.cpp
++++ b/src/d3d12/d3d12_command_list.cpp
+@@ -178,7 +178,7 @@
+ // point into, and says so once per check (src/mullion/mullion_ranges.hpp, docs/swtor/README.md § Ranges). Off until the
+ // GPU gate turns it on (private ticket 15). Read once, when d3d12core.dll loads; each checked call then tests one flag
+ static sw::Switch<bool> kCheckRanges{"MULLION_D3D12_CHECK_RANGES", false, sw::exactlyOne};
+-static const bool kRangesOn = kCheckRanges();
++static const bool kRangesOn = false;
+ 
+ // RANGE after STATS: the calls the checks dropped in the window
+ static stats::SectionRegistrar kRangeSection{"RANGE", [](double, uint64_t) {
