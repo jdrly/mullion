@@ -2629,7 +2629,7 @@ enum { WMTUnixSampledEncoder = 167, WMTUnixDiagWrite, WMTUnixDispatchDataBytes, 
        WMTUnixDeviceMaxThreadsPerThreadgroup, WMTUnixDeviceReport, WMTUnixTextureSparseTailHolds,
        WMTUnixDeviceSparseResidencyInTiles, WMTUnixDeviceNewSpecializedRenderPipeline,
        WMTUnixGetSessionFacts, WMTUnixGetGPUError, WMTUnixCachePrepare, WMTUnixMemorySampler,
-       WMTUnixCallCount };
+       WMTUnixMainThreadWaitMax, WMTUnixCallCount };
 WINEMETAL_API obj_handle_t MTLCommandBuffer_sampledCommandEncoder(obj_handle_t cmdbuf, enum WMTSampledEncoder type,
                                                                   const struct WMTSampleBufferAttachmentInfo *samples,
                                                                   const struct WMTRenderPassInfo *render_info);
@@ -2730,6 +2730,11 @@ struct WMTMemorySample {
 };
 STATIC_ASSERT(sizeof(struct WMTMemorySample) == 96);
 WINEMETAL_API void WMTMemorySampler(struct WMTMemorySample *sample, uint32_t seconds);
+// MULLION_STATS' mainWaitMaxMs (src/winemetal/unix/layer.h): the longest wait, in ms, of a layer change for the main
+// thread since the last call, a change still waiting included; the next call starts from 0. Only reads and resets that
+// number. WMTMainThreadWaitUnknown when the bridge didn't answer
+#define WMTMainThreadWaitUnknown UINT64_MAX
+WINEMETAL_API uint64_t WMTMainThreadWaitMax(void);
 WINEMETAL_API void MTLCommandBuffer_pushDebugGroup(obj_handle_t cmdbuf, obj_handle_t name);
 WINEMETAL_API void MTLCommandBuffer_popDebugGroup(obj_handle_t cmdbuf);
 WINEMETAL_API uint64_t DispatchData_getBytes(obj_handle_t data, void *buffer, uint64_t size);

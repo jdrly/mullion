@@ -323,9 +323,10 @@ jobs:
           grep -qE '^FAIL  x86_64-windows/d3d12core\.dll: internal metallib at 0x[0-9a-f]+: container 2\.9 ' "$RUNNER_TEMP/broken.txt"
           grep -qE '^FAIL  x86_64-windows/d3d12core\.dll: internal metallib at 0x[0-9a-f]+: [0-9]+ of [0-9]+ functions AIR 2\.7 Metal 3\.2, 1 AIR 2\.9 Metal 3\.2$' "$RUNNER_TEMP/broken.txt"
           # the layer's setters (tests/breaks/host_layer_apply*.patch): with MULLION_LAYER_WAIT=0 waiting for the main
-          # thread again, and with a change compared only with the layer. host_layer_apply has to fail on each, at
-          # the call that waited and at the size that landed last
-          for n in "" .2; do
+          # thread again, with a change compared only with the layer, with STATS' mainWaitMaxMs not reset, and with it
+          # leaving out a change still waiting. host_layer_apply has to fail on each, at the call that waited, at the
+          # size that landed last, at the call after the wait was taken, and at the wait so far
+          for n in "" .2 .3 .4; do
             git apply "tests/breaks/host_layer_apply$n.patch"
             status=0
             meson test -C build host_layer_apply --print-errorlogs >"$RUNNER_TEMP/layer$n.txt" 2>&1 || status=$?
@@ -336,6 +337,8 @@ jobs:
           [[ -z $(git status --porcelain -- src/winemetal) ]]
           grep -qF 'failed: returned >= 0 && returned < 100' "$RUNNER_TEMP/layer.txt"
           grep -qF 'failed: CGSizeEqualToSize(layer.drawableSize, CGSizeMake(800, 600))' "$RUNNER_TEMP/layer.2.txt"
+          grep -qF 'failed: after == 0' "$RUNNER_TEMP/layer.3.txt"
+          grep -qF 'failed: waiting >= 1000 && waiting < 10000' "$RUNNER_TEMP/layer.4.txt"
           # MULLION_D3D12_GUARD_STATIC_RANGES in the converter: with it leaving a static range's SRVs, UAVs or
           # constant buffers unchecked (tests/breaks/d3d12_bounds_guarded{,.2}.patch, host_guard_static_ranges.patch),
           # host_guard_static_ranges has to fail on each, at the guarded output. and in the shader cache's key: with
