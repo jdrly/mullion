@@ -1,0 +1,14 @@
+# an activation alone is written as d9mt's visibility line, which the report takes for a switch
+diff --git a/src/winemetal/unix/window_lines.h b/src/winemetal/unix/window_lines.h
+index 565b234..35244ab 100644
+--- a/src/winemetal/unix/window_lines.h
++++ b/src/winemetal/unix/window_lines.h
+@@ -82,7 +82,7 @@ window_look(struct window_watch *watch, struct window_state now, uint64_t now_ns
+   if (dropped)
+     snprintf(tail, sizeof tail, " [%d earlier lines suppressed]", dropped);
+   int length;
+-  if (was.visibility != now.visibility)
++  if (was.visibility != now.visibility || was.active != now.active)
+     length = snprintf(buf, size,
+                       "MtlPresenter: %s visibility 0x%x -> 0x%x visible=%d activeSpace=%d miniaturized=%d active=%d"
+                       " why=%s%s\n",

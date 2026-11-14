@@ -20,6 +20,7 @@
 #include "../winemetal_thunks.h"
 #include "../airconv_thunks.h"
 #include "layer.h"
+#include "window.h"
 #include "../memory_pressure.h"
 #include "texture_compression.h"
 #include "buffer_range.h"
@@ -2528,6 +2529,7 @@ MullionPlace(MullionMetalHost *host, struct WMTWindowPlacement placement) {
     if (host->view.superview != content)
       [content addSubview:host->view positioned:NSWindowAbove relativeTo:nil];
     host->view.frame = area;
+    window_lines_watch(host->view);
     return;
   }
   NSLog(@"winemetal: no window to present %#llx in", placement.top_level);
@@ -2563,6 +2565,10 @@ _CreateMetalViewFromHWND(void *obj) {
     params->ret_view = (obj_handle_t)view;
     if (view) {
       params->ret_layer = (obj_handle_t)pfn_macdrv_view_get_metal_layer(view);
+      // winemac.drv's metal view is an NSView in the window
+      dispatch_async(dispatch_get_main_queue(), ^{
+        window_lines_watch((NSView *)view);
+      });
     }
     pfn_release_win_data(win_data);
   } else if (objc_getClass("WineWindow")) {
@@ -2618,13 +2624,19 @@ _ReleaseMetalView(void *obj) {
   if ([(id)params->handle isKindOfClass:[MullionMetalHost class]]) {
     MullionMetalHost *host = (MullionMetalHost *)params->handle;
     dispatch_async(dispatch_get_main_queue(), ^{
+      window_lines_unwatch(host->view);
       [host->view removeFromSuperview];
       [host->view release];
       [host->layer release];
       [host release];
     });
-  } else if (pfn_macdrv_view_release_metal_view)
+  } else if (pfn_macdrv_view_release_metal_view) {
+    NSView *view = (NSView *)params->handle;
+    dispatch_async(dispatch_get_main_queue(), ^{
+      window_lines_unwatch(view);
+    });
     pfn_macdrv_view_release_metal_view((macdrv_metal_view)params->handle);
+  }
 
   return STATUS_SUCCESS;
 }
