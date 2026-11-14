@@ -532,7 +532,9 @@ indexes the heaps directly gets its heaps' counts all the same. The clamp happen
 so what the list sees is what it says: `MULLION-RANGE call=SetRootDescriptorTable what=tableSize given=<n> limit=<n>
 action=clamped` the first time a table is set whose ranges declare more descriptors than its heap has from its base
 (`given` the ranges' reach, `ranges::TableSpan`; `limit` what the heap has), counted in `RANGE` as
-`SetRootDescriptorTable`. A table of an unbounded range declares no end and writes no line. The root arguments may now hold twice as
+`SetRootDescriptorTable`. A table of an unbounded range declares no end and writes no line. What the shaders' checks
+do themselves (#16's guard, part 5's root views, these clamps) isn't counted yet: a GPU feedback word the `STATS` line
+reads is private ticket 33. The root arguments may now hold twice as
 many qwords as a root signature's cost, so the staging tables of each command list are `2 × 64 + 5` qwords, with the
 switch on or off.
 
