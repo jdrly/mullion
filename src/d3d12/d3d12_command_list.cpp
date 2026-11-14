@@ -3294,13 +3294,8 @@ public:
     SetRootQword(rootsig_graphics_.ptr(), rootarg_graphics_staging_, DirtyState::GraphicsRootArguments, Index, VA);
   };
 
-  // MULLION_D3D12_CHECK_RANGES: the address ranges of live buffers the view checks found, newest first, while the
-  // device's buffer_generation is the one they were found at. Numbers only: a buffer released since is never touched
-  struct HeldRange {
-    uint64_t start = 0, end = 0;
-  };
-  std::array<HeldRange, 4> view_ranges_{};
-  uint64_t view_ranges_generation_ = 0;
+  // MULLION_D3D12_CHECK_RANGES: the address ranges of live buffers the view checks found
+  ranges::HeldRanges view_ranges_;
 
   // MULLION_D3D12_CHECK_RANGES: whether `size` bytes at `VA`, a view's or an immediate write's, lie in the live buffer
   // whose addresses hold VA. Looks the address up only when no range found since the last buffer was made or released
@@ -3309,24 +3304,13 @@ public:
   ViewInRange(ranges::Site &site, D3D12_GPU_VIRTUAL_ADDRESS VA, uint64_t size) {
     if (!size)
       return true;
-    auto generation = device_->buffer_generation.load(std::memory_order_acquire);
-    if (generation != view_ranges_generation_) {
-      view_ranges_ = {};
-      view_ranges_generation_ = generation;
+    auto end = view_ranges_.end(device_, device_->buffer_generation.load(std::memory_order_acquire), VA);
+    uint64_t offset, found_end;
+    if (!end && device_->LookupBufferByVA(VA, &offset, &found_end) && VA < found_end) {
+      view_ranges_.keep(VA - offset, found_end);
+      end = found_end;
     }
-    auto held = std::find_if(view_ranges_.begin(), view_ranges_.end(), [&](auto &range) {
-      return VA >= range.start && VA < range.end;
-    });
-    if (held == view_ranges_.end()) {
-      uint64_t offset, end;
-      if (device_->LookupBufferByVA(VA, &offset, &end) && VA < end) {
-        std::move_backward(view_ranges_.begin(), view_ranges_.end() - 1, view_ranges_.end());
-        view_ranges_[0] = {VA - offset, end};
-        held = view_ranges_.begin();
-      }
-    }
-    bool found = held != view_ranges_.end();
-    if (auto overrun = ranges::View(VA, size, found, found ? held->end : 0)) {
+    if (auto overrun = ranges::View(VA, size, end != 0, end)) {
       RangeFired(site, overrun);
       return false;
     }

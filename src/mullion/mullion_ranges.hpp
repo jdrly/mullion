@@ -23,6 +23,7 @@
 //
 // Pure C++ (no Windows, no Metal): tests/host/ranges.cpp builds it natively.
 
+#include <algorithm>
 #include <array>
 #include <atomic>
 #include <cstdint>
@@ -99,6 +100,43 @@ View(uint64_t address, uint64_t size, bool held, uint64_t end) {
     return {"Size", size, end - address};
   return {};
 }
+
+// the address ranges of live buffers a check found, newest first, kept while their device's buffer generation (raised
+// as any buffer's addresses are registered or unregistered) is the one they were found at. Numbers only, never a
+// buffer: a range outlives nothing. Not thread-safe: each command list has its own, each thread making views its own
+class HeldRanges {
+public:
+  // the end of a kept range that holds `address`, or 0 when none does. Another device or generation than the ranges
+  // were kept at forgets them all first; read the generation before looking an address up, so a range found after
+  // it may change is kept at the old one, and forgotten at the next call
+  uint64_t
+  end(const void *owner, uint64_t generation, uint64_t address) {
+    if (owner != owner_ || generation != generation_) {
+      ranges_ = {};
+      owner_ = owner;
+      generation_ = generation;
+    }
+    for (auto &range : ranges_)
+      if (address >= range.start && address < range.end)
+        return range.end;
+    return 0;
+  }
+
+  // a live buffer's range, found since `end` was last asked; the oldest of four goes
+  void
+  keep(uint64_t start, uint64_t end) {
+    std::move_backward(ranges_.begin(), ranges_.end() - 1, ranges_.end());
+    ranges_[0] = {start, end};
+  }
+
+private:
+  struct Range {
+    uint64_t start = 0, end = 0;
+  };
+  std::array<Range, 4> ranges_{};
+  const void *owner_ = nullptr;
+  uint64_t generation_ = 0;
+};
 
 // the texels a copy of `texels` source texels covers in the destination: a copy between a block-compressed format and
 // another carries one unit, a block or a texel, into one unit (CopyResource, Remarks)

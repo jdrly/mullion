@@ -64,6 +64,26 @@ main() {
   // a size whose end wraps past 2^64 from the address
   equal(said(View(0x10100, UINT64_MAX - 0xff, true, 0x10200)), "Size 18446744073709551360 256");
 
+  // the ranges a check keeps: found once, held after, four at a time, the oldest going first; forgotten for another
+  // device or generation
+  {
+    HeldRanges held;
+    int device, other;
+    check(held.end(&device, 1, 0x10100) == 0, "nothing is held at first");
+    held.keep(0x10000, 0x10200);
+    check(held.end(&device, 1, 0x10100) == 0x10200, "a kept range holds its addresses");
+    check(held.end(&device, 1, 0x10200) == 0, "but not its end");
+    for (uint64_t start : {0x20000, 0x30000, 0x40000})
+      held.keep(start, start + 0x100);
+    check(held.end(&device, 1, 0x10100) == 0x10200, "four ranges are held");
+    held.keep(0x50000, 0x50100);
+    check(held.end(&device, 1, 0x10100) == 0, "a fifth pushes the oldest out");
+    check(held.end(&device, 1, 0x50080) == 0x50100, "and is held");
+    check(held.end(&device, 2, 0x50080) == 0, "a buffer made or released forgets every range");
+    held.keep(0x50000, 0x50100);
+    check(held.end(&other, 2, 0x50080) == 0, "so does another device");
+  }
+
   // the bridge's Metal 4 lengths: what a buffer has from an offset, before, at and past its end
   check(buffer_remaining(256, 0) == 256, "a buffer's length from its start");
   check(buffer_remaining(256, 200) == 56, "what is left from an offset inside it");

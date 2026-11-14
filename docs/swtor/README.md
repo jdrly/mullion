@@ -431,7 +431,7 @@ and a size whose sum passes 2^64 run past, as they should.
 | `CopyTextureRegion` | A placed footprint runs past its buffer's width (`srcFootprint`, `dstFootprint`): its offset, then every row of every slice at `RowPitch` but the last row, which needs only its texels, each of the larger size of the footprint's format and the texture's at the other end, which Metal moves (a depth-stencil texture's plane by what a copy of it moves, a stencil byte or a 4-byte depth texel: the format's size is both planes'). The source box runs past the source's level or footprint (`srcX`, `srcY`, `srcZ`). The region it writes from `DstX`, `DstY`, `DstZ` runs past the destination's (`dstX`, `dstY`, `dstZ`). A block-compressed level counts in whole 4-texel blocks, small mips too, and a copy between a compressed format and another carries one block into one texel or back. A copy the call drops anyway (no texture or buffer, an empty box, a format Metal lacks) isn't counted |
 | `IASetIndexBuffer` | The view is bound as no view when its `BufferLocation` lies in no live buffer (`viewAddress`, `limit` 0) or its `SizeInBytes` runs past that buffer's end from there (`viewSize`). Draws then read zeros for its indices, as with no index buffer (D3D11.3 8.19.2). A view of no size, or at address 0, isn't checked |
 | `IASetVertexBuffers` | The same for each view it sets: that slot is bound as no view, which the vertex fetch reads as zeros |
-| `CreateConstantBufferView` | The same for the view's `BufferLocation` and `SizeInBytes`: the slot gets a null view, which shaders read as zeros, as for `BufferLocation` 0. One address lookup per view made, with the device's address lock |
+| `CreateConstantBufferView` | The same for the view's `BufferLocation` and `SizeInBytes`: the slot gets a null view, which shaders read as zeros, as for `BufferLocation` 0. Views are made on any thread, so each thread keeps four ranges of its own, as a command list does |
 | `WriteBufferImmediate` | Each write whose 4 bytes at `Dest` lie in no live buffer, or run past its end (`destAddress`, `destSize`), is dropped, a marker's too; the call's other writes go on. Through the command list's ranges, as views are |
 
 `MULLION-RANGE call=CopyBufferRegion what=srcSize given=4096 limit=256 action=dropped`: `call` the Direct3D call,
@@ -564,12 +564,14 @@ past a buffer and 4 texels past a texture. Both run on the rented M1 under Metal
 
   The tenth break guards `MULLION_D3D12_CHECK_RANGES`'s arithmetic. `host_ranges` builds
   [`mullion_ranges.hpp`](../../src/mullion/mullion_ranges.hpp) natively and checks ranges of bytes (a sum that wraps
-  past 2^64 among them), views, boxes, block-compressed extents, footprints, the bridge's Metal 4 lengths, the
+  past 2^64 among them), views and the address ranges they keep, boxes, block-compressed extents, footprints, the
+  bridge's Metal 4 lengths, the
   `MULLION-RANGE` line and the `RANGE` section.
   Its controls: `tests/breaks/host_ranges.patch` computes a range's end as `offset + size`, which wraps,
   `host_ranges.2.patch` counts one slice of a footprint whatever its depth, `host_ranges.3.patch` computes a view's
   end as `address + size`, and `host_ranges.4.patch` gives the bridge's Metal 4 length from an offset as
-  `length - offset`, which wraps past the end. The test has to fail on each.
+  `length - offset`, which wraps past the end, and `host_ranges.5.patch` keeps found address ranges after a buffer is
+  made or released. The test has to fail on each.
 - **Publish** (`ubuntu-24.04`, after the other jobs): packs the artifact into `mullion-swtor-<commit>.tar.xz` and
   checks that it unpacks to the same files, hash for hash. Only for a push to `swtor-on-mac` does it upload the archive
   (§ Releases). It is the only job with `contents: write`.

@@ -1390,13 +1390,20 @@ public:
   };
 
   // MULLION_D3D12_CHECK_RANGES: whether a constant buffer view's bytes lie in the live buffer whose addresses hold its
-  // address. A view is made far less often than it is drawn with: one lookup each
+  // address. Views are made on any thread, often one a draw from a ring of them: each thread keeps the ranges it found,
+  // and looks an address up, under the address lock, only when none holds it
   bool
   ConstantBufferViewInRange(const D3D12_CONSTANT_BUFFER_VIEW_DESC &Desc) {
     static ranges::Site site{ranges::Call::CreateConstantBufferView, "view"};
-    uint64_t offset, end = 0;
-    bool held = LookupBufferByVA(Desc.BufferLocation, &offset, &end) && Desc.BufferLocation < end;
-    auto overrun = ranges::View(Desc.BufferLocation, Desc.SizeInBytes, held, held ? end : 0);
+    static thread_local ranges::HeldRanges held;
+    auto VA = Desc.BufferLocation;
+    auto end = held.end(this, buffer_generation.load(std::memory_order_acquire), VA);
+    uint64_t offset, found_end;
+    if (!end && LookupBufferByVA(VA, &offset, &found_end) && VA < found_end) {
+      held.keep(VA - offset, found_end);
+      end = found_end;
+    }
+    auto overrun = ranges::View(VA, Desc.SizeInBytes, end != 0, end);
     if (!overrun)
       return true;
     if (auto line = site.fired(overrun); !line.empty())
