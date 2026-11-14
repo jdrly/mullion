@@ -196,7 +196,8 @@ static ranges::Site kBufferCopySrc{ranges::Call::CopyBufferRegion, "src"},
     kTextureCopyDstRegion{ranges::Call::CopyTextureRegion, "dst"},
     kIndexView{ranges::Call::IASetIndexBuffer, "view"}, kVertexView{ranges::Call::IASetVertexBuffers, "view"},
     kImmediate{ranges::Call::WriteBufferImmediate, "dest"},
-    kRootView{ranges::Call::SetRootView, "view", "clamped"};
+    kRootViewAddress{ranges::Call::SetRootView, "view", "clamped"},
+    kRootViewShort{ranges::Call::SetRootView, "view", "clamped"};
 
 // a check fired at `site`: counted, and its line written the first time
 static void
@@ -3198,7 +3199,7 @@ public:
     if (!rootsig || Index >= rootsig->ParameterSlots)
       return;
     if (kRangesOn && rootsig->RootLengthQwords)
-      SetRootViewLength(rootsig, staging, dirty, Index, Value);
+      Value = BindRootView(rootsig, staging, dirty, Index, Value);
     auto &slot = staging[rootsig->SlotQwordOffsets[Index]];
     if (slot == Value)
       return;
@@ -3206,32 +3207,39 @@ public:
     dirty_state_.set(dirty);
   }
 
-  // MULLION_D3D12_CHECK_RANGES: a root CBV, SRV or UAV's length, which its shaders check it against
-  // (SM50_SHADER_FLAG_CHECK_ROOT_RANGES): what the live buffer holding `VA` has from it, or 0 where none holds it. Set
-  // with every root argument whose parameter has one, as the buffer at an address may have changed since
-  void
-  SetRootViewLength(MTLD3D12RootSignature *rootsig, uint64_t *staging, DirtyState dirty, UINT Index, uint64_t VA) {
+  // MULLION_D3D12_CHECK_RANGES: a root CBV, SRV or UAV as its shaders see it (SM50_SHADER_FLAG_CHECK_ROOT_RANGES): the
+  // address to bind, which this returns, and the length in its root argument, ranges::RootViewBinding of the live
+  // buffer holding `VA`. Set with every root argument whose parameter has one, as the buffer at an address may have
+  // changed since; any other parameter's value comes back as it was
+  uint64_t
+  BindRootView(MTLD3D12RootSignature *rootsig, uint64_t *staging, DirtyState dirty, UINT Index, uint64_t VA) {
     auto qword = rootsig->RootLengthQwords[Index];
     if (qword == ~0u)
-      return;
+      return VA;
     auto end = VA ? HeldEnd(VA) : 0;
+    auto view = ranges::RootViewBinding(VA, end != 0, end, device_->GetNullBuffer());
     if (VA && !end)
-      RangeFired(kRootView, ranges::View(VA, 1, false, 0));
-    auto length = ranges::RootViewLength(VA, end != 0, end);
-    if (staging[qword] != length) {
-      staging[qword] = length;
+      RangeFired(kRootViewAddress, ranges::View(VA, 1, false, 0));
+    else if (VA && !view.length)
+      RangeFired(kRootViewShort, ranges::Overrun{"Size", end - VA, ranges::kRootViewLoad});
+    if (staging[qword] != view.length) {
+      staging[qword] = view.length;
       dirty_state_.set(dirty);
     }
+    return view.address;
   }
 
-  // MULLION_D3D12_CHECK_RANGES: a root signature just set has no root views yet: their lengths are 0 until one is
+  // MULLION_D3D12_CHECK_RANGES: a root signature just set has no root views yet: each is the null buffer of length 0
+  // until one is set, so that a shader that reads one before then reads memory that is there
   void
   ClearRootViewLengths(MTLD3D12RootSignature *rootsig, uint64_t *staging) {
     if (!rootsig->RootLengthQwords)
       return;
     for (UINT i = 0; i < rootsig->ParameterSlots; i++)
-      if (rootsig->RootLengthQwords[i] != ~0u)
+      if (rootsig->RootLengthQwords[i] != ~0u) {
+        staging[rootsig->SlotQwordOffsets[i]] = device_->GetNullBuffer();
         staging[rootsig->RootLengthQwords[i]] = 0;
+      }
   }
 
   void

@@ -3,6 +3,9 @@
 // past that buffer's end reads 0, and a store there writes nothing; one inside reads the buffer. Direct3D gives a root
 // descriptor no size and leaves an access past its buffer undefined: Mullion's other buffer views read 0 there (D3D11.3
 // 7.5, 22.4.12), and so do these with the switch.
+// A root SRV or UAV with less than 32 bytes left in its buffer, one load's most, is bound as the device's null buffer
+// and reads 0 even inside them: a check that fails still loads from the view's start, which must be memory that is
+// there.
 // Each buffer is 256 bytes, the least Mullion gives one, and each access past it lands 144 to 400 bytes beyond. Its
 // control, tests/breaks/d3d12_root_view_ranges.patch, converts without the checks: the reads then return what lies behind
 // the buffers, or Metal's validation (tests/run.py --validate) reports them. Run it on the rented M1 only (private
@@ -94,6 +97,10 @@ main(int argc, char **argv) {
   list->SetComputeRootUnorderedAccessView(3, output->GetGPUVirtualAddress());
   list->SetComputeRoot32BitConstants(4, 3, indices, 0);
   list->Dispatch(1, 1, 1);
+  // again, the SRV 16 bytes before its buffer's end and the output 64 bytes in
+  list->SetComputeRootShaderResourceView(1, structured->GetGPUVirtualAddress() + bytes - 16);
+  list->SetComputeRootUnorderedAccessView(3, output->GetGPUVirtualAddress() + 64);
+  list->Dispatch(1, 1, 1);
   transition(list.Get(), output.Get(), D3D12_RESOURCE_STATE_UNORDERED_ACCESS, D3D12_RESOURCE_STATE_COPY_SOURCE);
   transition(list.Get(), unordered.Get(), D3D12_RESOURCE_STATE_UNORDERED_ACCESS, D3D12_RESOURCE_STATE_COPY_SOURCE);
   list->CopyBufferRegion(back.Get(), 0, output.Get(), 0, bytes);
@@ -109,6 +116,9 @@ main(int argc, char **argv) {
                  {"element 1 of the root SRV", 101},         {"element 1 of the root UAV", 201}};
   for (UINT i = 0; i < std::size(outputs); i++)
     expect(got[i] == outputs[i].want, "%s reads %#x, want %#x", outputs[i].what, got[i], outputs[i].want);
+  // the second dispatch: the SRV with 16 bytes left reads 0 at element 1, which is inside them
+  expect(got[16 + 4] == 0, "element 1 of a root SRV 16 bytes before its buffer's end reads %#x, want 0", got[16 + 4]);
+  expect(got[16 + 3] == 5, "the second dispatch's row 1 of the root CBV reads %#x, want 5", got[16 + 3]);
   // the UAV's own words are as they were: the store past its end went nowhere it can see
   for (UINT i = 0; i < words; i++)
     if (!expect(got[words + i] == 200 + i, "word %u of the root UAV's buffer is %#x, want %#x", i, got[words + i],

@@ -122,11 +122,20 @@ main() {
     check(!found.at(generation, 0x10100, offset), "Reset and an aliasing barrier forget it");
   }
 
-  // a root view's bound: what its buffer has from the address, at most 32 bits of it, and 0 in no buffer
-  check(RootViewLength(0x10100, true, 0x10200) == 0x100, "a root view's bound is what its buffer has left");
-  check(RootViewLength(0x10000, true, 0x10000 + (5ull << 32)) == UINT32_MAX,
+  // a root view's binding: its address and what its buffer has from there, at most 32 bits of it; the null buffer of
+  // length 0 in no buffer, or with less than one load's 32 bytes left, so that a failed check's load stays in memory
+  constexpr uint64_t null_buffer = 0x900000;
+  auto bound = [&](uint64_t address, bool held, uint64_t end) {
+    auto view = RootViewBinding(address, held, end, null_buffer);
+    return std::to_string(view.address) + " " + std::to_string(view.length);
+  };
+  equal(bound(0x10100, true, 0x10200), "65792 256");
+  check(RootViewBinding(0x10000, true, 0x10000 + (5ull << 32), null_buffer).length == UINT32_MAX,
         "a root view in a buffer of 5 GiB is bound at 4 GiB, not at what the low 32 bits of its length say");
-  check(RootViewLength(0x20000, false, 0) == 0, "a root view in no buffer is bound at 0");
+  equal(bound(0x101e0, true, 0x10200), "66016 32");
+  check(bound(0x101e4, true, 0x10200) == "9437184 0", "a root view with less than one load's bytes left is the null buffer");
+  check(bound(0x20000, false, 0) == "9437184 0", "a root view in no buffer is the null buffer");
+  check(bound(0, false, 0) == "9437184 0", "a root view at address 0 is the null buffer");
   Site root{Call::SetRootView, "view", "clamped"};
   {
     Counts root_counts;

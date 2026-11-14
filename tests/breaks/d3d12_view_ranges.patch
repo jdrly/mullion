@@ -1,7 +1,7 @@
 # MULLION_D3D12_CHECK_RANGES=1 binds every index and vertex buffer view as given
 --- a/src/d3d12/d3d12_command_list.cpp
 +++ b/src/d3d12/d3d12_command_list.cpp
-@@ -3350,6 +3350,7 @@
+@@ -3358,6 +3358,7 @@
    // whose addresses hold VA
    bool
    ViewInRange(ranges::Site &site, D3D12_GPU_VIRTUAL_ADDRESS VA, uint64_t size) {
