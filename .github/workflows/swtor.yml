@@ -228,7 +228,7 @@ jobs:
           { echo '### The build'; echo '```'; cat "$RUNNER_TEMP/check.txt"; echo '```'; } >>"$GITHUB_STEP_SUMMARY"
           exit "$status"
 
-      # tests/host/meson.build: twenty-four tests, each with meson's 30 s timeout but host_tessellator's
+      # tests/host/meson.build: twenty-six tests, each with meson's 30 s timeout but host_tessellator's
       # 300 s; none builds the tree or waits on a GPU
       - name: Host tests
         if: github.event_name == 'pull_request'
@@ -357,6 +357,28 @@ jobs:
             grep -qF 'FAILED: static ranges with the flag convert as volatile ranges do' "$RUNNER_TEMP/$p.txt"
           done
           [[ -z $(git status --porcelain -- src/airconv src/d3d12) ]]
+          # lossless texture compression: with the bridge leaving out WMTTextureInfo.uncompressed
+          # (tests/breaks/host_texture_compression.patch) host_texture_compression has to fail, and with
+          # MULLION_TEX_MSAA_COMPRESSION=auto ignoring the GPU family or a resolve target's type group
+          # (host_compression{,.2}.patch) host_compression has to
+          git apply tests/breaks/host_texture_compression.patch
+          status=0
+          meson test -C build host_texture_compression --print-errorlogs >"$RUNNER_TEMP/descriptor.txt" 2>&1 || status=$?
+          git apply -R tests/breaks/host_texture_compression.patch
+          cat "$RUNNER_TEMP/descriptor.txt"
+          [[ $status != 0 ]]
+          grep -qF 'failed: uncompressed = 1 turns compression off' "$RUNNER_TEMP/descriptor.txt"
+          for p in host_compression host_compression.2; do
+            git apply "tests/breaks/$p.patch"
+            status=0
+            meson test -C build host_compression --print-errorlogs >"$RUNNER_TEMP/$p.txt" 2>&1 || status=$?
+            git apply -R "tests/breaks/$p.patch"
+            cat "$RUNNER_TEMP/$p.txt"
+            [[ $status != 0 ]]
+          done
+          grep -qF 'failed: auto keeps it on Apple10' "$RUNNER_TEMP/host_compression.txt"
+          grep -qF 'failed: another group keeps compression' "$RUNNER_TEMP/host_compression.2.txt"
+          [[ -z $(git status --porcelain -- src/winemetal src/mullion) ]]
           # a converter change the build's codegen id doesn't follow: this build against the id of the tree with one
           # comment more in src/airconv. both DLLs and VERSION have to fail
           cv=src/airconv/dxbc_converter.cpp
@@ -372,7 +394,7 @@ jobs:
             grep -qxF "FAIL  x86_64-windows/$f: carries the codegen id ${changed:0:12}" "$RUNNER_TEMP/codegen.txt"
           done
           grep -qxF "FAIL  VERSION: codegen ${changed:0:12}" "$RUNNER_TEMP/codegen.txt"
-          echo "all eight checks failed on their break"
+          echo "all nine checks failed on their break"
 
       # last, so that a run that only adds a warning still shows everything above
       - name: No new warnings

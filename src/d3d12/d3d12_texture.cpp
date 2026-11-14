@@ -198,6 +198,9 @@ PopulateWMTTextureInfo(MTLD3D12Device *Device, WMTTextureInfo &InfoOut, const D3
   if (Desc.Format == DXGI_FORMAT_R8_UINT && (InfoOut.type == WMTTextureType2D || InfoOut.type == WMTTextureType2DArray))
     Usage |= WMTTextureUsageShaderRead | WMTTextureUsageShaderWrite;
   InfoOut.usage = Usage;
+  // jdrly/mullion: a multisampled texture or a resolve target loses Metal's lossless compression where
+  // MULLION_TEX_MSAA_COMPRESSION says (mullion_compression.hpp); here, so that a heap's size for it is the same
+  InfoOut.uncompressed = Device->TextureUncompressed(Desc, InfoOut);
 
   // TODO: decide storage mode
   InfoOut.options = WMTResourceHazardTrackingModeUntracked;
@@ -389,6 +392,8 @@ public:
                       : pHeap ? storage->allocate(flags, pHeap->heap, offset) : storage->allocate(flags));
       if (!storage->current()->texture())
         return FAIL(E_OUTOFMEMORY);
+      if (!pTexture && !plane)
+        device_->TextureMade(desc_, texture_info);
       if (!pHeap)
         device_->RegisterResidency(storage->current()->texture());
       storage->centered = desc_.SampleDesc.Quality == DXGI_CENTER_MULTISAMPLE_QUALITY_PATTERN;

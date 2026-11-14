@@ -44,6 +44,18 @@ test('host_layer_apply', executable('host_layer_apply', ['layer_apply.c', '../..
                                                  '-framework', 'CoreGraphics', '-framework', 'Metal']
                                                 + (mullion_crossbuild ? ['-arch', native_compiler_arch] : []),
                                     native : true))
+# jdrly/mullion: the bridge's texture descriptor with and without Metal's lossless compression
+# (src/winemetal/unix/texture_compression.h), and a texture made each way where the machine has a Metal device
+test('host_texture_compression', executable('host_texture_compression', 'texture_compression.c',
+                                            include_directories : include_directories('../../src/winemetal/unix'),
+                                            c_args : ['-ObjC'],
+                                            # a C program: a cross build gives native links -arch for C++ only
+                                            link_args : ['-framework', 'Foundation', '-framework', 'Metal']
+                                                        + (mullion_crossbuild ? ['-arch', native_compiler_arch] : []),
+                                            native : true))
+# jdrly/mullion: which Direct3D 12 textures lose lossless compression (MULLION_TEX_MSAA_COMPRESSION), and its lines
+test('host_compression', executable('host_compression', 'compression.cpp', override_options : ['cpp_std=c++20'],
+                                    native : true))
 # the STATS line's arithmetic and format, and the fixture's STATS lines
 test('host_stats', executable('host_stats', 'stats.cpp', override_options : ['cpp_std=c++20'], native : true),
      args : files('../swtor/fixtures/session.log'))

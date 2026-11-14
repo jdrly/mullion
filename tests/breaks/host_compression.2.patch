@@ -1,0 +1,12 @@
+# a resolve target is any single-sampled 2D texture of a multisampled one's size: its type group is left out
+--- a/src/mullion/mullion_compression.hpp
++++ b/src/mullion/mullion_compression.hpp
+@@ -106,7 +106,7 @@
+ private:
+   static std::array<uint64_t, 3>
+   key(const Shape &shape) {
+-    return {shape.group, shape.width, shape.height};
++    return {0, shape.width, shape.height};
+   }
+ 
+   bool msaa_uncompressed_;
