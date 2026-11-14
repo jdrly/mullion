@@ -40,6 +40,7 @@ public:
   MTLD3D12ComputePipelineStateImpl(MTLD3D12Device *pDevice) :
       MTLD3D12PipelineObject<MTLD3D12ComputePipelineState>(pDevice) {
     IsComputePipelineState = 1;
+    kind = "compute";
   }
 
   // a compile of its Metal pipeline that has not begun is dropped, and one under way finished, before the pipeline
@@ -66,8 +67,10 @@ public:
 
     Name({pDesc->CS});
     // as a graphics pipeline's stages (MTLD3D12GraphicsPipelineStateImpl::Initialize)
-    if (ShaderProgramType(pDesc->CS.pShaderBytecode, pDesc->CS.BytecodeLength) != microsoft::D3D11_SB_COMPUTE_SHADER)
+    if (ShaderProgramType(pDesc->CS.pShaderBytecode, pDesc->CS.BytecodeLength) != microsoft::D3D11_SB_COMPUTE_SHADER) {
+      StageRefused(pDesc->CS, microsoft::D3D11_SB_COMPUTE_SHADER);
       return E_INVALIDARG;
+    }
     if (HRESULT hr = InitializeShader(device_, pDesc->CS, &shader_cs, &ref_cs); FAILED(hr))
       return hr;
 
@@ -111,14 +114,13 @@ public:
           if (!(self->pso = device->Archived(info, error, [&](auto &info, auto &error) {
                   return device->GetMTLDevice().newComputePipelineState(info, error);
                 })))
-            ERR("Failed to create compute PSO of shader ", self->name, ": ", error.description().getUTF8String());
+            self->Failed(shader_lines::Step::Pipeline, {}, error.description().getUTF8String());
         });
         DeferredPipeline::Queue(deferred);
       } else if (!(pso = device_->Archived(info, err, [&](auto &info, auto &error) {
                      return metal.newComputePipelineState(info, error);
                    }))) {
-        ERR("Failed to create compute PSO of shader ", name, ": ", err.description().getUTF8String());
-        DumpShaders({pDesc->CS});
+        Failed(shader_lines::Step::Pipeline, {&pDesc->CS, 1}, err.description().getUTF8String());
         return E_FAIL;
       }
     }
@@ -170,8 +172,10 @@ CreateComputePipelineState(
   auto desc = *pDesc;
   Com<ID3D12RootSignature> embedded;
   if (!desc.pRootSignature) {
-    if (!ShaderContainerHolds(desc.CS.pShaderBytecode, desc.CS.BytecodeLength))
+    if (!ShaderContainerHolds(desc.CS.pShaderBytecode, desc.CS.BytecodeLength)) {
+      ShaderFailed(shader_lines::Step::Container, "compute", {&desc.CS, 1}, kNotHeld);
       return FAIL(E_INVALIDARG);
+    }
     HRESULT hr = CreateRootSignature(
         pDevice, 0, desc.CS.pShaderBytecode, desc.CS.BytecodeLength, __uuidof(ID3D12RootSignature),
         reinterpret_cast<void **>(&embedded)

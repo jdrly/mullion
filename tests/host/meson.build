@@ -70,6 +70,14 @@ test('host_hitch', executable('host_hitch', 'hitch.cpp', override_options : ['cp
 test('host_device_lines', executable('host_device_lines', 'device_lines.cpp', override_options : ['cpp_std=c++20'],
                                      native : true),
      args : files('../swtor/fixtures/session.log'))
+# jdrly/mullion: the MULLION-SHADER lines against the same fixture, the 32 shaders a process dumps at most (into a
+# temporary folder), and the native converter on garbled shaders dumped as the driver dumps them
+test('host_shader_lines', executable('host_shader_lines',
+                                     ['shader_lines.cpp', '../../src/util/sha1/sha1_util.cpp', '../../src/util/sha1/sha1.c'],
+                                     # shim: what tests/garbled.hpp takes of <windows.h>
+                                     include_directories : include_directories('../../src/util', 'shim'),
+                                     override_options : ['cpp_std=c++20'], native : true),
+     args : [files('../swtor/fixtures/session.log'), airconv_cli_darwin], timeout : 120)
 # the DIAG MEM and MULLION-MEMORY-PRESSURE lines, MULLION_MEMSTATS's grammar, and the fixture's DIAG MEM lines
 test('host_memory', executable('host_memory', 'memory.cpp', override_options : ['cpp_std=c++20'], native : true),
      args : files('../swtor/fixtures/session.log'))

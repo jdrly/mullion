@@ -1,0 +1,12 @@
+# dumped= renamed dump=: no failure line matches the fixture or its step's any longer
+--- a/src/mullion/mullion_shader_lines.hpp
++++ b/src/mullion/mullion_shader_lines.hpp
+@@ -134,7 +134,7 @@
+ inline std::string
+ Line(const Failure &failure) {
+   std::string line = "MULLION-SHADER at=" + At(failure.at) + " step=" + Name(failure.step) + " stage=" + failure.stage +
+-                     " sha1=" + Joined(failure.sha1) + " kind=" + failure.kind + " dumped=" + Name(failure.dumped);
++                     " sha1=" + Joined(failure.sha1) + " kind=" + failure.kind + " dump=" + Name(failure.dumped);
+   auto tail = Suppressed(failure.suppressed);
+   auto text = gpu_error::Text(failure.message, kMessageLimit, failure.names);
+   size_t room = gpu_error::kLineLimit - 1 - std::min(gpu_error::kLineLimit - 1, line.size() + 3 + tail.size());

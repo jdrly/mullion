@@ -32,6 +32,7 @@ are set.
 | `MULLION_TEX_NO_COMPRESSION` | off (`1` turns it on) | No texture Mullion makes has Metal's lossless compression (`allowGPUOptimizedContents` NO), Direct3D 11's and 12's and Mullion's own: the tester's switch for the M4's compression bugs ([gpu-families.md](gpu-families.md)), d9mt's `D9MT_TEX_PFV=1`. The bridge reads it once per process and applies it to every texture descriptor and every heap size it gives (`src/winemetal/unix/texture_compression.h`), all but the three it makes and releases at once to ask the GPU what it does (vertex values, sampler reduction, sparse residency), and says so on stderr; `d3d12.dll` declares it for the header and the `textures` line. Costs memory bandwidth on every GPU | Metal's default: every texture made as before |
 | `MULLION_TEX_MSAA_COMPRESSION` | `1` | `0`: Direct3D 12's multisampled textures and their resolve targets are made without lossless compression, on every GPU. `auto`: so on a GPU before Apple10 (the family the bridge answers as, so `MULLION_GPU_FAMILY=9` takes it on an M5), Metal's default on Apple10. `1`: Metal's default. d9mt's fix for the M4's flickering 4x MSAA lines (d9mt 3145b30). Direct3D 12 doesn't say which texture a resolve writes: a resolve target is a single-sampled 2D texture of the type group, width and height of a multisampled texture the device made before it (`src/mullion/mullion_compression.hpp`). With it on, `GetResourceAllocationInfo` gives a single-sampled 2D texture room for both descriptors, as a multisampled texture made before the texture is placed turns it into a resolve target. Read as each Direct3D 12 device is made. `1` until the GPU gate turns `auto` on (private ticket 15). Anything else is `1` | `1`: Metal's default for every texture, and each texture's field 0, as before |
 | `MULLION_D3D12_RESET_WAITS` | off (`1` turns it on) | A command allocator's `Reset` while lists recorded from it are still queued or on the GPU waits until they have completed, or the device is removed, then resets. Direct3D forbids that `Reset`; upstream logs `CommandAllocator: Reset while N of its submitted lists have not completed` and resets at once, giving the lists' recording back for the next list to record over while the queue may still encode it and the GPU read it ([ADR 0002](adr/0002-gpu-objects-live-until-the-gpu-is-done.md)). No time limit: a reset after a timeout is the same defect, and `MULLION-GPU-HUNG` already reports a command buffer that doesn't complete. A `Reset` with nothing pending reads one atomic, as before, and never reads the switch. Read once, at the first `Reset` with lists pending. Off until the GPU gate (private ticket 15) has run `d3d12_allocator_reset_in_flight` and its break on a Mac; then that ticket turns it on | Upstream's: the `ERR` line and the reset at once |
+| `MULLION_SHADER_DUMP_PATH` | unset | Upstream's variable, with a limit now. A folder: every shader of a `MULLION-SHADER` failure (below; not `cache-blob`, not `draw-skipped`) is written there as `<sha1>.dxbc`, each once, at most 32 a process, after which the line says `dumped=limit`. Upstream wrote only the shaders of a failed parse, conversion or Metal pipeline, and without a limit. With `MULLION_TRACE_SHADER=heavy` and no folder, `shaders/` next to the trace log, as upstream. `MULLION_SHADER_DUMP_ALL=1` still writes every shader, without a limit. Off by default: the files are the game's own shaders. SWTOR on Mac sets it only when I ask a player for them, to a folder its Collect Logs doesn't read, so they never go into a log bundle | Unset writes nothing, as upstream. No value brings back unlimited dumps of failures; `MULLION_SHADER_DUMP_ALL=1` writes every shader |
 
 A test hook, not a switch, and only in a build with the tests (`-Denable_tests=true`): `MULLION_TEST_GPU_ERROR=<code>`
 makes the bridge read every command buffer that completes as failed with that code of `MTLCommandBufferErrorDomain`,
@@ -64,6 +65,9 @@ removed with `DXGI_ERROR_DEVICE_HUNG`. A release build doesn't have it.
 | `COMPILE frame= dtMs= shaders=n/ms psos=n/ms renderWait=n/ms cache=hits/misses queued=` | With `MULLION_STATS=1`, at the Present that ends a frame in which a shader was converted, a Metal pipeline compiled or a draw waited, or that took 33.4 ms or more; right after its `HITCH` line | The same, at `warn` with a `HITCH` line, else `info` | The app's session report, which reads d9mt's line of that name |
 | `MULLION-PIPELINE at= kind= ms= late= variant= name= [[n earlier lines suppressed]]` | Always, for each pipeline made that took 20 ms or more, or was made after the first Present, at most 30 lines in 10 s. Replaces `D3D12 pipeline made: <kind>; <name>; <ms> ms`, which only `MULLION_D3D12_GPU_ERRORS` wrote, and only for late pipelines | `d3d12.log` (`wine.log`), at `info` | Me, after a stutter: which pipeline, and which variant |
 | `MULLION-PIPELINE-TOTALS late= ms= longestMs=` | With `MULLION_D3D12_GPU_ERRORS`, at each queue's release: the pipelines made after the first Present, their total and longest ms. Replaces `D3D12 pipeline totals: …` | The same | Me |
+| `MULLION-SHADER at= step= stage= sha1= kind= dumped= \| <text> [[n earlier lines suppressed]]` | Always, for each shader or pipeline that fails, at the step it fails at (below), at most 30 lines in 10 s together with `draw-skipped`. Replaces `Failed to initialize shader <sha1>`, `Failed to compile <name>`, `Failed to load <name>`, `Failed to load library shader <name>`, `Failed to create [geometry \| mesh shader \| tessellation \| attachment \| compute] PSO of shader(s) <name>` and `pipeline <name>: the variant that emulates its samplers failed`, and says the refusals that only `FAIL(E_INVALIDARG)`'s warning said before | `d3d12.log` (`wine.log`), at `err`; `step=cache-blob` at `warn` | Me: which shader failed, where, and which file reproduces it |
+| `MULLION-SHADER at= step=draw-skipped stage=- sha1= kind= skipped= [[n earlier lines suppressed]]` | Always, once per pipeline, at the first draw or dispatch dropped for want of a Metal pipeline: its compile failed on a compile thread after `CreatePipelineState` returned `S_OK`, a variant failed at draw time, or the draw's topology is one the pipeline can't draw | The same, at `warn` | Me: a missing object has a reason |
+| `MULLION-SHADER-TOTALS failed= byStep= skippedDraws= dumped=` | Always, when a Direct3D 12 device is destroyed: the process's so far | The same, at `info` | Me, after a session: `failed=0 byStep=none skippedDraws=0` says every shader converted |
 | `MULLION-GPU-ERROR at= queue= cmdbuf= frame= error=Name(code) [domain=] first= gpu= encoders= [#i state 'label' …] [+k more] \| <Metal's text> [[n earlier lines suppressed]]` | Always, for each command buffer the GPU failed, at most 30 lines in 10 s. Replaces Direct3D 12's `Device error: queue <pointer>, command buffer <n>: …` and its `fails too` lines in the trace log | `d3d12.log`, at `err`, whatever `MULLION_LOG_LEVEL` is short of `none`; the trace log too while one is open | The app's session report; me, after a GPU fault |
 | `MULLION-DEVICE-REMOVED at= reason=Name(0x…) cause= frame= flight=` | Always, once per device, by the call that removes it, after the flight dump. Replaces `A 64-bit atomic gave up waiting for its lock; removing the device` | `d3d12.log`, at `err`, whatever `MULLION_LOG_LEVEL` is short of `none` | The app's session report; me, when the game quits with `DXGI_ERROR_DEVICE_*` |
 | `MULLION-GPU-HUNG at= queue= cmdbuf= waitedMs= status=name(n) encoders=r/c/b present= flight=` | Always, once for a command buffer the queue has waited on for 10 s (2 s, or `MULLION_TRACE_GPU_HANG_MS`, with `MULLION_TRACE_GPU`), after the flight dump. Mullion goes on waiting and the device stays. Replaces `command buffer <n> of queue <pointer> has not completed for …` | `d3d12.log`, at `warn` | The same, on a freeze |
@@ -271,6 +275,57 @@ written now whether `MULLION_D3D12_GPU_ERRORS` is set or not (they need `MULLION
 before), and the first Present is always noted (one load a Present once it is). A mesh shader pipeline's kind there is
 `mesh` now. Ray tracing pipelines are always named, which before only `MULLION_D3D12_GPU_ERRORS` did: one SHA-1 of each
 library added.
+
+### The shader failure lines
+
+`MULLION-SHADER`, always on: a shader or a pipeline that failed, named by the SHA-1 of each of its shaders, at the step
+it failed at. d9mt names every failing shader by its SHA-1 at each step in the same way, so one line finds the shader in
+a dump folder. [`tests/swtor/fixtures/session.log`](../../tests/swtor/fixtures/session.log) has a sample of each kind,
+which `host_shader_lines` formats from fixed values; the field names and their order are the contract, as for the
+header. The formatter is [`mullion_shader_lines.hpp`](../../src/mullion/mullion_shader_lines.hpp).
+
+| `step` | Where | Text after ` \| ` |
+|---|---|---|
+| `container` | Direct3D's checks before the converter reads it: the container's layout and hash, and that the shader is of the stage it is given for. A root signature taken from the shader checks its container too | `the container's layout or hash doesn't hold`, or `a <stage> shader given for the <stage> stage` |
+| `features` | A feature the shader requires that the device doesn't have (its `SFI0` part) | `it needs a feature the device doesn't have` |
+| `parse` | The converter reading it (`SM50Initialize`) | The converter's |
+| `convert` | The converter making the Metal function for this pipeline (`SM50Compile` and the geometry and tessellation pipelines' own) | The converter's |
+| `library` | Metal refusing the library the converter just made | Metal's, or `no function <name>` |
+| `pipeline` | Metal refusing the pipeline: when it is created, or on a compile thread after `CreatePipelineState` returned `S_OK` | Metal's |
+| `variant` | Metal refusing a variant made at draw time: a topology with adjacency, the targets a pass has, or the variant that emulates samplers | Metal's, or `the variant that emulates its samplers failed` |
+| `cache-blob` | Metal refusing a shader the shader cache stored, which is then deleted and converted again: once per stored shader, at `warn`. `STATS`' `CACHE rejected=` counts the same refusals | Metal's |
+| `pipeline-library` | Metal refusing a shader an `ID3D12PipelineLibrary` stored | Metal's |
+
+| Field | What it is |
+|---|---|
+| `at` | The local time, `HH:MM:SS.mmm` |
+| `stage` | `vs`, `ps`, `gs`, `hs`, `ds`, `cs`, `ms` or `as` for one shader, from its container; `-` for several, or for a container without a program |
+| `sha1` | The SHA-1 of each shader's bytes, joined with commas, as `MULLION-PIPELINE`'s `name`. A pipeline whose Metal compile failed on a compile thread no longer has the game's bytecode, so it is named by its pipeline's name, which is the same SHA-1s |
+| `kind` | `graphics`, `compute` or `mesh` |
+| `dumped` | `yes` when each shader is in `MULLION_SHADER_DUMP_PATH`'s folder (written now or before), `limit` once the process wrote 32, `no` without a folder, without the bytecode, for `cache-blob`, or when a file couldn't be written |
+| text | The converter's or Metal's own, by the rules every fork line keeps: printable ASCII, a path as `(a path)`, the user's or the computer's name as `(a name)`; at most 300 bytes, and the line under 900 |
+
+`draw-skipped`: the first draw (or dispatch) a pipeline drops for want of a Metal pipeline, once per pipeline;
+`skipped` is the process's draws and dispatches dropped so far, this one included. Before, these draws were skipped
+without a word. `MULLION-SHADER-TOTALS`, when a device is destroyed: `failed` the lines of every step but `cache-blob`
+(its shader is converted again), `byStep` each step's lines, `cache-blob`'s included, `skippedDraws` the dropped draws
+and dispatches, `dumped` the files written. The totals count what the 30-line limit leaves out.
+
+`FAIL(E_INVALIDARG)`'s own warning (`InitializeShader: E_INVALIDARG (d3d12_pipeline_graphics.cpp:<line>)`) still
+follows a `container`, `features` or `parse` line. What the functions return is as before.
+
+Turning a dumped shader back into the failure, on a Mac with a native build (`build/src/airconv/darwin/airconv`):
+
+    airconv -o /tmp/out.air <folder>/<sha1>.dxbc
+
+A `parse` failure fails there again with the line's text (`host_shader_lines` does it on a garbled shader). A
+`convert` failure may need the pipeline's arguments, which the dump doesn't hold (`-root-signature`, the stages
+around it). A `container` failure doesn't reproduce: airconv doesn't check a container's hash, and converts one whose
+hash doesn't hold. `library`, `pipeline` and `variant` are Metal's compile: they need the Mac, and Metal's own tools.
+
+Not seen on a Mac yet: Metal's own refusals (`library`, `pipeline`, `variant`, `cache-blob`, `pipeline-library`),
+the totals at a real session's end (whether SWTOR destroys its device as it quits), and the lines of Mullion's tests
+that expect a pipeline to fail.
 
 ### The removed device, the hung command buffer and the refused feature level
 

@@ -378,6 +378,8 @@ public:
   }
 
   ~MTLD3D12DeviceImpl() {
+    // MULLION-SHADER-TOTALS: the process's, at each device's end
+    Logger::info(ShaderTotalsLine());
     if (archive_writer_.joinable()) {
       {
         std::lock_guard lock(archive_mutex_);
