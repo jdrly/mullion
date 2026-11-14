@@ -2623,7 +2623,7 @@ enum { WMTUnixSampledEncoder = 167, WMTUnixDiagWrite, WMTUnixDispatchDataBytes, 
        WMTUnixComputeStaticThreadgroupMemory, WMTUnixDeviceMaxThreadgroupMemory,
        WMTUnixDeviceMaxThreadsPerThreadgroup, WMTUnixDeviceReport, WMTUnixTextureSparseTailHolds,
        WMTUnixDeviceSparseResidencyInTiles, WMTUnixDeviceNewSpecializedRenderPipeline,
-       WMTUnixGetSessionFacts, WMTUnixGetGPUError, WMTUnixCachePrepare,
+       WMTUnixGetSessionFacts, WMTUnixGetGPUError, WMTUnixCachePrepare, WMTUnixMemorySampler,
        WMTUnixCallCount };
 WINEMETAL_API obj_handle_t MTLCommandBuffer_sampledCommandEncoder(obj_handle_t cmdbuf, enum WMTSampledEncoder type,
                                                                   const struct WMTSampleBufferAttachmentInfo *samples,
@@ -2701,6 +2701,30 @@ STATIC_ASSERT(sizeof(struct WMTCachePrepared) == 48);
 // archives of other ids
 WINEMETAL_API void WMTCachePrepare(const char *path, uint64_t version, const char *shard_family,
                                    const char *shard_keep, struct WMTCachePrepared *prepared);
+// the bridge's memory sampler (src/mullion/mullion_memory.hpp): one thread for the process, which the trace's memory
+// category (WMTTraceWrite) also uses. It reads the process's footprint and the system's memory every `seconds`
+// (at least 1) and writes each sample into `sample`, which must live as long as the process: `sequence` is odd while
+// it writes and even after, one more each sample, and every field is written with __atomic stores. The first sample
+// that shows memory pressure (src/winemetal/memory_pressure.h) also fills the pressure fields, which no later sample
+// changes. The first call names the struct and the period; later ones change nothing
+struct WMTMemorySample {
+  uint32_t sequence;
+  uint32_t pressure;          // 1 once a sample showed pressure
+  uint64_t footprint;         // task_info(TASK_VM_INFO): phys_footprint, bytes
+  uint64_t footprint_peak;    // ledger_phys_footprint_peak
+  uint64_t swap_used;         // vm.swapusage: xsu_used
+  uint64_t compressed;        // host_statistics64(HOST_VM_INFO64): compressor pages, in bytes
+  uint64_t free_memory;       // free pages, in bytes
+  uint64_t pageouts;          // since the sample before (0 at the first)
+  uint64_t swapouts;
+  uint64_t physical_memory;   // hw.memsize; 0 when unknown
+  uint64_t pressure_footprint; // the pressure sample's footprint and swap used
+  uint64_t pressure_swap_used;
+  uint32_t pressure_at;       // its local time, ms since midnight
+  uint32_t padding;
+};
+STATIC_ASSERT(sizeof(struct WMTMemorySample) == 96);
+WINEMETAL_API void WMTMemorySampler(struct WMTMemorySample *sample, uint32_t seconds);
 WINEMETAL_API void MTLCommandBuffer_pushDebugGroup(obj_handle_t cmdbuf, obj_handle_t name);
 WINEMETAL_API void MTLCommandBuffer_popDebugGroup(obj_handle_t cmdbuf);
 WINEMETAL_API uint64_t DispatchData_getBytes(obj_handle_t data, void *buffer, uint64_t size);

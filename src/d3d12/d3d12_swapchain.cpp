@@ -38,6 +38,7 @@
 #include "util_switch.hpp"
 #include "mullion_hitch.hpp"
 #include "mullion_stats.hpp"
+#include "mullion_memory.hpp"
 #include <bit>
 #include <cfloat>
 #include <cstdlib>
@@ -131,6 +132,26 @@ PositiveMs(const std::string &raw, const unsigned &fallback) {
   return ms && *end == '\0' && ms <= 60'000 ? unsigned(ms) : fallback;
 }
 static sw::Switch<unsigned> kHitchMs{"MULLION_HITCH_MS", hitch::kDefaultMs, PositiveMs};
+
+// MULLION_MEMSTATS: a DIAG MEM line at each sample of the bridge's memory sampler (src/mullion/mullion_memory.hpp,
+// docs/swtor/README.md). 0 (the default) off, 1 every 5 s, N every N s. Read once
+static sw::Switch<unsigned> kMemstats{"MULLION_MEMSTATS", 0, memory::Period};
+const unsigned memory::seconds = kMemstats();
+
+// the bridge's memory sampler writes its samples here: every MULLION_MEMSTATS seconds, or every 30 s for the pressure
+// line alone. Started at the first Present; never freed, since the sampler's thread writes it until the process ends
+static WMTMemorySample *
+MemorySample() {
+  static WMTMemorySample *const sample = [] {
+    auto sample = new WMTMemorySample{};
+    WMTMemorySampler(sample, memory::seconds ? memory::seconds : memory::kQuietSeconds);
+    return sample;
+  }();
+  return sample;
+}
+// the last sample a Present wrote the lines of, of any swap chain, and whether the pressure line was written
+static std::atomic<uint32_t> memory_seen{0};
+static std::atomic<bool> memory_pressed{false};
 
 // the swap chain whose Presents the line counts: the first to present, until it goes. Two swap chains presenting
 // would otherwise both close windows over the same counters
@@ -335,6 +356,55 @@ public:
       text += (text.empty() ? "" : "\n") + line;
     // one message: its lines stay together
     Logger::warn(text);
+  }
+
+  // a sample the bridge's memory sampler wrote since the last: its lines (mullion_memory.hpp), from the Present that
+  // sees it first. Otherwise the sample's guard, two loads (the sample's sequence, the last seen) and a compare
+  void
+  MemoryLines() {
+    WMTMemorySample *sample = MemorySample();
+    uint32_t sequence = __atomic_load_n(&sample->sequence, __ATOMIC_ACQUIRE);
+    uint32_t seen = memory_seen.load(std::memory_order_relaxed);
+    if (sequence == seen || (sequence & 1))
+      return;
+    auto get = [](const uint64_t &field) { return __atomic_load_n(&field, __ATOMIC_RELAXED); };
+    memory::Numbers numbers{.footprint = get(sample->footprint), .footprint_peak = get(sample->footprint_peak),
+                            .swap_used = get(sample->swap_used), .compressed = get(sample->compressed),
+                            .free_memory = get(sample->free_memory), .pageouts = get(sample->pageouts),
+                            .swapouts = get(sample->swapouts)};
+    bool pressure = __atomic_load_n(&sample->pressure, __ATOMIC_RELAXED);
+    memory::Pressure pressed{get(sample->pressure_swap_used), get(sample->pressure_footprint),
+                             get(sample->physical_memory),
+                             memory::TimeOfDay(__atomic_load_n(&sample->pressure_at, __ATOMIC_RELAXED))};
+    // the sampler wrote again while this read: the next Present reads the newer one
+    std::atomic_thread_fence(std::memory_order_acquire);
+    if (__atomic_load_n(&sample->sequence, __ATOMIC_RELAXED) != sequence ||
+        !memory_seen.compare_exchange_strong(seen, sequence))
+      return;
+    std::string text;
+    if (memory::seconds) {
+      auto device = device_->GetMTLDevice();
+      numbers.frame = PresentsSoFar();
+      numbers.allocated = device.currentAllocatedSize();
+      numbers.working_set = device.recommendedMaxWorkingSetSize();
+      // what the game is told
+      Com<IDXGIAdapter3> adapter;
+      DXGI_QUERY_VIDEO_MEMORY_INFO info{};
+      if (SUCCEEDED(device_->GetAdapter(IID_PPV_ARGS(&adapter))))
+        adapter->QueryVideoMemoryInfo(0, DXGI_MEMORY_SEGMENT_GROUP_LOCAL, &info);
+      numbers.budget = info.Budget, numbers.usage = info.CurrentUsage;
+      numbers.heaps = memory::heaps.load(std::memory_order_relaxed);
+      numbers.heap_bytes = memory::heap_bytes.load(std::memory_order_relaxed);
+      SYSTEMTIME local{};
+      GetLocalTime(&local);
+      text = memory::Line(numbers, {local.wHour, local.wMinute, local.wSecond, local.wMilliseconds});
+    }
+    // once a process, whichever swap chain sees it first
+    if (pressure && !memory_pressed.exchange(true, std::memory_order_relaxed))
+      text += (text.empty() ? "" : "\n") + memory::PressureLine(pressed);
+    // one message: its lines stay together
+    if (!text.empty())
+      Logger::warn(text);
   }
 
   HRESULT
@@ -994,6 +1064,7 @@ public:
     presenting.End();
     if (stats::on)
       CountPresent();
+    MemoryLines();
     if (began) {
       diag::Write(diag::Line("span", "present", "", GetCurrentThreadId(), began, diag::Now() - began));
       diag::LatencyPresented(present_semaphore_);

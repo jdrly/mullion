@@ -1,0 +1,14 @@
+# a total of 0 at the sample before taken for no sample before, as the trace's sampler had it: the first swapouts after are lost
+--- a/src/winemetal/memory_pressure.h
++++ b/src/winemetal/memory_pressure.h
+@@ -23,8 +23,8 @@
+ static inline void
+ memory_paging_take(struct memory_paging *last, uint64_t pageouts_total, uint64_t swapouts_total, uint64_t *pageouts,
+                    uint64_t *swapouts) {
+-  *pageouts = last->started ? pageouts_total - last->pageouts : 0;
+-  *swapouts = last->started ? swapouts_total - last->swapouts : 0;
++  *pageouts = last->pageouts ? pageouts_total - last->pageouts : 0;
++  *swapouts = last->swapouts ? swapouts_total - last->swapouts : 0;
+   last->started = true;
+   last->pageouts = pageouts_total;
+   last->swapouts = swapouts_total;

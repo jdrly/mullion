@@ -19,18 +19,25 @@
 #include "d3d12_device.hpp"
 #include "d3d12_pageable.hpp"
 #include "com/com_pointer.hpp"
+#include "mullion_memory.hpp"
 
 namespace mullion {
 
 class MTLD3D12HeapImpl : public MTLD3D12Pageable<MTLD3D12Heap> {
 
   D3D12_HEAP_DESC desc_;
+  // its size in DIAG MEM's heaps= (MULLION_MEMSTATS), 0 when not counted
+  uint64_t counted_ = 0;
 
 public:
   MTLD3D12HeapImpl(MTLD3D12Device *pDevice) : MTLD3D12Pageable<MTLD3D12Heap>(pDevice) {}
 
   // with what is placed on it, which work in flight may use
   ~MTLD3D12HeapImpl() {
+    if (counted_) {
+      memory::heaps.fetch_sub(1, std::memory_order_relaxed);
+      memory::heap_bytes.fetch_sub(counted_, std::memory_order_relaxed);
+    }
     if (heap)
       EndAfterWorkInFlight(device_, [device = device_, heap = std::move(heap)] { device->UnregisterResidency(heap); });
   }
@@ -111,6 +118,11 @@ public:
       return FAIL(E_OUTOFMEMORY);
 
     device_->RegisterResidency(heap);
+    if (memory::seconds) {
+      counted_ = size_aligned;
+      memory::heaps.fetch_add(1, std::memory_order_relaxed);
+      memory::heap_bytes.fetch_add(counted_, std::memory_order_relaxed);
+    }
 
     return S_OK;
   }

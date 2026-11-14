@@ -2133,6 +2133,14 @@ WMTCachePrepare(const char *path, uint64_t version, const char *shard_family, co
 }
 
 WINEMETAL_API void
+WMTMemorySampler(struct WMTMemorySample *sample, uint32_t seconds) {
+  struct unixcall_memory_sampler params;
+  WMT_MEMPTR_SET(params.sample, sample);
+  params.seconds = seconds;
+  UNIX_CALL(WMTUnixMemorySampler, &params);
+}
+
+WINEMETAL_API void
 MTLCommandBuffer_pushDebugGroup(obj_handle_t cmdbuf, obj_handle_t name) {
   struct unixcall_generic_obj_obj_noret params;
   params.handle = cmdbuf;

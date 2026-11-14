@@ -1,0 +1,12 @@
+# the pressure rule at half the RAM and over, not over half only
+--- a/src/winemetal/memory_pressure.h
++++ b/src/winemetal/memory_pressure.h
+@@ -11,7 +11,7 @@
+ 
+ static inline bool
+ memory_pressure(uint64_t swapouts, uint64_t footprint, uint64_t physical_memory) {
+-  return swapouts > 0 && physical_memory && footprint > physical_memory / 2;
++  return swapouts > 0 && physical_memory && footprint >= physical_memory / 2;
+ }
+ 
+ // paging since the reader's sample before, from the system's totals; 0 at its first
