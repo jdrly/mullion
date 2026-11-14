@@ -3418,7 +3418,8 @@ Converter::operator()(const InstLoadStructured &load) {
         Element, ir.CreateUDiv(DecodeRawBufferByteLength(Buf->Metadata), ir.getInt32(Buf->StructureStride))
     );
     At = ir.CreateSelect(Within, At, ir.getInt32(0));
-    return LoadBufferWords(*Buf, ir.CreateZExt(At, ir.getInt64Ty()), load.dst, load.feedback, Within);
+    auto Read = FallingBack(*Buf, Within);
+    return LoadBufferWords(Read, ir.CreateZExt(At, ir.getInt64Ty()), load.dst, load.feedback, Within);
   }
   // in 64 bits: an element index scaled by the stride can wrap 32 and pass the bounds check
   auto IndexStruct = ir.CreateMul(ir.getInt64(Buf->StructureStride >> 2), ir.CreateZExt(Element, ir.getInt64Ty()));
@@ -4121,7 +4122,7 @@ Converter::LoadBufferValue(BufferResourceHandle &Buffer, llvm::Type *Type, llvm:
   auto Check = llvm::dyn_cast<llvm::SelectInst>(Ptr);
   auto Within = Check ? Check->getCondition() : ir.CreateIsNotNull(Ptr);
   auto Value = Load(ir.CreateSelect(Within, Check ? Check->getTrueValue() : Ptr,
-                                    ir.CreatePointerCast(Buffer.Pointer, Ptr->getType())));
+                                    ir.CreatePointerCast(Buffer.Fallback ? Buffer.Fallback : Buffer.Pointer, Ptr->getType())));
   return ir.CreateSelect(Within, Value, llvm::Constant::getNullValue(Type));
 }
 
@@ -4139,7 +4140,11 @@ Converter::LoadBufferUnits(
   auto Bytes = DecodeRawBufferByteLength(Buffer.Metadata);
   auto Units = ir.CreateZExtOrTrunc(ir.CreateUDiv(Bytes, llvm::ConstantInt::get(Bytes->getType(), UnitBytes)), Last->getType());
   auto Whole = ir.CreateICmpULT(Last, Units);
+  // Read reads through `Buffer`, which its caller passed: with a fallback, the start it reads from when not whole is that
+  auto Start = Buffer.Pointer;
+  Buffer.Pointer = FallingBack(Buffer, Whole).Pointer;
   auto Value = Read(ir.CreateSelect(Whole, Base, llvm::ConstantInt::get(Base->getType(), 0)), true);
+  Buffer.Pointer = Start;
   return ir.CreateSelect(Whole, Value, llvm::Constant::getNullValue(Value->getType()));
 }
 

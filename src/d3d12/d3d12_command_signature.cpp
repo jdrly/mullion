@@ -157,6 +157,18 @@ public:
     return statistics_resolver_;
   }
 
+  // jdrly/mullion: with MULLION_D3D12_CHECK_RANGES=1, an indirect command's root view goes unchecked, as every root
+  // view does upstream: the kernel writes its length as a buffer descriptor's largest, and the reset after
+  // ExecuteIndirect clears it with the view. The GPU writes the view's address; nothing on the CPU knows its buffer
+  void
+  UnboundRootView(MTLD3D12RootSignature *rootsig, UINT parameter_index, std::stringstream &source) {
+    if (!rootsig->RootLengthQwords || rootsig->RootLengthQwords[parameter_index] == ~0u)
+      return;
+    auto length = rootsig->RootLengthQwords[parameter_index];
+    ResetRootDwords.emplace_back(length * 2, 2);
+    source << "rootsig_qwords[" << length << "] = 0xffffffff;\n";
+  }
+
   HRESULT
   Initialize(const D3D12_COMMAND_SIGNATURE_DESC *pDesc, ID3D12RootSignature *pRootSignature) {
     Com<ID3D12VersionedRootSignatureDeserializer> deserializer;
@@ -630,6 +642,7 @@ public:
         auto offset = rootsig->SlotQwordOffsets[parameter_index];
         ResetRootDwords.emplace_back(offset * 2, 2);
         source << "rootsig_qwords[" << offset << "] = arg.cb_" << i << ";\n";
+        UnboundRootView(rootsig, parameter_index, source);
         break;
       }
       case D3D12_INDIRECT_ARGUMENT_TYPE_SHADER_RESOURCE_VIEW: {
@@ -638,6 +651,7 @@ public:
         auto offset = rootsig->SlotQwordOffsets[parameter_index];
         ResetRootDwords.emplace_back(offset * 2, 2);
         source << "rootsig_qwords[" << offset << "] = arg.srv_" << i << ";\n";
+        UnboundRootView(rootsig, parameter_index, source);
         break;
       }
       case D3D12_INDIRECT_ARGUMENT_TYPE_UNORDERED_ACCESS_VIEW: {
@@ -646,6 +660,7 @@ public:
         auto offset = rootsig->SlotQwordOffsets[parameter_index];
         ResetRootDwords.emplace_back(offset * 2, 2);
         source << "rootsig_qwords[" << offset << "] = arg.uav_" << i << ";\n";
+        UnboundRootView(rootsig, parameter_index, source);
         break;
       }
       default:

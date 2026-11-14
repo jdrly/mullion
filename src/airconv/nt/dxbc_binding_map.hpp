@@ -42,6 +42,9 @@ struct BufferDescriptor {
   // signature 1.1 says is static ("Out of bounds accesses to any Buffer views ... are invalid and produce undefined
   // results", Root Signature Version 1.1, Static and Volatile Flags)
   bool Bounded = true;
+  // jdrly/mullion: where a load whose bounds check fails reads, and drops, instead of the view's start, null for the
+  // start: a root view's (SM50_SHADER_FLAG_CHECK_ROOT_RANGES), whose start may have fewer bytes than one load
+  llvm::Value *Fallback = nullptr;
 };
 
 struct CounterDescriptor {

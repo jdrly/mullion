@@ -1,0 +1,12 @@
+# a root CBV is checked against nothing with the flag, as upstream's
+--- a/src/airconv/dxbc_binding_rootsig.cpp
++++ b/src/airconv/dxbc_binding_rootsig.cpp
+@@ -137,7 +137,7 @@
+     }
+     if (DescriptorOffset == ~0u) {
+       auto Pointer = GetArgument(Builder, RootSignatureArgumentIndex, CBuf.arg_index);
+-      return ConstantBufferDescriptor{Pointer, RootViewLength(Builder, D3D12_DESCRIPTOR_RANGE_TYPE_CBV, Range)};
++      return ConstantBufferDescriptor{Pointer, nullptr};
+     }
+     auto HeapPointer = GetArgument(Builder, RootSignatureArgumentIndex, CBuf.arg_index);
+     auto [Pointer, Metadata] = GetBufferDescriptor(

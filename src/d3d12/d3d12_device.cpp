@@ -374,7 +374,10 @@ public:
       : adapter_(adapter), textures_(TextureCompression(adapter_->GetMTLDevice())),
         command_library(adapter_->GetMTLDevice()),
         metal_version_(SM50_SHADER_METAL_VERSION(ShaderMetalVersion(adapter_->GetMTLDevice()))),
-        shader_flags_(SM50_SHADER_FLAG(GPUShaderFlags(adapter_->GetMTLDevice()) | GuardStaticRangesFlag())) {
+        shader_flags_(SM50_SHADER_FLAG(
+            GPUShaderFlags(adapter_->GetMTLDevice()) | GuardStaticRangesFlag() |
+            (ranges::on ? SM50_SHADER_FLAG_CHECK_ROOT_RANGES : SM50_SHADER_FLAG{})
+        )) {
     mesh_bytes_per_draw = MeshBytesPerDraw(adapter_->GetMTLDevice());
   }
 

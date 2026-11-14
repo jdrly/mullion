@@ -25,6 +25,7 @@
 #include "mullion_sampler.hpp"
 #include "util_math.hpp"
 #include "util_md5.hpp"
+#include "mullion_ranges.hpp"
 #include <bit>
 #include <cstring>
 #include <vector>
@@ -435,6 +436,7 @@ class MTLD3D12RootSignatureImpl : public MTLD3D12DeviceChild<MTLD3D12RootSignatu
 
   std::vector<uint8_t> blob_;
   std::vector<uint32_t> qword_offsets_;
+  std::vector<uint32_t> root_length_qwords_;
 
   std::vector<Rc<Sampler>> static_samplers_; // which is not really "static"
   /**
@@ -613,6 +615,16 @@ public:
     if (desc.Flags & D3D12_ROOT_SIGNATURE_FLAG_SAMPLER_HEAP_DIRECTLY_INDEXED)
       SamplerHeapQword = total_qwords++;
     AtomicLocksQword = total_qwords++;
+    // jdrly/mullion: then each root view's length, in the parameters' order, as the converter declares them
+    if (ranges::on && !(desc.Flags & D3D12_ROOT_SIGNATURE_FLAG_LOCAL_ROOT_SIGNATURE)) {
+      root_length_qwords_.assign(desc.NumParameters, ~0u);
+      for (unsigned i = 0; i < desc.NumParameters; i++)
+        if (auto type = desc.pParameters[i].ParameterType; type == D3D12_ROOT_PARAMETER_TYPE_CBV ||
+                                                         type == D3D12_ROOT_PARAMETER_TYPE_SRV ||
+                                                         type == D3D12_ROOT_PARAMETER_TYPE_UAV)
+          root_length_qwords_[i] = total_qwords++;
+      RootLengthQwords = root_length_qwords_.data();
+    }
     UploadQwords = total_qwords;
     StreamOutput = desc.Flags & D3D12_ROOT_SIGNATURE_FLAG_ALLOW_STREAM_OUTPUT;
     ParameterSlots = qword_offsets_.size();

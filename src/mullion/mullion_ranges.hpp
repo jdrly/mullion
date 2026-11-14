@@ -19,7 +19,10 @@
 //
 //   RANGE CopyBufferRegion=3 CopyTextureRegion=1
 //
-// A view that runs past its buffer is bound as no view, which Direct3D reads as zeros; its line says dropped too.
+// A view that runs past its buffer is bound as no view, which Direct3D reads as zeros; its line says dropped too. A
+// root CBV, SRV or UAV is bound as given, and its shaders check it against what its buffer has from its address
+// (RootViewBinding): one at an address no live buffer holds is bound as the null buffer of length 0, and its line says
+// clamped.
 //
 // Pure C++ (no Windows, no Metal): tests/host/ranges.cpp builds it natively.
 
@@ -106,6 +109,22 @@ View(uint64_t address, uint64_t size, bool held, uint64_t end) {
 // change. One counter for the process, never restarted: a device made where another was, at the same address, never
 // reads a generation the other's ranges were kept at. This DLL's
 inline std::atomic<uint64_t> buffer_generation{0};
+
+// how a root CBV, SRV or UAV is bound under SM50_SHADER_FLAG_CHECK_ROOT_RANGES: the address its shaders read through,
+// and the length they check every access against, what the live buffer holding `address` has from it up to the 32
+// bits a buffer descriptor's length keeps. A view in no live buffer is bound as `null_buffer`, the device's zero-filled
+// one, of length 0: every access reads 0 and writes nothing. (A load whose check fails reads its dropped value from
+// the lock table the root arguments carry, not from the view: the converter's BufferDescriptor::Fallback)
+struct RootView {
+  uint64_t address, length;
+};
+
+inline RootView
+RootViewBinding(uint64_t address, bool held, uint64_t end, uint64_t null_buffer) {
+  if (!held)
+    return {null_buffer, 0};
+  return {address, std::min<uint64_t>(end - address, UINT32_MAX)};
+}
 
 // the address ranges of live buffers a check found, newest first, kept while buffer_generation is the one they were
 // found at, for the device they were found in. Numbers only, never a
@@ -207,6 +226,7 @@ enum class Call : unsigned {
   IASetVertexBuffers,
   CreateConstantBufferView,
   WriteBufferImmediate,
+  SetRootView,
   Count
 };
 
@@ -225,6 +245,8 @@ CallName(Call call) {
     return "CreateConstantBufferView";
   case Call::WriteBufferImmediate:
     return "WriteBufferImmediate";
+  case Call::SetRootView:
+    return "SetRootView";
   default:
     return "?";
   }
@@ -264,17 +286,19 @@ struct Counts {
 // this DLL's
 inline Counts counts;
 
-// one place a check can fire: it writes its line the first time only
+// one place a check can fire: it writes its line the first time only. `action` is what it does: drops the call or the
+// view, or clamps the bound a shader checks it against
 struct Site {
   Call call;
   const char *side;
+  const char *action = "dropped";
   std::atomic<bool> said{false};
 
   // a check here fired: counts it in `to`, and gives the line to write the first time, else ""
   std::string
   fired(const Overrun &overrun, Counts &to = counts) {
     to.add(call);
-    return said.exchange(true, std::memory_order_relaxed) ? std::string() : Line(call, side, overrun);
+    return said.exchange(true, std::memory_order_relaxed) ? std::string() : Line(call, side, overrun, action);
   }
 };
 

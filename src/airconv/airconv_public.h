@@ -547,6 +547,9 @@ enum SM50_SHADER_FLAG {
   /* jdrly/mullion: buffer views of descriptor ranges root signature 1.1 calls static keep their bounds checks, as
      volatile ranges do (MULLION_D3D12_GUARD_STATIC_RANGES=1, docs/swtor/README.md). a high bit, clear of upstream's */
   SM50_SHADER_FLAG_GUARD_STATIC_RANGES = 1 << 30,
+  /* jdrly/mullion: root CBVs, SRVs and UAVs are checked against a length the root arguments carry after the lock table,
+     a qword per root descriptor parameter in order (MULLION_D3D12_CHECK_RANGES=1); a local root signature's are not */
+  SM50_SHADER_FLAG_CHECK_ROOT_RANGES = 1 << 29,
 };
 
 struct SM50_SHADER_COMMON_DATA {

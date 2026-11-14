@@ -453,6 +453,10 @@ public:
   uint32_t SamplerHeapQword = ~0u;
   // the root argument holding the lock table of 64-bit atomics (MTLD3D12Device::GetAtomicLocks), in every one
   uint32_t AtomicLocksQword;
+  // jdrly/mullion: with MULLION_D3D12_CHECK_RANGES=1, a global root signature's root argument holding each root CBV,
+  // SRV or UAV parameter's length, after the lock table (SM50_SHADER_FLAG_CHECK_ROOT_RANGES), and ~0u for other
+  // parameters; null without the switch, and for a local root signature
+  uint32_t const *RootLengthQwords = nullptr;
   // the most any root signature uploads: a qword per parameter (a DWORD of root cost at least), then the two heaps and
   // the lock table
   static constexpr uint32_t kMaxUploadQwords = D3D12_MAX_ROOT_COST + 3;
