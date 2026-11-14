@@ -311,6 +311,10 @@ public:
   QueryInterface(REFIID riid, void **ppvObject);
 
   HRESULT STDMETHODCALLTYPE Reset();
+  // jdrly/mullion, MULLION_D3D12_RESET_WAITS=1: returns once the lists `pending` counts have completed, or the device
+  // is removed; the allocator's first wait writes MULLION-RESET-WAIT
+  void WaitForLists();
+  bool waited_ = false;
 
   HRESULT STDMETHODCALLTYPE CreateCommandList(
       UINT NodeMask, D3D12_COMMAND_LIST_TYPE Type, ID3D12PipelineState *pInitialPipelineState, REFIID riid,

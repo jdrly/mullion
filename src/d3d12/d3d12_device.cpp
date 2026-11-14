@@ -1879,6 +1879,8 @@ public:
     // RemoveDevice signals all fences to UINT64_MAX; late queue signals must not take them back.
     for (auto &fence : pending)
       fence->Reach(UINT64_MAX, true);
+    // jdrly/mullion: a Reset waiting for lists that may never complete now (MULLION_D3D12_RESET_WAITS) goes on
+    reset_wakes.Raise();
   }
 
   void STDMETHODCALLTYPE GetCopyableFootprints(

@@ -73,6 +73,10 @@ test('host_device_lines', executable('host_device_lines', 'device_lines.cpp', ov
 # the DIAG MEM and MULLION-MEMORY-PRESSURE lines, MULLION_MEMSTATS's grammar, and the fixture's DIAG MEM lines
 test('host_memory', executable('host_memory', 'memory.cpp', override_options : ['cpp_std=c++20'], native : true),
      args : files('../swtor/fixtures/session.log'))
+# a command allocator's Reset waiting for its lists (MULLION_D3D12_RESET_WAITS), its MULLION-RESET-WAIT line and its
+# RESETWAIT section
+test('host_reset_wait', executable('host_reset_wait', 'reset_wait.cpp', override_options : ['cpp_std=c++20'],
+                                   dependencies : dependency('threads', native : true), native : true))
 test('host_rc_self_move', executable('host_rc_self_move', 'rc.cpp',
                                     override_options : ['cpp_std=c++20'], native : true))
 test('host_denorm', executable('host_denorm', 'denorm.cpp', include_directories : include_directories('metal'),

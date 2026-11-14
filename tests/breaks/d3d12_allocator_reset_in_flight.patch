@@ -1,0 +1,13 @@
+# the wait removed from Reset: with MULLION_D3D12_RESET_WAITS=1 the allocator gives its lists' recording back while
+# they are in flight, as upstream's does
+--- a/src/d3d12/d3d12_command_allocator.cpp
++++ b/src/d3d12/d3d12_command_allocator.cpp
+@@ -430,8 +430,6 @@
+ MTLD3D12CommandAllocatorImpl::Reset() {
+   if (encoder_last)
+     return FAIL(E_FAIL);
+-  if (pending && ResetWaits())
+-    WaitForLists();
+   // "the runtime will not allow a reset while a command list is still being executed": the lists' recording is what
+   // the GPU still reads
+   if (pending)
