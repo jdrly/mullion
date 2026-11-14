@@ -2405,14 +2405,7 @@ _MetalDrawable_texture(void *obj) {
 static NTSTATUS
 _MetalLayer_nextDrawable(void *obj) {
   struct unixcall_metal_layer_next_drawable *params = obj;
-  CAMetalLayer *layer = (CAMetalLayer *)params->layer;
-  // the Mac's call alone, timed here so that a Space switch's block is its own (docs/swtor/README.md § The
-  // nextDrawable line)
-  uint64_t start = clock_gettime_nsec_np(CLOCK_UPTIME_RAW);
-  id<CAMetalDrawable> drawable = [layer nextDrawable];
-  params->waited_ns = clock_gettime_nsec_np(CLOCK_UPTIME_RAW) - start;
-  params->ret = (obj_handle_t)drawable;
-  window_lines_drawable(layer, params->waited_ns, drawable != nil);
+  params->ret = (obj_handle_t)window_next_drawable((CAMetalLayer *)params->layer, &params->waited_ns);
   return STATUS_SUCCESS;
 }
 

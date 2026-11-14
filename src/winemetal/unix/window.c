@@ -104,21 +104,31 @@ window_lines_visibility(CAMetalLayer *layer, uint32_t *visibility) {
   return true;
 }
 
-void
-window_lines_drawable(CAMetalLayer *layer, uint64_t waited_ns, bool got) {
-  if (!drawable_blocked(waited_ns))
-    return;
-  // the presenting threads': a call this slow is rare, and the lock is taken only then
-  static pthread_mutex_t mutex = PTHREAD_MUTEX_INITIALIZER;
-  static struct window_limit limit;
+// the presenting threads' lines: a call this slow is rare, and the lock is taken only then
+static pthread_mutex_t drawable_mutex = PTHREAD_MUTEX_INITIALIZER;
+static struct window_limit drawable_limit;
+
+static void
+drawable_said(CAMetalLayer *layer, uint64_t waited_ns, bool got) {
   uint32_t visibility = DRAWABLE_VISIBILITY_UNKNOWN;
   window_lines_visibility(layer, &visibility);
   char at[16], line[160];
   local_time(at);
-  pthread_mutex_lock(&mutex);
-  int length = drawable_line(&limit, waited_ns, got, visibility, clock_gettime_nsec_np(CLOCK_UPTIME_RAW), at, line,
-                             sizeof line);
-  pthread_mutex_unlock(&mutex);
+  pthread_mutex_lock(&drawable_mutex);
+  int length = drawable_line(&drawable_limit, waited_ns, got, visibility, clock_gettime_nsec_np(CLOCK_UPTIME_RAW), at,
+                             line, sizeof line);
+  pthread_mutex_unlock(&drawable_mutex);
   if (length)
     write(STDERR_FILENO, line, length);
+}
+
+id<CAMetalDrawable>
+window_next_drawable(CAMetalLayer *layer, uint64_t *waited_ns) {
+  // the Mac's call alone, so that a Space switch's block is its own
+  uint64_t start = clock_gettime_nsec_np(CLOCK_UPTIME_RAW);
+  id<CAMetalDrawable> drawable = [layer nextDrawable];
+  *waited_ns = clock_gettime_nsec_np(CLOCK_UPTIME_RAW) - start;
+  if (drawable_blocked(*waited_ns))
+    drawable_said(layer, *waited_ns, drawable != nil);
+  return drawable;
 }

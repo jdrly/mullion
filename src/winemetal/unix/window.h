@@ -18,8 +18,8 @@ void window_lines_unwatch(NSView *view);
 // (window_lines.h's bits). an atomic load or two, no lock and no AppKit
 bool window_lines_visibility(CAMetalLayer *layer, uint32_t *visibility);
 
-// any thread: the nextDrawable line (docs/swtor/README.md § The nextDrawable line) for a call to -nextDrawable on
-// `layer` that took `waited_ns` and returned a drawable or not (`got`). nothing under the line's threshold
-void window_lines_drawable(CAMetalLayer *layer, uint64_t waited_ns, bool got);
+// any thread: -[layer nextDrawable], its time in `waited_ns`, read around the Mac's call alone, and the nextDrawable
+// line (docs/swtor/README.md § The nextDrawable line) when it took 50 ms or more
+id<CAMetalDrawable> window_next_drawable(CAMetalLayer *layer, uint64_t *waited_ns);
 
 #endif

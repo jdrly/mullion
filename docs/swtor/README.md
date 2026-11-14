@@ -497,10 +497,10 @@ when a view is watched or unwatched); the presenting thread only loads them, and
 gives Direct3D 12's `HITCH` its `drawableMs` ([§ The HITCH and COMPILE lines](#the-hitch-and-compile-lines)).
 Direct3D 11 has no `HITCH` line, so it has only this one.
 
-Always on, with no switch: it changes no behaviour ([ADR 0001](adr/0001-switches.md)). Cost for a call under 50 ms:
-two reads of the clock (`clock_gettime_nsec_np`, no lock), a compare, and a call into `window.c` that returns at
-once. A slow call loads the two atomics, reads the local time, takes a mutex that only slow calls take, and writes
-one line with one `write`.
+Always on, with no switch: it changes no behaviour ([ADR 0001](adr/0001-switches.md)). The bridge's call 67 now goes
+through `window_next_drawable` in [`window.c`](../../src/winemetal/unix/window.c). Cost for a call under 50 ms: that
+function call, two reads of the clock (`clock_gettime_nsec_np`, no lock) and a compare. A slow call loads the two
+atomics, reads the local time, takes a mutex that only slow calls take, and writes one line with one `write`.
 
 Needs the Mac: that the line comes once per switch away, with the window off the active Space, and none without a
 switch, is a check on a Mac.
