@@ -359,7 +359,7 @@ public:
   }
 
   // a sample the bridge's memory sampler wrote since the last: its lines (mullion_memory.hpp), from the Present that
-  // sees it first. Otherwise the sample's guard, a load and a compare
+  // sees it first. Otherwise the sample's guard, two loads (the sample's sequence, the last seen) and a compare
   void
   MemoryLines() {
     WMTMemorySample *sample = MemorySample();

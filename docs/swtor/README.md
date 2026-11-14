@@ -339,8 +339,8 @@ meets it, so later samples written while nothing presents don't lose it.
 The sampler is one thread for the process, `mullion-memory`, started at the first Present. It also writes the trace's
 `[memory] sampler:` sentence every 5 s with `MULLION_TRACE_MEMORY`, as before, so two readers share one thread. Each wake
 reads `task_info` once, `host_statistics64` once and `vm.swapusage` once, and writes the sample into a struct of
-`d3d12core.dll`'s (`WMTMemorySampler`, the bridge's call 216 from 0), which the bridge never frees. With both switches
-off it wakes every 30 s. Each Present pays a static's guard, one load and a compare to find no new sample; one that
+`d3d12core.dll`'s (`WMTMemorySampler`, the bridge's call 216 from 0), which that DLL never frees. With both switches
+off it wakes every 30 s. Each Present pays a static's guard, two loads and a compare to find no new sample; one that
 finds one reads it, makes one log call when it has a line, and with `MULLION_MEMSTATS` on asks Metal for its allocation
 and working set and `QueryVideoMemoryInfo` for the budget. With it on, each `ID3D12Heap` made or released adds two
 relaxed atomics.
