@@ -168,10 +168,12 @@ the batch renamed or added a host test, `swtor.yml` follows in the commit after 
 
 ## 7. The gate
 
-A batch reaches a build players can get only after the GPU gate (private ticket 15) has run on the merge commit: the
-suite under Metal's validation on a rented Mac, the controls failing, and the differences from the fork's list of
-known failures on that Mac explained line by line. A new failure blocks the batch, or the commit that causes it is
-reverted inside the batch (§ 4).
+A batch reaches a build players can get only after the GPU gate (private ticket 15) has passed on the commit that
+build is made from ([README.md](README.md) § Releases), with the batch and everything after it on the branch: its
+follow-up commits and reverts (§ 4) included. The gate is the suite under Metal's validation on a rented Mac, the
+controls failing, and the differences from the fork's list of known failures on that Mac explained line by line. A
+new failure blocks the batch, or the commit that causes it is reverted inside the batch (§ 4). A revert or a fix
+after a gate run makes another candidate, and the gate runs again on it.
 
 ## How the fork keeps batches cheap
 
