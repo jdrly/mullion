@@ -1,0 +1,14 @@
+# the gate ignores the window's state: every present takes its drawable, as MULLION_PRESENT_GATE=0 does
+diff --git a/src/winemetal/unix/window.c b/src/winemetal/unix/window.c
+index 323839c..8e596b9 100644
+--- a/src/winemetal/unix/window.c
++++ b/src/winemetal/unix/window.c
+@@ -156,7 +156,7 @@ id<CAMetalDrawable>
+ window_next_drawable(CAMetalLayer *layer, bool gate, uint64_t skipped, uint64_t *waited_ns, bool *gated) {
+   // the gate: what AppKit last said, not a fresh look, which this thread mustn't take. at a switch away from the
+   // window's Space the notification comes before the call that would block
+-  *gated = gate && layer && atomic_load_explicit(&hidden_layer, memory_order_acquire) == (uintptr_t)layer;
++  *gated = false;
+   if (*gated) {
+     *waited_ns = 0;
+     if (!skipped)
