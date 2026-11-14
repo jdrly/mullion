@@ -53,6 +53,28 @@ public:
     return B.CreateLoad(TyStruct->getElementType(Index), B.CreateStructGEP(TyStruct, Arg, Index));
   };
 
+  // jdrly/mullion: a table's or directly indexed heap's descriptor count in the root arguments
+  // (SM50_SHADER_FLAG_CHECK_DESCRIPTOR_INDICES), by the argument the table or heap is; none, no clamp, as upstream
+  std::map<uint32_t, uint32_t> DescriptorCounts;
+
+  // the count the descriptors of argument `ArgIndex` are clamped below, or null
+  llvm::Value *
+  DescriptorCount(llvm::air::AIRBuilder &Builder, uint32_t ArgIndex) {
+    auto Count = DescriptorCounts.find(ArgIndex);
+    if (Count == DescriptorCounts.end())
+      return nullptr;
+    return Builder.builder.CreateTrunc(GetArgument(Builder, RootSignatureArgumentIndex, Count->second), Builder.getIntTy());
+  }
+
+  // a descriptor index below `Count`: one past it reads the heap's last descriptor, not memory past the heap
+  llvm::Value *
+  Clamped(llvm::air::AIRBuilder &AIR, llvm::Value *Index, llvm::Value *Count) {
+    if (!Count)
+      return Index;
+    auto &B = AIR.builder;
+    return B.CreateSelect(B.CreateICmpULT(Index, Count), Index, B.CreateSub(Count, AIR.getInt(1)));
+  }
+
   // a constant, structured or raw buffer's pointer and metadata (its byte length). `typed`, for a structured or raw
   // SRV or UAV: the descriptor may be a typed view's, which games give to such slots (Hogwarts Legacy reads tile
   // lists written as RWBuffer<uint> through a typed R32_UINT view as StructuredBuffer<uint>), and drivers read it as
@@ -61,7 +83,7 @@ public:
   std::pair<llvm::Value *, llvm::Value *>
   GetBufferDescriptor(
       llvm::air::AIRBuilder &AIR, llvm::Value *IntPtr, llvm::Value *Index, llvm::Type *HandleType, RangeId RangeId,
-      uint32_t DescriptorOffset, bool typed = false
+      uint32_t DescriptorOffset, bool typed = false, llvm::Value *Count = nullptr
   ) {
     auto TyBufferDescriptor = llvm::StructType::get(
         AIR.getContext(), {HandleType, llvm::Type::getInt64Ty(AIR.getContext()),
@@ -71,7 +93,8 @@ public:
     auto Pointer = B.CreatePointerCast(
         IntPtr, TyBufferDescriptor->getPointerTo(IntPtr->getType()->getPointerAddressSpace())
     );
-    auto IdxDescriptor = B.CreateAdd(B.CreateSub(Index, AIR.getInt(RangeId)), AIR.getInt(DescriptorOffset));
+    auto IdxDescriptor =
+        Clamped(AIR, B.CreateAdd(B.CreateSub(Index, AIR.getInt(RangeId)), AIR.getInt(DescriptorOffset)), Count);
     auto Handle =
         B.CreateLoad(HandleType, B.CreateGEP(TyBufferDescriptor, Pointer, {IdxDescriptor, AIR.getInt(0) /* pointer */}));
     auto Metadata = B.CreateLoad(
@@ -94,7 +117,8 @@ public:
 
   llvm::Value *
   GetUAVCounterDescriptor(
-      llvm::air::AIRBuilder &AIR, llvm::Value *IntPtr, llvm::Value *Index, RangeId RangeId, uint32_t DescriptorOffset
+      llvm::air::AIRBuilder &AIR, llvm::Value *IntPtr, llvm::Value *Index, RangeId RangeId, uint32_t DescriptorOffset,
+      llvm::Value *Count = nullptr
   ) {
     auto TyCounter = AIR.getIntTy()->getPointerTo(1);
     auto TyBufferDescriptor = llvm::StructType::get(
@@ -105,7 +129,8 @@ public:
     auto Pointer = B.CreatePointerCast(
         IntPtr, TyBufferDescriptor->getPointerTo(IntPtr->getType()->getPointerAddressSpace())
     );
-    auto IdxDescriptor = B.CreateAdd(B.CreateSub(Index, AIR.getInt(RangeId)), AIR.getInt(DescriptorOffset));
+    auto IdxDescriptor =
+        Clamped(AIR, B.CreateAdd(B.CreateSub(Index, AIR.getInt(RangeId)), AIR.getInt(DescriptorOffset)), Count);
     return B.CreateLoad(
         TyCounter, B.CreateGEP(TyBufferDescriptor, Pointer, {IdxDescriptor, AIR.getInt(2) /* metadata */})
     );
@@ -141,21 +166,24 @@ public:
     }
     auto HeapPointer = GetArgument(Builder, RootSignatureArgumentIndex, CBuf.arg_index);
     auto [Pointer, Metadata] = GetBufferDescriptor(
-        Builder, HeapPointer, Index, Builder.getIntTy(4)->getPointerTo(2), CBuf.range.lower_bound, DescriptorOffset
+        Builder, HeapPointer, Index, Builder.getIntTy(4)->getPointerTo(2), CBuf.range.lower_bound, DescriptorOffset,
+        false, DescriptorCount(Builder, CBuf.arg_index)
     );
     return ConstantBufferDescriptor{Pointer, Unbounded.count({D3D12_DESCRIPTOR_RANGE_TYPE_CBV, Range}) ? nullptr : Metadata};
   }
 
   SamplerDescriptor
   GetSamplerDescriptor(
-      llvm::air::AIRBuilder &AIR, llvm::Value *IntPtr, llvm::Value *Index, RangeId RangeId, uint32_t DescriptorOffset
+      llvm::air::AIRBuilder &AIR, llvm::Value *IntPtr, llvm::Value *Index, RangeId RangeId, uint32_t DescriptorOffset,
+      llvm::Value *Count = nullptr
   ) {
     auto TySampleHandler = AIR.getSamplerHandleType();
     auto TyInt64 = llvm::Type::getInt64Ty(AIR.getContext());
     auto TySamplerDescriptor =
         llvm::StructType::get(AIR.getContext(), {TySampleHandler, TySampleHandler, TyInt64, TyInt64});
     auto &B = AIR.builder;
-    auto IdxDescriptor = B.CreateAdd(B.CreateSub(Index, AIR.getInt(RangeId)), AIR.getInt(DescriptorOffset));
+    auto IdxDescriptor =
+        Clamped(AIR, B.CreateAdd(B.CreateSub(Index, AIR.getInt(RangeId)), AIR.getInt(DescriptorOffset)), Count);
     auto Field = [&](llvm::Type *Ty, unsigned Field) {
       return B.CreateLoad(
           Ty, B.CreateGEP(
@@ -196,13 +224,16 @@ public:
       return {};
 
     auto HeapPointer = GetArgument(Builder, RootSignatureArgumentIndex, Sampler.arg_index);
-    return GetSamplerDescriptor(Builder, HeapPointer, Index, Sampler.range.lower_bound, DescriptorOffset);
+    return GetSamplerDescriptor(
+        Builder, HeapPointer, Index, Sampler.range.lower_bound, DescriptorOffset,
+        DescriptorCount(Builder, Sampler.arg_index)
+    );
   }
 
   std::tuple<llvm::Value *, llvm::Value *, llvm::Value *>
   GetTextureDescriptor(
       llvm::air::AIRBuilder &AIR, llvm::Value *IntPtr, llvm::Value *Index, Texture::ResourceKind Kind, RangeId RangeId,
-      uint32_t DescriptorOffset
+      uint32_t DescriptorOffset, llvm::Value *Count = nullptr
   ) {
     auto TyTextureHandle = AIR.getTextureHandleType(Kind);
     auto TyTextureDescriptor = llvm::StructType::get(
@@ -213,7 +244,8 @@ public:
     auto Pointer = B.CreatePointerCast(
         IntPtr, TyTextureDescriptor->getPointerTo(IntPtr->getType()->getPointerAddressSpace())
     );
-    auto IdxDescriptor = B.CreateAdd(B.CreateSub(Index, AIR.getInt(RangeId)), AIR.getInt(DescriptorOffset));
+    auto IdxDescriptor =
+        Clamped(AIR, B.CreateAdd(B.CreateSub(Index, AIR.getInt(RangeId)), AIR.getInt(DescriptorOffset)), Count);
     return {
         B.CreateLoad(
             TyTextureHandle, //
@@ -255,7 +287,8 @@ public:
     auto MemoryAccess = SRV.sampled ? Texture::MemoryAccess::access_sample : Texture::MemoryAccess::access_read;
 
     auto [Handle, Metadata, FormatRange] =
-        GetTextureDescriptor(Builder, HeapPointer, Index, ResourceKind, SRV.range.lower_bound, DescriptorOffset);
+        GetTextureDescriptor(Builder, HeapPointer, Index, ResourceKind, SRV.range.lower_bound, DescriptorOffset,
+                             DescriptorCount(Builder, SRV.arg_index));
     return TextureDescirptor{Handle,       Metadata,   false, ResourceKind, ResourceKindLogical,
                              MemoryAccess, SampleType, FormatRange};
   }
@@ -287,7 +320,8 @@ public:
                             ? (UAV.read ? Texture::MemoryAccess::acesss_readwrite : Texture::MemoryAccess::access_write)
                             : Texture::MemoryAccess::access_read;
     auto [Handle, Metadata, FormatRange] =
-        GetTextureDescriptor(Builder, HeapPointer, Index, ResourceKind, UAV.range.lower_bound, DescriptorOffset);
+        GetTextureDescriptor(Builder, HeapPointer, Index, ResourceKind, UAV.range.lower_bound, DescriptorOffset,
+                             DescriptorCount(Builder, UAV.arg_index));
     return TextureDescirptor{
         Handle,  Metadata, UAV.global_coherent, ResourceKind, ResourceKindLogical, MemoryAccess, SampleType,
         FormatRange, true
@@ -312,7 +346,8 @@ public:
       return BufferDescriptor{HeapPointer, Builder.builder.getInt64(0xffffffff), SRV.structure_stride, false, false};
     }
     auto [Pointer, Metadata] = GetBufferDescriptor(
-        Builder, HeapPointer, Index, Builder.getIntTy()->getPointerTo(1), SRV.range.lower_bound, DescriptorOffset, true
+        Builder, HeapPointer, Index, Builder.getIntTy()->getPointerTo(1), SRV.range.lower_bound, DescriptorOffset, true,
+        DescriptorCount(Builder, SRV.arg_index)
     );
 
     return BufferDescriptor{
@@ -342,7 +377,8 @@ public:
       };
     }
     auto [Pointer, Metadata] = GetBufferDescriptor(
-        Builder, HeapPointer, Index, Builder.getIntTy()->getPointerTo(1), UAV.range.lower_bound, DescriptorOffset, true
+        Builder, HeapPointer, Index, Builder.getIntTy()->getPointerTo(1), UAV.range.lower_bound, DescriptorOffset, true,
+        DescriptorCount(Builder, UAV.arg_index)
     );
 
     return BufferDescriptor{
@@ -365,7 +401,9 @@ public:
     auto HeapPointer = GetArgument(Builder, RootSignatureArgumentIndex, UAV.arg_index);
     if (DescriptorOffset == ~0u)
       return {}; // root descriptor can not have counters associated
-    auto Pointer = GetUAVCounterDescriptor(Builder, HeapPointer, Index, UAV.range.lower_bound, DescriptorOffset);
+    auto Pointer = GetUAVCounterDescriptor(
+        Builder, HeapPointer, Index, UAV.range.lower_bound, DescriptorOffset, DescriptorCount(Builder, UAV.arg_index)
+    );
 
     return CounterDescriptor{Pointer};
   }
@@ -503,6 +541,9 @@ setup_binding_rootsig(
 
   // jdrly/mullion: each root CBV, SRV and UAV parameter, in order, with the ranges this stage binds to it
   std::vector<std::vector<std::pair<D3D12_DESCRIPTOR_RANGE_TYPE, RangeId>>> root_views;
+  // jdrly/mullion: each descriptor table parameter's argument, in order, and the directly indexed heaps' (~0u: none)
+  std::vector<uint32_t> tables;
+  uint32_t resource_heap_arg = ~0u, sampler_heap_arg = ~0u;
   for (unsigned i = 0; i < root_sig.NumParameters; i++) {
     auto &Parameter = root_sig.pParameters[i];
 
@@ -511,6 +552,7 @@ setup_binding_rootsig(
       auto &table = Parameter.DescriptorTable;
       unsigned descriptor_offset = 0;
       auto table_index = builder.Size();
+      tables.push_back(table_index);
       std::optional<uint32_t> raster_order_group;
       for (unsigned i = 0; check_visibility(Parameter.ShaderVisibility) && i < table.NumDescriptorRanges; i++) {
         auto &range = table.pDescriptorRanges[i];
@@ -702,15 +744,16 @@ setup_binding_rootsig(
         "resource_heap", ordered ? AddressSpace::device : AddressSpace::constant, MemoryAccess::read, msl_int,
         inc_attribute_index++, ordered ? std::optional(1) : std::nullopt
     );
+    resource_heap_arg = heap_index;
     bind_heap(binding_map->SRVs, shader_info->srvMap, heap_index);
     bind_heap(binding_map->UAVs, shader_info->uavMap, heap_index);
     bind_heap(binding_map->ConstantBuffers, shader_info->cbufferMap, heap_index);
   }
-  if (root_sig.Flags & kSamplerHeapDirectlyIndexed)
-    bind_heap(
-        binding_map->Samplers, shader_info->samplerMap,
-        builder.DefineBuffer("sampler_heap", AddressSpace::constant, MemoryAccess::read, msl_int, inc_attribute_index++)
-    );
+  if (root_sig.Flags & kSamplerHeapDirectlyIndexed) {
+    sampler_heap_arg =
+        builder.DefineBuffer("sampler_heap", AddressSpace::constant, MemoryAccess::read, msl_int, inc_attribute_index++);
+    bind_heap(binding_map->Samplers, shader_info->samplerMap, sampler_heap_arg);
+  }
   // then the lock table of 64-bit atomics (AtomicLocksQword)
   binding_map->AtomicLocksArgIndex =
       builder.DefineBuffer("atomic_locks", AddressSpace::device, MemoryAccess::read_write, msl_uint, inc_attribute_index++);
@@ -722,6 +765,17 @@ setup_binding_rootsig(
       for (auto &view : root_views[i])
         binding_map->RootViewLengths[view] = length;
     }
+  // jdrly/mullion: then each descriptor table's count, every table parameter's in order, seen by this stage or not, and
+  // the directly indexed heaps', resource then sampler, as the root signature lays them out (TableCountQwords)
+  if ((shader_flags & SM50_SHADER_FLAG_CHECK_DESCRIPTOR_INDICES) && !local) {
+    for (unsigned i = 0; i < tables.size(); i++)
+      binding_map->DescriptorCounts[tables[i]] =
+          builder.DefineInteger64("table_count" + std::to_string(i), inc_attribute_index++);
+    for (auto [heap, name] : {std::pair{resource_heap_arg, "resource_heap_count"},
+                              std::pair{sampler_heap_arg, "sampler_heap_count"}})
+      if (heap != ~0u)
+        binding_map->DescriptorCounts[heap] = builder.DefineInteger64(name, inc_attribute_index++);
+  }
 
   auto [type, metadata] = builder.Build(module.getContext(), module.getDataLayout());
   binding_map->RootArgumentsType = type;

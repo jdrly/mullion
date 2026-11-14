@@ -1,0 +1,12 @@
+# an SRV's buffer descriptor index through a table is not clamped
+--- a/src/airconv/dxbc_binding_rootsig.cpp
++++ b/src/airconv/dxbc_binding_rootsig.cpp
+@@ -347,7 +347,7 @@
+     }
+     auto [Pointer, Metadata] = GetBufferDescriptor(
+         Builder, HeapPointer, Index, Builder.getIntTy()->getPointerTo(1), SRV.range.lower_bound, DescriptorOffset, true,
+-        DescriptorCount(Builder, SRV.arg_index)
++        nullptr
+     );
+ 
+     return BufferDescriptor{

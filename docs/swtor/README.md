@@ -33,7 +33,7 @@ are set.
 | `MULLION_TEX_MSAA_COMPRESSION` | `1` | `0`: Direct3D 12's multisampled textures and their resolve targets are made without lossless compression, on every GPU. `auto`: so on a GPU before Apple10 (the family the bridge answers as, so `MULLION_GPU_FAMILY=9` takes it on an M5), Metal's default on Apple10. `1`: Metal's default. d9mt's fix for the M4's flickering 4x MSAA lines (d9mt 3145b30). Direct3D 12 doesn't say which texture a resolve writes: a resolve target is a single-sampled 2D texture of the type group, width and height of a multisampled texture the device made before it (`src/mullion/mullion_compression.hpp`). With it on, `GetResourceAllocationInfo` gives a single-sampled 2D texture room for both descriptors, as a multisampled texture made before the texture is placed turns it into a resolve target. Read as each Direct3D 12 device is made. `1` until the GPU gate turns `auto` on (private ticket 15). Anything else is `1` | `1`: Metal's default for every texture, and each texture's field 0, as before |
 | `MULLION_D3D12_RESET_WAITS` | off (`1` turns it on) | A command allocator's `Reset` while lists recorded from it are still queued or on the GPU waits until they have completed, or the device is removed, then resets. Direct3D forbids that `Reset`; upstream logs `CommandAllocator: Reset while N of its submitted lists have not completed` and resets at once, giving the lists' recording back for the next list to record over while the queue may still encode it and the GPU read it ([ADR 0002](adr/0002-gpu-objects-live-until-the-gpu-is-done.md)). No time limit: a reset after a timeout is the same defect, and `MULLION-GPU-HUNG` already reports a command buffer that doesn't complete. A `Reset` with nothing pending reads one atomic, as before, and never reads the switch. Read once, at the first `Reset` with lists pending. Off until the GPU gate (private ticket 15) has run `d3d12_allocator_reset_in_flight` and its break on a Mac; then that ticket turns it on | Upstream's: the `ERR` line and the reset at once |
 | `MULLION_SHADER_DUMP_PATH` | unset | Upstream's variable, with a limit now. A folder: every shader of a `MULLION-SHADER` failure (below; not `cache-blob`, not `draw-skipped`) is written there as `<sha1>.dxbc`, each once, at most 32 a process, after which the line says `dumped=limit`. Upstream wrote only the shaders of a failed parse, conversion or Metal pipeline, and without a limit. With `MULLION_TRACE_SHADER=heavy` and no folder, `shaders/` next to the trace log, as upstream. `MULLION_SHADER_DUMP_ALL=1` still writes every shader, without a limit. With a folder, each pipeline keeps a copy of its shaders' bytes, one copy of each shader for the process, so that a pipeline whose Metal compile fails on a compile thread or at draw time, when the game may have freed its bytecode, is dumped too. Off by default: the files are the game's own shaders. SWTOR on Mac sets it only when I ask a player for them, to a folder its Collect Logs doesn't read, so they never go into a log bundle | Unset writes nothing, as upstream. No value brings back unlimited dumps of failures; `MULLION_SHADER_DUMP_ALL=1` writes every shader |
-| `MULLION_D3D12_CHECK_RANGES` | off (`1` turns it on) | Checks the offsets, sizes, boxes and footprints a call gives against the resource they point into, and drops the call when one runs past it, with a `MULLION-RANGE` line the first time each check fires and a count in the `RANGE` section ([§ Ranges](#ranges)). Today `CopyBufferRegion` and `CopyTextureRegion` (private ticket 20, part 1), the views of `IASetIndexBuffer` and `IASetVertexBuffers`, which it binds as no view instead (part 2), and `CreateConstantBufferView`, which makes a null view instead, and `WriteBufferImmediate` (part 3); and root CBVs, SRVs and UAVs, which shaders check against what their buffers have (part 5), a compile flag (`SM50_SHADER_FLAG_CHECK_ROOT_RANGES`), so the shader cache keys on it; the ticket's later parts add their calls to the same switch. Read once, when `d3d12core.dll` loads. Off until the GPU gate has run `d3d12_copy_ranges`, `d3d12_view_ranges`, `d3d12_cbv_ranges`, `d3d12_root_view_ranges` and their controls on the rented M1 (private ticket 15), and the root views' cost is measured on an M5 Max | Upstream's: each call goes to Metal as given, after the one test of a flag |
+| `MULLION_D3D12_CHECK_RANGES` | off (`1` turns it on) | Checks the offsets, sizes, boxes and footprints a call gives against the resource they point into, and drops the call when one runs past it, with a `MULLION-RANGE` line the first time each check fires and a count in the `RANGE` section ([§ Ranges](#ranges)). Today `CopyBufferRegion` and `CopyTextureRegion` (private ticket 20, part 1), the views of `IASetIndexBuffer` and `IASetVertexBuffers`, which it binds as no view instead (part 2), and `CreateConstantBufferView`, which makes a null view instead, and `WriteBufferImmediate` (part 3); root CBVs, SRVs and UAVs, which shaders check against what their buffers have (part 5), and dynamic descriptor indices, which shaders clamp below the descriptors their heap has from the table's start (part 6), two compile flags (`SM50_SHADER_FLAG_CHECK_ROOT_RANGES`, `SM50_SHADER_FLAG_CHECK_DESCRIPTOR_INDICES`), so the shader cache keys on them; the ticket's later parts add their calls to the same switch. Read once, when `d3d12core.dll` loads. Off until the GPU gate has run `d3d12_copy_ranges`, `d3d12_view_ranges`, `d3d12_cbv_ranges`, `d3d12_root_view_ranges`, `d3d12_descriptor_index_ranges` and their controls on the rented M1 (private ticket 15), and the root views' cost is measured on an M5 Max | Upstream's: each call goes to Metal as given, after the one test of a flag |
 
 A test hook, not a switch, and only in a build with the tests (`-Denable_tests=true`): `MULLION_TEST_GPU_ERROR=<code>`
 makes the bridge read every command buffer that completes as failed with that code of `MTLCommandBufferErrorDomain`,
@@ -520,6 +520,24 @@ reset after the call clears it with the view. A local root signature (a shader r
 its root views go unchecked, as upstream's. The flag is a converter input, so every shader converts again once with
 the switch on, and it gives a shader cache key of its own.
 
+A descriptor index through a table, or a directly indexed heap, is clamped below a count the root arguments carry
+after the root views' lengths: a qword for each descriptor table parameter in order (`TableCountQwords`), then one for
+the resource heap and one for the sampler heap where the root signature indexes them directly, as the converter
+declares them under `SM50_SHADER_FLAG_CHECK_DESCRIPTOR_INDICES`. A table's is the descriptors the bound heap holding
+its base has from there (`ranges::DescriptorsLeft`), written when the table is set, when `SetDescriptorHeaps` binds
+heaps and when a root signature is set; a heap's is its `NumDescriptors`. An index at or past the count reads the
+last descriptor the heap has: another resource of the game's, never memory past the heap's buffer. A table whose base
+lies in no heap the list has bound gets no clamp (`UINT32_MAX`), as upstream. A root signature of no parameters that
+indexes the heaps directly gets its heaps' counts all the same. The clamp happens on the GPU, which says nothing back,
+so what the list sees is what it says: `MULLION-RANGE call=SetRootDescriptorTable what=tableSize given=<n> limit=<n>
+action=clamped` the first time a table is set whose ranges declare more descriptors than its heap has from its base
+(`given` the ranges' reach, `ranges::TableSpan`; `limit` what the heap has), counted in `RANGE` as
+`SetRootDescriptorTable`. A table of an unbounded range declares no end and writes no line. What the shaders' checks
+do themselves (#16's guard, part 5's root views, these clamps) isn't counted yet: a GPU feedback word the `STATS` line
+reads is private ticket 33. The root arguments may now hold twice as
+many qwords as a root signature's cost, so the staging tables of each command list are `2 × 64 + 5` qwords, with the
+switch on or off.
+
 Metal 4's draws and argument tables took a buffer's length from an offset as `length - offset`, which wraps to nearly
 2^64 for an offset past the end (`winemetal_unix.c`, `metal4_remaining`): it is now 0 there, whatever the switch
 ([`buffer_range.h`](../../src/winemetal/unix/buffer_range.h), which `host_ranges` tests). A fix
@@ -552,6 +570,11 @@ their 256-byte buffers, and stores past the UAV's, reads a `uint4` element with 
 root SRV 16 bytes before its buffer's end inside those bytes and past them; `d3d12_root_view_ranges_indirect` also
 reads a root SRV that an `ExecuteIndirect` set and reset, as 0; its control, `tests/breaks/d3d12_root_view_ranges.patch`, converts
 without the checks.
+
+`tests/d3d12/d3d12_descriptor_index_ranges.cpp` reads a typed buffer array through an unbounded table at an index
+inside a heap of four and past it, from the heap's start and from its third descriptor. It has no GPU control: without
+the clamp its index past the heap reads a descriptor from past the heap's buffer, so `host_check_root_ranges`' controls
+stand for it.
 
 `tests/d3d12/d3d12_copy_ranges.cpp` runs every kind of drop above and one copy in range after each, and the planes of
 two depth-stencil formats through footprints of exactly their bytes, which must not drop, with the switch on;
@@ -653,8 +676,9 @@ past a buffer and 4 texels past a texture. Both run on the rented M1 under Metal
   end as `address + size`, and `host_ranges.4.patch` gives the bridge's Metal 4 length from an offset as
   `length - offset`, which wraps past the end, `host_ranges.5.patch` keeps found address ranges after a buffer is
   made or released, `host_ranges.6.patch` binds a root view by its buffer's whole length, past the 32 bits a
-  descriptor keeps, and `host_ranges.8.patch` keeps a command list's found buffer after one is. The test has to fail
-  on each.
+  descriptor keeps, `host_ranges.7.patch` counts a table at its heap's end as in the heap, `host_ranges.9.patch` cuts a table's span to
+  its last range, and `host_ranges.8.patch`
+  keeps a command list's found buffer after one is. The test has to fail on each.
 
   The eleventh break guards the window lines. `host_window_lines` builds
   [`window_lines.h`](../../src/winemetal/unix/window_lines.h) natively and checks the two lines against the report's
@@ -673,8 +697,13 @@ past a buffer and 4 texels past a texture. Both run on the rented M1 under Metal
   the test traces each load's address in the LLVM assembly, by name through `getelementptr`, casts and `select`, to the
   root arguments' fields: with the flag every load of a root SRV has to pass a `select` of the view and the lock table,
   and without it none does. Its controls, `tests/breaks/host_check_root_ranges{,.2,.3}.patch`, leave a root CBV, SRV
-  or UAV unchecked under the flag, and `.4` to `.7` take the fallback away from the view or from one load path each;
-  the test has to fail on each, at that view or at the trace.
+  or UAV unchecked under the flag, and `.4` to `.7` take the fallback away from the view or from one load path each.
+  For `-check-descriptor-indices` it converts the shader for root signatures that put one kind in a table and the
+  others in root descriptors, and traces each load of a descriptor through the table: with the flag every one has an
+  index that depends on the table's count, and without it none does; a third shader does the same for a texture, a
+  UAV's counter and a sampler through two tables. `.8` clamps no index, `.9` to `.14` leave the constant buffer's, the
+  SRV's, the UAV's, the texture's, the sampler's or the counter's out. The test has to fail on each, at that view, at the trace or at that
+  kind.
 - **Publish** (`ubuntu-24.04`, after the other jobs): packs the artifact into `mullion-swtor-<commit>.tar.xz` and
   checks that it unpacks to the same files, hash for hash. Only for a push to `swtor-on-mac` does it upload the archive
   (§ Releases). It is the only job with `contents: write`.

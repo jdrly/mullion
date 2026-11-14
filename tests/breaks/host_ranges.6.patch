@@ -1,7 +1,7 @@
 # a root view's bound is its buffer's whole length, which a descriptor's 32 bits cut to its low bits
 --- a/src/mullion/mullion_ranges.hpp
 +++ b/src/mullion/mullion_ranges.hpp
-@@ -122,7 +122,7 @@
+@@ -123,7 +123,7 @@
  RootViewBinding(uint64_t address, bool held, uint64_t end, uint64_t null_buffer) {
    if (!held)
      return {null_buffer, 0};
@@ -9,4 +9,4 @@
 +  return {address, end - address};
  }
  
- // the address ranges of live buffers a check found, newest first, kept while buffer_generation is the one they were
+ // how many descriptors a shader-visible heap from `start` to `end`, `increment` bytes each, has from `base` on: the
