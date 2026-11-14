@@ -125,6 +125,8 @@ main(int argc, char **argv) {
           "a frame behind a blocked drawable is a hitch");
     equal(blocked.HitchLine(at), "HITCH frame=2 dtMs=1201.5 inDriverMs=0.2 (0%) | present=1/0.2ms"
                                  " | queue: gpuMs=0.0 encodeMs=1199.8 drawableMs=1149.3 behind=0 | at=20:01:04.120");
+    check(blocked.HitchLine(at).find(" drawableMs=1149.3 ") != std::string::npos,
+          "drawableMs is the bridge's 1149.3 ms in nextDrawable, not the encoding's");
     // the next frame took its drawable at once: only what it added
     counters.encode_ns += 2'000'000, counters.drawable_ns += 40'000;
     check(blocked.End(1'261'500'000, {}, none, hitch::Read(counters), hitch::kDefaultMs) && blocked.Hitch(),

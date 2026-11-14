@@ -139,6 +139,7 @@ main(int argc, char **argv) {
     equal(line(49 * ms + 999999, true, kShown, 0), "");
     check(limit.lines == 0, "a call under 50 ms takes nothing of the limit");
     equal(line(50 * ms, true, kShown, 0), "mullion: nextDrawable blocked 50 ms got=1 visibility=0x3 at=20:00:34.700");
+    check(limit.lines == 1, "a call of 50 ms has a nextDrawable line");
     // a Space switch away: the window off the active Space, the drawable returned after the block
     equal(line(1149 * ms + 400000, true, WINDOW_VISIBLE, s),
           "mullion: nextDrawable blocked 1149 ms got=1 visibility=0x1 at=20:00:34.700");
