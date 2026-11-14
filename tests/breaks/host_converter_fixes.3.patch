@@ -1,0 +1,14 @@
+# before #7: a DXIL typed resource of doubles isn't refused, and is bound with a scalar type never set
+diff --git a/src/airconv/dxil_converter.cpp b/src/airconv/dxil_converter.cpp
+index f261e00..628d4a3 100644
+--- a/src/airconv/dxil_converter.cpp
++++ b/src/airconv/dxil_converter.cpp
+@@ -800,8 +800,6 @@ scaler_type(uint64_t component) {
+   case 5:
+     return ScalerDataType::Uint; // U16, U32
+   case 10:
+-    // F64: Metal has no texture of doubles (Refuse)
+-    Refuse("unsupported: a typed resource of doubles");
+     return ScalerDataType::Double;
+   default:
+     return ScalerDataType::Float;

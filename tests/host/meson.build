@@ -24,6 +24,13 @@ test('host_guard_static_ranges', executable('host_guard_static_ranges', 'guard_s
 test('host_check_root_ranges', executable('host_check_root_ranges', 'check_root_ranges.cpp',
                                           override_options : ['cpp_std=c++20'], native : true),
      args : [airconv_cli_darwin], timeout : 120, suite : 'host')
+# jdrly/mullion: the converter's fixes of #7 in the native converter's output: a pixel shader's unhandled system value,
+# a DXIL typed resource of doubles. it makes its DXIL with the LLVM the converter is built with (private ticket 25)
+test('host_converter_fixes', executable('host_converter_fixes', 'converter_fixes.cpp',
+                                        include_directories : llvm_include_path_darwin,
+                                        cpp_args : airconv_args, link_args : [llvm_ld_flags_darwin, llvm_deps],
+                                        override_options : ['cpp_std=c++20'], native : true),
+     args : [airconv_cli_darwin], timeout : 120, suite : 'host')
 # jdrly/mullion: the shader cache's key changes with the compile flags. its argument loop is CompileFunction's own,
 # copied out of src/d3d12/d3d12_pipeline_graphics.cpp at build time
 compile_key_arguments = custom_target('compile_key_arguments',

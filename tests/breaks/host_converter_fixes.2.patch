@@ -1,0 +1,15 @@
+# before #7: an unhandled dcl_input_ps_sgv still copies v1 from an argument it never chose (assigned_index unset)
+diff --git a/src/airconv/dxbc_signature.cpp b/src/airconv/dxbc_signature.cpp
+index 2f1417b..4dda980 100644
+--- a/src/airconv/dxbc_signature.cpp
++++ b/src/airconv/dxbc_signature.cpp
+@@ -567,8 +567,7 @@ void handle_signature_ps(
+       return;
+     default:
+       // Unexpected/unhandled input system value: the declaration is ignored
+-      max_input_register = std::max(reg + 1, max_input_register);
+-      return;
++      break;
+     }
+     signature_handlers.push_back([=](SignatureContext &ctx) {
+       ctx.prologue << init_input_reg(assigned_index, reg, mask);
