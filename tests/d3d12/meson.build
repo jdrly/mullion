@@ -100,8 +100,9 @@ foreach t : [['d3d12_sdk_configuration', []], ['d3d12_metal4_passes', []], ['d3d
   exe = executable(t[0], [t[0] + '.cpp'] + d3d12_test_sources.get(t[0], []), dependencies: d3d12_test_deps +
                    (t[0] in ['d3d12_swapchain_fullscreen', 'd3d12_shared_fence', 'd3d12_shared_fence_teardown'] ? [cpp.find_library('d3d11')] : []))
   foreach front_end : t.get(2, ['dxil', 'dxbc'])
+    # jdrly/mullion: d3d12_bounds itself keeps upstream's cases, with the static ranges' guard off
     test(t[0] + '_' + front_end, exe, args: [ front_end ], suite: t[1], is_parallel: 'timing' not in t[1],
-         timeout: 600)
+         env: t[0] == 'd3d12_bounds' ? ['MULLION_D3D12_GUARD_STATIC_RANGES=0'] : [], timeout: 600)
     if t[0] == 'd3d12_persistent'
       test(t[0] + '_allocate_' + front_end, exe, args: [front_end, 'ALLOCATE=1'], timeout: 600)
     endif

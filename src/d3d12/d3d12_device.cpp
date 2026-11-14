@@ -50,10 +50,10 @@ namespace mullion {
 
 // MULLION_D3D12_GUARD_STATIC_RANGES=1: shaders keep the bounds checks of buffer views in descriptor ranges root
 // signature 1.1 calls static, which upstream drops (6e4b44d): an out-of-range index reads 0 and stores nothing, as in a
-// volatile range, instead of reaching memory past the view. Off until the GPU gate has run d3d12_bounds_guarded and
-// its frame time is measured (docs/swtor/README.md). Read once per process; it is a compile flag, so the shader
-// cache keys on it
-static sw::Switch<bool> kGuardStaticRanges{"MULLION_D3D12_GUARD_STATIC_RANGES", false, sw::exactlyOne};
+// volatile range, instead of reaching memory past the view. On since the GPU gate ran d3d12_bounds_guarded and its
+// breaks on the rented M1 (docs/swtor/README.md); `0` is upstream's. Read once per process; it is a compile flag, so
+// the shader cache keys on it
+static sw::Switch<bool> kGuardStaticRanges{"MULLION_D3D12_GUARD_STATIC_RANGES", true, sw::notZero};
 
 // jdrly/mullion: the words shaders count their checks in, and the names the CPU gives them, in one order
 static_assert(ranges::kShaderChecks == SM50_CHECK_KINDS && SM50_CHECK_STATIC_RANGE == 0 && SM50_CHECK_ROOT_VIEW == 1 &&

@@ -89,9 +89,9 @@ main(int argc, char **argv) {
   for (UINT i = 0; i < all_words; i++)
     pattern[i] = i + 1;
 
-  // jdrly/mullion: static descriptors keep their bounds checks
+  // jdrly/mullion: static descriptors keep their bounds checks, unless the switch is 0 (the device's grammar, notZero)
   const char *guard = getenv("MULLION_D3D12_GUARD_STATIC_RANGES");
-  const bool guarded = guard && !strcmp(guard, "1");
+  const bool guarded = !guard || strcmp(guard, "0");
   ComPtr<ID3D12Device> device;
   CHECK(D3D12CreateDevice(nullptr, D3D_FEATURE_LEVEL_11_0, IID_PPV_ARGS(&device)));
   D3D12_DESCRIPTOR_RANGE read_range{D3D12_DESCRIPTOR_RANGE_TYPE_SRV, Kinds}, stored_range{D3D12_DESCRIPTOR_RANGE_TYPE_UAV, Kinds};
