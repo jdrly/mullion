@@ -431,10 +431,12 @@ MTLD3D12PipelineState::Name(std::initializer_list<D3D12_SHADER_BYTECODE> Shaders
     name += sha1 + " ";
     if (DumpFolder().empty())
       continue;
+    // a copy shared only with the same bytes: ShaderDigest takes a container's hash at its word, before it is checked
+    std::string_view bytes((const char *)Shader.pShaderBytecode, Shader.BytecodeLength);
     std::lock_guard lock(kept_mutex);
     auto shared = kept[sha1].lock();
-    if (!shared)
-      kept[sha1] = shared = std::make_shared<const std::string>((const char *)Shader.pShaderBytecode, Shader.BytecodeLength);
+    if (!shared || *shared != bytes)
+      kept[sha1] = shared = std::make_shared<const std::string>(bytes);
     kept_shaders.push_back(std::move(shared));
   }
   static const bool dump_all = env::getEnvVar("MULLION_SHADER_DUMP_ALL") == "1";
