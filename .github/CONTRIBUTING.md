@@ -54,7 +54,8 @@ If two sources conflict, report the conflict instead of choosing one.
 - Every claim says where it comes from: read in the code, run on the runner, or run on a Mac. A timing names the chip,
   the macOS version and the conditions. Nothing claims a measurement nobody took.
 - It is squash-merged with its title as the commit subject. An upstream batch is the exception: it merges with a
-  merge commit, so upstream's commits stay ancestors and the next batch merges cleanly.
+  merge commit, so upstream's commits stay ancestors and the next batch merges cleanly. How a batch is chosen, read,
+  merged and checked: [docs/swtor/upstream.md](../docs/swtor/upstream.md).
 
 ## Review
 
