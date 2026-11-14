@@ -58,6 +58,8 @@ removed with `DXGI_ERROR_DEVICE_HUNG`. A release build doesn't have it.
 | `Mullion: layer wait=0` | The first swap chain made with `MULLION_LAYER_WAIT=0`, once per process | `d3d12.log` (Wine's output, `wine.log` in the app), at `info` | Me: the session's presents didn't wait for the main thread |
 | `mullion: layer mainThreadWaitMs=<N> applied=no` | A change to a layer has waited 1 s, 5 s and 30 s without the main thread applying one: once at each, with either value of `MULLION_LAYER_WAIT`. `<N>`: ms since the main thread last applied a change, or was sent one with none waiting | The process's stderr (`wine.log` in the app), not `MULLION_LOG_PATH`: the bridge's watch thread writes it | Me, on a freeze: the main thread stopped answering |
 | `mullion: layer mainThreadWaitMs=<N> applied=yes` | The main thread applies a change after an `applied=no` line | The same, from the main thread | The same |
+| `MtlPresenter: <HH:MM:SS.mmm> visibility 0x<before> -> 0x<now> visible= activeSpace= miniaturized= active= why= [[n earlier lines suppressed]]` | Always, each time the game window's visibility changes: hidden, shown, another Space, the Dock ([§ The window lines](#the-window-lines)). At most 30 lines in 10 s with the line below | The process's stderr (`wine.log` in the app): the bridge writes it from the main thread, as the change happens | The app's session report, which reads d9mt's line of that name for its hidden seconds and its `--mark`; me, on a freeze after Cmd-Tab or a Space switch |
+| `mullion: window at= active= visibility=0x<now> why= [[n earlier lines suppressed]]` | Always, each time the app becomes active or stops being active while the window's visibility stays as it was | The same | Me: the last activation change before a freeze |
 | `STATS t= fps= ms=avg/p99/max slow33= slow50= \| cb= rp= cp= draws= \| sh= pso= wait=n/ms cache=hits/misses \| allocMiB= \| mainWaitMaxMs= \| at=` | With `MULLION_STATS=1`, at the Present that ends each second of presenting; none for a second without a Present | `d3d12.log` (`wine.log`), at `warn` | The app's session report, which reads d9mt's line of that name; me |
 | `<NAME> k=v …` | Right after `STATS`, one line for each registered section that has something to say | The same | The tickets that register one |
 | `CACHE rejected=` | The `STATS` section of a window in which Metal refused stored shaders, each then deleted from the cache and converted again | The same | Me: a damaged cache, or one a macOS update made stale |
@@ -200,8 +202,8 @@ something to say prints right after `STATS` as `<NAME> k=v …`, cut below 900 b
 report reads for something else (`PACE`, `HITCH`, `COMPILE`, `RESTORE`, `XFER`, `THREADCPU`, `RAWMOUSE`, `STATECACHE`,
 `DIAG`). The `STATS` line itself stays under 900 bytes for any numbers; `host_stats` tries the largest.
 
-What it doesn't have yet: hidden-window seconds (the report leaves them out using d9mt's presenter visibility lines,
-which Mullion doesn't write, so every second counts as shown), `PACE` and `SCREEN`.
+Hidden-window seconds aren't in it: the report leaves them out by d9mt's visibility line, which the bridge writes
+([§ The window lines](#the-window-lines)). What it doesn't have yet: `PACE` and `SCREEN`.
 
 Counting and cost. Counters any thread writes are relaxed atomics, read once a second; nothing takes a lock per frame.
 Frame times measured with the line on describe a session with it on: compare like with like.
@@ -417,6 +419,54 @@ relaxed atomics.
 Lines come at Presents: a process that stops presenting writes none until it presents again, and gets the pressure line
 then.
 
+### The window lines
+
+When the game window is shown, hidden or moved to another Space, and when the app gains or loses activation (Cmd-Tab).
+The app's session report leaves out the seconds around a change of visibility and takes its `--mark` from the last
+return to the window, as it does on d9mt. The freezes after Cmd-Tab or a Space switch stop the main thread, so these
+lines show the last change it saw. The formatter and the watch's steps are in
+[`window_lines.h`](../../src/winemetal/unix/window_lines.h); `host_window_lines` tests them, and the
+report's patterns, against [`tests/swtor/fixtures/session.log`](../../tests/swtor/fixtures/session.log), which has a
+Cmd-Tab to an app on another Space and back between `STATS t=30` and `t=34`.
+
+`MtlPresenter: 20:00:34.655 visibility 0x3 -> 0x1 visible=1 activeSpace=0 miniaturized=0 active=0 why=space`: d9mt's
+line, from its prefix to the second value, so the report reads it unchanged (it looks for `MtlPresenter: <time>
+visibility 0x<a> -> 0x<b>`). That part isn't `key=value`, for that reason; the fields after it are.
+
+| Field | What it is |
+|---|---|
+| time | The local time, `HH:MM:SS.mmm` |
+| `0x<before> -> 0x<now>` | d9mt's bits: `0x1` some of the window can be seen (`NSWindowOcclusionStateVisible`), `0x2` it is on the active Space, `0x4` it is in the Dock. Shown is `0x3`. A view not in a window yet counts as `0x3`, as in d9mt |
+| `visible`, `activeSpace`, `miniaturized` | The three bits of `now`, 1 or 0 |
+| `active` | 1 when the app is the active one (`NSApp.isActive`) |
+| `why` | What AppKit said: `occlusion`, `miniaturize`, `deminiaturize`, `space`, `activate`, `resign`, or `view` for the first look at a swap chain's window |
+
+`mullion: window at=20:00:34.412 active=0 visibility=0x3 why=resign`: the activation changed and the visibility didn't. A
+line of its own, because the report counts every `MtlPresenter` line as a switch.
+
+Where they come from. The bridge watches the window of the last Metal view a swap chain made (`CreateMetalViewFromHWND`,
+and winemetal's own view on a Wine whose winemac.drv exports nothing) until that view is released. It observes AppKit's
+notifications for occlusion, the Dock, the Space and activation without a queue, so the main thread writes the line as
+the notification arrives, before going on. Each notification reads the window's state; a state that didn't change writes
+nothing, and one that changed writes one line. Unlike d9mt, which writes its line at the next Present, these lines don't
+wait for a frame: they land between the `STATS` lines of the second they happened in, which is where the report puts
+them. The first look assumes `0x3` and active, as d9mt does, so a game that starts shown and active writes nothing.
+
+At most 30 lines in 10 s for the two together (the limit `MULLION-GPU-ERROR` and d9mt have). A line after the limit
+says how many lines were left out since the last visibility line. An activation line says so too, but leaves the count
+to the next visibility line, the one the report reads. Its `before` is the window's real last state. The report leaves
+out the seconds since its last visibility line when a line says lines were left out, or when its `before` differs from
+that line's `now`.
+
+Always on, with no switch: it changes no behaviour, and a session writes one to three lines for each Cmd-Tab, Space
+switch or trip to the Dock. A session without Debug Logging needs them most: the freezes come without warning. Cost:
+six observers on the main thread for the process. Each notification reads four properties of the window and the clock,
+and writes one line with one `write` when something changed. Nothing on the presenting thread. The bridge keeps the
+watched view retained until it is released, so a notification never reads a view that is gone.
+
+Needs the Mac: AppKit's notifications can't run on GitHub's runner. That a Cmd-Tab and a Space switch each write their
+lines, and in which order, has not been seen on a Mac yet.
+
 ### Ranges
 
 With `MULLION_D3D12_CHECK_RANGES=1` a call whose numbers run past the resource they point into is dropped: Metal never
@@ -495,7 +545,7 @@ past a buffer and 4 texels past a texture. Both run on the rented M1 under Metal
   `winemetal.so` without LLVM assertion text, built for macOS 15.0 (`minos`), with an ad hoc signature that `codesign`
   verifies; and the internal Metal library (below). The job uploads `mullion-swtor-<commit>` (7 days). For a pull
   request it also runs the host tests in `tests/host` (`meson test 'host_*'`; `host_tessellator` and `host_mutate`
-  below), breaks ten checks on purpose and requires each to fail, and fails on a compiler warning that
+  below), breaks eleven checks on purpose and requires each to fail, and fails on a compiler warning that
   `.github/swtor/warnings-x86_64.txt` doesn't list. A push run builds, checks and uploads only: the pull request's run
   of the same tree has already passed the rest.
 
@@ -573,6 +623,14 @@ past a buffer and 4 texels past a texture. Both run on the rented M1 under Metal
   end as `address + size`, and `host_ranges.4.patch` gives the bridge's Metal 4 length from an offset as
   `length - offset`, which wraps past the end, and `host_ranges.5.patch` keeps found address ranges after a buffer is
   made or released. The test has to fail on each.
+
+  The eleventh break guards the window lines. `host_window_lines` builds
+  [`window_lines.h`](../../src/winemetal/unix/window_lines.h) natively and checks the two lines against the report's
+  patterns, the limit, and the fixture's lines. Its controls: `tests/breaks/host_window_lines.patch` writes an
+  activation alone as d9mt's visibility line, which the report would count as a switch, and
+  `host_window_lines.2.patch` updates the watch's last state only for the lines it writes, so the line after the limit
+  starts from the wrong state, and `host_window_lines.3.patch` lets an activation line clear the count of lines left
+  out, so the visibility line after it doesn't carry it. The test has to fail on each.
 - **Publish** (`ubuntu-24.04`, after the other jobs): packs the artifact into `mullion-swtor-<commit>.tar.xz` and
   checks that it unpacks to the same files, hash for hash. Only for a push to `swtor-on-mac` does it upload the archive
   (§ Releases). It is the only job with `contents: write`.

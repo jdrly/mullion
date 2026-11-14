@@ -84,6 +84,11 @@ test('host_shader_lines', executable('host_shader_lines',
 # the DIAG MEM and MULLION-MEMORY-PRESSURE lines, MULLION_MEMSTATS's grammar, and the fixture's DIAG MEM lines
 test('host_memory', executable('host_memory', 'memory.cpp', override_options : ['cpp_std=c++20'], native : true),
      args : files('../swtor/fixtures/session.log'), suite : 'host')
+# jdrly/mullion: the window lines (src/winemetal/unix/window_lines.h): d9mt's visibility line as the app's report reads
+# it, the activation line, their limit, and the fixture's window lines
+test('host_window_lines', executable('host_window_lines', 'window_lines.cpp', override_options : ['cpp_std=c++20'],
+                                     native : true),
+     args : files('../swtor/fixtures/session.log'), suite : 'host')
 # a command allocator's Reset waiting for its lists (MULLION_D3D12_RESET_WAITS), its MULLION-RESET-WAIT line and its
 # RESETWAIT section
 test('host_reset_wait', executable('host_reset_wait', 'reset_wait.cpp', override_options : ['cpp_std=c++20'],

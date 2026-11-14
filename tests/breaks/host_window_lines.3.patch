@@ -1,0 +1,13 @@
+# an activation line clears the count of lines left out, so the visibility line after it, which the report reads, doesn't carry it
+diff --git a/src/winemetal/unix/window_lines.h b/src/winemetal/unix/window_lines.h
+index 488d1a3..04f6012 100644
+--- a/src/winemetal/unix/window_lines.h
++++ b/src/winemetal/unix/window_lines.h
+@@ -79,6 +79,7 @@ window_look(struct window_watch *watch, struct window_state now, uint64_t now_ns
+   char tail[48] = "";
+   if (watch->limit.dropped)
+     snprintf(tail, sizeof tail, " [%u earlier lines suppressed]", watch->limit.dropped);
++  watch->limit.dropped = 0;
+   int length;
+   if (was.visibility != now.visibility) {
+     watch->limit.dropped = 0;

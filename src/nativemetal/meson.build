@@ -3,6 +3,7 @@ winemetal_src = [
   '../winemetal/unix/winemetal_unix.c',
   '../winemetal/unix/cache.c',
   '../winemetal/unix/layer.c',
+  '../winemetal/unix/window.c',
 ]
 winemetal_link_depends = []
 

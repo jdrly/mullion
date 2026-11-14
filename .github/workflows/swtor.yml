@@ -402,6 +402,22 @@ jobs:
           grep -qF 'failed: a buffer made or released forgets every range' "$RUNNER_TEMP/host_ranges.5.txt"
           [[ -z $(git status --porcelain -- src/winemetal) ]]
           [[ -z $(git status --porcelain -- src/mullion) ]]
+          # the window lines: with an activation alone written as d9mt's visibility line
+          # (tests/breaks/host_window_lines.patch), what the watch said last following only the lines it wrote
+          # (host_window_lines.2.patch), or an activation line clearing the count of lines left out
+          # (host_window_lines.3.patch), host_window_lines has to fail
+          for p in host_window_lines host_window_lines.2 host_window_lines.3; do
+            git apply "tests/breaks/$p.patch"
+            status=0
+            meson test -C build host_window_lines --print-errorlogs >"$RUNNER_TEMP/$p.txt" 2>&1 || status=$?
+            git apply -R "tests/breaks/$p.patch"
+            cat "$RUNNER_TEMP/$p.txt"
+            [[ $status != 0 ]]
+          done
+          grep -qF "failed: an activation alone isn't a visibility line for the report" "$RUNNER_TEMP/host_window_lines.txt"
+          grep -qF 'failed: the report reads the 11 left out' "$RUNNER_TEMP/host_window_lines.2.txt"
+          grep -qF 'failed: the report reads the 2 left out after an activation line' "$RUNNER_TEMP/host_window_lines.3.txt"
+          [[ -z $(git status --porcelain -- src/winemetal) ]]
           # a converter change the build's codegen id doesn't follow: this build against the id of the tree with one
           # comment more in src/airconv. both DLLs and VERSION have to fail
           cv=src/airconv/dxbc_converter.cpp

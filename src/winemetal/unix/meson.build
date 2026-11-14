@@ -2,6 +2,7 @@ winemetal_unix_src = [
   'winemetal_unix.c',
   'cache.c',
   'layer.c',
+  'window.c',
 ]
 
 if wine_build_path != ''
