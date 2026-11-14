@@ -1,0 +1,12 @@
+# MULLION_D3D12_CHECK_RANGES=1 runs every ExecuteIndirect as given
+--- a/src/d3d12/d3d12_command_list.cpp
++++ b/src/d3d12/d3d12_command_list.cpp
+@@ -4253,7 +4253,7 @@
+         return;
+       CountBufferAddress = count_buffer->buffer->current()->gpuAddress() + CountBufferOffset;
+     }
+-    if (kRangesOn && !IndirectInRange(sig, MaxCommandCount, pArgBuffer, ArgBufferOffset, pCountBuffer, CountBufferOffset))
++    if (false && !IndirectInRange(sig, MaxCommandCount, pArgBuffer, ArgBufferOffset, pCountBuffer, CountBufferOffset))
+       return;
+     bool rays = sig->CommandType == D3D12_INDIRECT_ARGUMENT_TYPE_DISPATCH_RAYS;
+     if (!MaxCommandCount) {

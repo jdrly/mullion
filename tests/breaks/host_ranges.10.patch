@@ -1,0 +1,12 @@
+# an ExecuteIndirect's commands counted as a whole stride each, the last's arguments on top
+--- a/src/mullion/mullion_ranges.hpp
++++ b/src/mullion/mullion_ranges.hpp
+@@ -72,7 +72,7 @@
+   if (!count)
+     return 0;
+   uint64_t total;
+-  if (__builtin_mul_overflow(stride, count - 1, &total) || __builtin_add_overflow(total, bytes, &total))
++  if (__builtin_mul_overflow(stride, count, &total) || __builtin_add_overflow(total, bytes, &total))
+     return UINT64_MAX;
+   return total;
+ }

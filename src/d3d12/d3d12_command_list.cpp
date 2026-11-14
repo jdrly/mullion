@@ -197,7 +197,8 @@ static ranges::Site kBufferCopySrc{ranges::Call::CopyBufferRegion, "src"},
     kIndexView{ranges::Call::IASetIndexBuffer, "view"}, kVertexView{ranges::Call::IASetVertexBuffers, "view"},
     kImmediate{ranges::Call::WriteBufferImmediate, "dest"},
     kRootViewAddress{ranges::Call::SetRootView, "view", "clamped"},
-    kTableSpan{ranges::Call::SetRootDescriptorTable, "table", "clamped"};
+    kTableSpan{ranges::Call::SetRootDescriptorTable, "table", "clamped"},
+    kIndirectArguments{ranges::Call::ExecuteIndirect, "args"}, kIndirectCount{ranges::Call::ExecuteIndirect, "count"};
 
 // a check fired at `site`: counted, and its line written the first time
 static void
@@ -4212,6 +4213,29 @@ public:
   // past an event's start or end keeps the path it began in
   std::vector<const char *> events_;
 
+  // MULLION_D3D12_CHECK_RANGES: whether an ExecuteIndirect's commands lie in its argument buffer, MaxCommandCount of
+  // the signature's stride from ArgBufferOffset, the last its arguments' bytes, and its count in its count buffer, by
+  // the width Direct3D gave each. A call that runs past either is dropped whole
+  bool
+  IndirectInRange(
+      MTLD3D12CommandSignature *sig, UINT MaxCommandCount, ID3D12Resource *pArgBuffer, UINT64 ArgBufferOffset,
+      ID3D12Resource *pCountBuffer, UINT64 CountBufferOffset
+  ) {
+    if (!MaxCommandCount)
+      return true;
+    auto commands = ranges::IndirectBytes(sig->ByteStride, MaxCommandCount, sig->ArgumentBytes);
+    if (auto overrun = ranges::Bytes(ArgBufferOffset, commands, pArgBuffer->GetDesc().Width)) {
+      RangeFired(kIndirectArguments, overrun);
+      return false;
+    }
+    if (pCountBuffer)
+      if (auto overrun = ranges::Bytes(CountBufferOffset, sizeof(UINT), pCountBuffer->GetDesc().Width)) {
+        RangeFired(kIndirectCount, overrun);
+        return false;
+      }
+    return true;
+  }
+
   void STDMETHODCALLTYPE ExecuteIndirect(
       ID3D12CommandSignature *pCommandSignature, UINT MaxCommandCount, ID3D12Resource *pArgBuffer,
       UINT64 ArgBufferOffset, ID3D12Resource *pCountBuffer, UINT64 CountBufferOffset
@@ -4229,6 +4253,8 @@ public:
         return;
       CountBufferAddress = count_buffer->buffer->current()->gpuAddress() + CountBufferOffset;
     }
+    if (kRangesOn && !IndirectInRange(sig, MaxCommandCount, pArgBuffer, ArgBufferOffset, pCountBuffer, CountBufferOffset))
+      return;
     bool rays = sig->CommandType == D3D12_INDIRECT_ARGUMENT_TYPE_DISPATCH_RAYS;
     if (!MaxCommandCount) {
       ResetIndirectState(sig, rays || sig->CommandType == D3D12_INDIRECT_ARGUMENT_TYPE_DISPATCH);
