@@ -1,0 +1,12 @@
+# kept ranges outlive a buffer made or released: the generation is never compared
+--- a/src/mullion/mullion_ranges.hpp
++++ b/src/mullion/mullion_ranges.hpp
+@@ -116,7 +116,7 @@
+   // it may change is kept at the old one, and forgotten at the next call
+   uint64_t
+   end(const void *owner, uint64_t generation, uint64_t address) {
+-    if (owner != owner_ || generation != generation_) {
++    if (owner != owner_) {
+       ranges_ = {};
+       owner_ = owner;
+       generation_ = generation;

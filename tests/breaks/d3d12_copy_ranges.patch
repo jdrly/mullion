@@ -7,6 +7,6 @@
  static sw::Switch<bool> kCheckRanges{"MULLION_D3D12_CHECK_RANGES", false, sw::exactlyOne};
 -static const bool kRangesOn = kCheckRanges();
 +static const bool kRangesOn = false;
+ const bool ranges::on = kRangesOn;
  
  // RANGE after STATS: the calls the checks dropped in the window
- static stats::SectionRegistrar kRangeSection{"RANGE", [](double, uint64_t) {

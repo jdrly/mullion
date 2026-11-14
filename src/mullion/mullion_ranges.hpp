@@ -14,7 +14,7 @@
 // what it has past the offset), X, Y or Z (a box's or region's far edge, `limit` the level's), Footprint (a placed
 // footprint's offset or bytes, as Offset and Size), Resource (`given` its D3D12_RESOURCE_DIMENSION where a buffer,
 // 1, was asked for). A view's side is `view`: viewAddress (an address no live buffer holds, `limit` 0) or viewSize
-// (`limit` what the buffer has from the address). `given` is the value the game gave. Every time it fires the call's counter goes up; with
+// (`limit` what the buffer has from the address); WriteBufferImmediate's is `dest`, the same. `given` is the value the game gave. Every time it fires the call's counter goes up; with
 // MULLION_STATS=1 the RANGE section after STATS says how often each call was dropped in that second:
 //
 //   RANGE CopyBufferRegion=3 CopyTextureRegion=1
@@ -23,12 +23,17 @@
 //
 // Pure C++ (no Windows, no Metal): tests/host/ranges.cpp builds it natively.
 
+#include <algorithm>
 #include <array>
 #include <atomic>
 #include <cstdint>
 #include <string>
 
 namespace mullion::ranges {
+
+// MULLION_D3D12_CHECK_RANGES, read once as d3d12core.dll loads (d3d12_command_list.cpp declares it). Every check
+// outside that file tests this
+extern const bool on;
 
 // a number that runs past its resource: which part of it, the value given and the most the resource takes there.
 // false when it fits
@@ -96,6 +101,48 @@ View(uint64_t address, uint64_t size, bool held, uint64_t end) {
   return {};
 }
 
+// raised each time any buffer's addresses are registered or unregistered, by any device of the process, after the
+// change. One counter for the process, never restarted: a device made where another was, at the same address, never
+// reads a generation the other's ranges were kept at. This DLL's
+inline std::atomic<uint64_t> buffer_generation{0};
+
+// the address ranges of live buffers a check found, newest first, kept while buffer_generation is the one they were
+// found at, for the device they were found in. Numbers only, never a
+// buffer: a range outlives nothing. Not thread-safe: each command list has its own, each thread making views its own
+class HeldRanges {
+public:
+  // the end of a kept range that holds `address`, or 0 when none does. Another device or generation than the ranges
+  // were kept at forgets them all first; read the generation before looking an address up, so a range found after
+  // it may change is kept at the old one, and forgotten at the next call
+  uint64_t
+  end(const void *owner, uint64_t generation, uint64_t address) {
+    if (owner != owner_ || generation != generation_) {
+      ranges_ = {};
+      owner_ = owner;
+      generation_ = generation;
+    }
+    for (auto &range : ranges_)
+      if (address >= range.start && address < range.end)
+        return range.end;
+    return 0;
+  }
+
+  // a live buffer's range, found since `end` was last asked; the oldest of four goes
+  void
+  keep(uint64_t start, uint64_t end) {
+    std::move_backward(ranges_.begin(), ranges_.end() - 1, ranges_.end());
+    ranges_[0] = {start, end};
+  }
+
+private:
+  struct Range {
+    uint64_t start = 0, end = 0;
+  };
+  std::array<Range, 4> ranges_{};
+  const void *owner_ = nullptr;
+  uint64_t generation_ = 0;
+};
+
 // the texels a copy of `texels` source texels covers in the destination: a copy between a block-compressed format and
 // another carries one unit, a block or a texel, into one unit (CopyResource, Remarks)
 inline uint64_t
@@ -119,7 +166,15 @@ FootprintBytes(uint64_t width, uint64_t height, uint64_t depth, uint64_t row_pit
 }
 
 // the calls whose numbers are checked
-enum class Call : unsigned { CopyBufferRegion, CopyTextureRegion, IASetIndexBuffer, IASetVertexBuffers, Count };
+enum class Call : unsigned {
+  CopyBufferRegion,
+  CopyTextureRegion,
+  IASetIndexBuffer,
+  IASetVertexBuffers,
+  CreateConstantBufferView,
+  WriteBufferImmediate,
+  Count
+};
 
 inline const char *
 CallName(Call call) {
@@ -132,6 +187,10 @@ CallName(Call call) {
     return "IASetIndexBuffer";
   case Call::IASetVertexBuffers:
     return "IASetVertexBuffers";
+  case Call::CreateConstantBufferView:
+    return "CreateConstantBufferView";
+  case Call::WriteBufferImmediate:
+    return "WriteBufferImmediate";
   default:
     return "?";
   }

@@ -1,7 +1,7 @@
 # a range's end as offset + size, which wraps past 2^64 to a small number for a far range
 --- a/src/mullion/mullion_ranges.hpp
 +++ b/src/mullion/mullion_ranges.hpp
-@@ -43,7 +43,7 @@
+@@ -51,7 +51,7 @@
  Bytes(uint64_t offset, uint64_t size, uint64_t limit) {
    if (offset > limit)
      return {"Offset", offset, limit};

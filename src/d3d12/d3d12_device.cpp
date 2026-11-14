@@ -31,6 +31,7 @@
 #include "mullion_compression.hpp"
 #include "util_env.hpp"
 #include "util_switch.hpp"
+#include "mullion_ranges.hpp"
 #include "mullion_info.hpp"
 #include "mullion_shader_cache.hpp"
 #include "util_string.hpp"
@@ -1388,10 +1389,35 @@ public:
     TryCreateConstantBufferView(pDesc, Descriptor);
   };
 
+  // MULLION_D3D12_CHECK_RANGES: whether a constant buffer view's bytes lie in the live buffer whose addresses hold its
+  // address. Views are made on any thread, often one a draw from a ring of them: each thread keeps the ranges it found,
+  // and looks an address up, under the address lock, only when none holds it
+  bool
+  ConstantBufferViewInRange(const D3D12_CONSTANT_BUFFER_VIEW_DESC &Desc) {
+    static ranges::Site site{ranges::Call::CreateConstantBufferView, "view"};
+    static thread_local ranges::HeldRanges held;
+    auto VA = Desc.BufferLocation;
+    auto end = held.end(this, ranges::buffer_generation.load(std::memory_order_acquire), VA);
+    uint64_t offset, found_end;
+    if (!end && LookupBufferByVA(VA, &offset, &found_end) && VA < found_end) {
+      held.keep(VA - offset, found_end);
+      end = found_end;
+    }
+    auto overrun = ranges::View(VA, Desc.SizeInBytes, end != 0, end);
+    if (!overrun)
+      return true;
+    if (auto line = site.fired(overrun); !line.empty())
+      WARN(line);
+    return false;
+  }
+
   // E_INVALIDARG for a slot the heap does not have, as the other TryCreate* answer
   HRESULT STDMETHODCALLTYPE
   TryCreateConstantBufferView(const D3D12_CONSTANT_BUFFER_VIEW_DESC *pDesc, D3D12_CPU_DESCRIPTOR_HANDLE Descriptor) final {
     auto [Heap, Index] = GetShaderVisibleDescriptorHeap(this, Descriptor);
+    // a view past its buffer is a null view, which shaders read as zeros
+    if (ranges::on && pDesc && pDesc->BufferLocation && !ConstantBufferViewInRange(*pDesc))
+      return Heap->AddConstantBufferView(Index, 0, 0);
     return Heap->AddConstantBufferView(Index, pDesc ? pDesc->BufferLocation : 0, pDesc ? pDesc->SizeInBytes : 0);
   };
 
@@ -2741,7 +2767,7 @@ public:
         sparse_buffer_mappings_.emplace(
             allocation->gpuAddress(), std::vector<uint64_t>(allocation->sparse_tile_count)
         );
-      buffer_generation.fetch_add(1, std::memory_order_release);
+      ranges::buffer_generation.fetch_add(1, std::memory_order_release);
     }
     if (allocation->flags().test(BufferAllocationFlag::AllocatedOnHeap))
       return S_OK;
@@ -2778,7 +2804,7 @@ public:
     }
     interval_map_.erase(allocation->gpuAddress());
     sparse_buffer_mappings_.erase(allocation->gpuAddress());
-    buffer_generation.fetch_add(1, std::memory_order_release);
+    ranges::buffer_generation.fetch_add(1, std::memory_order_release);
   }
 
   BufferAllocation *

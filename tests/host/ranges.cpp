@@ -64,6 +64,40 @@ main() {
   // a size whose end wraps past 2^64 from the address
   equal(said(View(0x10100, UINT64_MAX - 0xff, true, 0x10200)), "Size 18446744073709551360 256");
 
+  // the ranges a check keeps: found once, held after, four at a time, the oldest going first; forgotten for another
+  // device or generation
+  {
+    HeldRanges held;
+    int device, other;
+    check(held.end(&device, 1, 0x10100) == 0, "nothing is held at first");
+    held.keep(0x10000, 0x10200);
+    check(held.end(&device, 1, 0x10100) == 0x10200, "a kept range holds its addresses");
+    check(held.end(&device, 1, 0x10200) == 0, "but not its end");
+    for (uint64_t start : {0x20000, 0x30000, 0x40000})
+      held.keep(start, start + 0x100);
+    check(held.end(&device, 1, 0x10100) == 0x10200, "four ranges are held");
+    held.keep(0x50000, 0x50100);
+    check(held.end(&device, 1, 0x10100) == 0, "a fifth pushes the oldest out");
+    check(held.end(&device, 1, 0x50080) == 0x50100, "and is held");
+    check(held.end(&device, 2, 0x50080) == 0, "a buffer made or released forgets every range");
+    held.keep(0x50000, 0x50100);
+    check(held.end(&other, 2, 0x50080) == 0, "so does another device");
+  }
+  // a device made at the address of one destroyed, with as many buffers made and released: the process's counter has
+  // moved past every generation the first one's ranges were kept at, so the second one's checks find none of them
+  {
+    HeldRanges held;
+    int device;
+    auto first = buffer_generation.load();
+    check(held.end(&device, first, 0x10100) == 0, "the first device finds nothing kept");
+    held.keep(0x10000, 0x10200);
+    buffer_generation.fetch_add(1); // its buffer released, and the device with it
+    buffer_generation.fetch_add(1); // the next device, at the same address, makes a buffer
+    check(buffer_generation.load() != first, "the counter never comes back to a generation read before");
+    check(held.end(&device, buffer_generation.load(), 0x10100) == 0,
+          "a device at a destroyed one's address keeps none of its ranges");
+  }
+
   // the bridge's Metal 4 lengths: what a buffer has from an offset, before, at and past its end
   check(buffer_remaining(256, 0) == 256, "a buffer's length from its start");
   check(buffer_remaining(256, 200) == 56, "what is left from an offset inside it");
@@ -112,6 +146,12 @@ main() {
   equal(view.fired(View(0x20000, 4, false, 0), counts),
         "MULLION-RANGE call=IASetIndexBuffer what=viewAddress given=131072 limit=0 action=dropped");
   equal(counts.section(last), "IASetIndexBuffer=1");
+  Site dest{Call::WriteBufferImmediate, "dest"}, cbv{Call::CreateConstantBufferView, "view"};
+  equal(dest.fired(View(0x20000, 4, false, 0), counts),
+        "MULLION-RANGE call=WriteBufferImmediate what=destAddress given=131072 limit=0 action=dropped");
+  equal(cbv.fired(View(0x10000, 512, true, 0x10100), counts),
+        "MULLION-RANGE call=CreateConstantBufferView what=viewSize given=512 limit=256 action=dropped");
+  equal(counts.section(last), "CreateConstantBufferView=1 WriteBufferImmediate=1");
 
   if (failures)
     std::printf("%u failed\n", failures);
