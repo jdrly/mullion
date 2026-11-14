@@ -45,6 +45,11 @@ test('d3d12_texture_compression', exe, env: ['MULLION_TEX_MSAA_COMPRESSION=auto'
 # jdrly/mullion: MULLION_D3D12_CHECK_RANGES drops copies past their resources (private ticket 20 part 1)
 exe = executable('d3d12_copy_ranges', ['d3d12_copy_ranges.cpp'], dependencies: d3d12_test_deps)
 test('d3d12_copy_ranges', exe, env: ['MULLION_D3D12_CHECK_RANGES=1'], timeout: 600)
+# jdrly/mullion: and binds index and vertex buffer views past their buffers as no view (private ticket 20 part 2)
+exe = executable('d3d12_view_ranges', ['d3d12_view_ranges.cpp'], dependencies: d3d12_test_deps)
+foreach front_end : ['dxil', 'dxbc']
+  test('d3d12_view_ranges_' + front_end, exe, args: [front_end], env: ['MULLION_D3D12_CHECK_RANGES=1'], timeout: 600)
+endforeach
 exe = executable('d3d12_trace_log',['d3d12_trace_log.cpp'], dependencies: d3d12_test_deps + [cpp.find_library('d3d11')])
 test('d3d12_trace_log', exe, timeout: 600)
 exe = executable('d3d12_copy_memory', ['d3d12_copy_memory.cpp'], dependencies: d3d12_test_deps)

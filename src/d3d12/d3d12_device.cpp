@@ -2741,6 +2741,7 @@ public:
         sparse_buffer_mappings_.emplace(
             allocation->gpuAddress(), std::vector<uint64_t>(allocation->sparse_tile_count)
         );
+      buffer_generation.fetch_add(1, std::memory_order_release);
     }
     if (allocation->flags().test(BufferAllocationFlag::AllocatedOnHeap))
       return S_OK;
@@ -2777,6 +2778,7 @@ public:
     }
     interval_map_.erase(allocation->gpuAddress());
     sparse_buffer_mappings_.erase(allocation->gpuAddress());
+    buffer_generation.fetch_add(1, std::memory_order_release);
   }
 
   BufferAllocation *
