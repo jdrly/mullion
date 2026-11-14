@@ -380,7 +380,12 @@ void
 MTLD3D12PipelineState::Failed(
     shader_lines::Step step, std::span<const D3D12_SHADER_BYTECODE> shaders, std::string_view message
 ) {
-  ShaderFailed(step, kind, shaders, message, name);
+  // none given: the copies it kept, when there is a folder to dump them in
+  std::vector<D3D12_SHADER_BYTECODE> kept;
+  if (shaders.empty())
+    for (auto &shader : kept_shaders)
+      kept.push_back({shader->data(), shader->size()});
+  ShaderFailed(step, kind, shaders.empty() ? std::span<const D3D12_SHADER_BYTECODE>(kept) : shaders, message, name);
 }
 
 // a shader refused before it is read: a container without a program the parser can read, or a whole one of another
@@ -416,9 +421,22 @@ ShaderTotalsLine() {
 
 void
 MTLD3D12PipelineState::Name(std::initializer_list<D3D12_SHADER_BYTECODE> Shaders) {
-  for (auto &Shader : Shaders)
-    if (Shader.pShaderBytecode)
-      name += ShaderDigest(Shader.pShaderBytecode, Shader.BytecodeLength).string() + " ";
+  // the copies kept_shaders shares, by SHA-1
+  static mullion::mutex kept_mutex;
+  static std::unordered_map<std::string, std::weak_ptr<const std::string>> kept;
+  for (auto &Shader : Shaders) {
+    if (!Shader.pShaderBytecode)
+      continue;
+    auto sha1 = ShaderDigest(Shader.pShaderBytecode, Shader.BytecodeLength).string();
+    name += sha1 + " ";
+    if (DumpFolder().empty())
+      continue;
+    std::lock_guard lock(kept_mutex);
+    auto shared = kept[sha1].lock();
+    if (!shared)
+      kept[sha1] = shared = std::make_shared<const std::string>((const char *)Shader.pShaderBytecode, Shader.BytecodeLength);
+    kept_shaders.push_back(std::move(shared));
+  }
   static const bool dump_all = env::getEnvVar("MULLION_SHADER_DUMP_ALL") == "1";
   if (dump_all || Logger::logLevel() == LogLevel::Trace || trace::Heavy(trace::Shader))
     DumpShaders(Shaders);

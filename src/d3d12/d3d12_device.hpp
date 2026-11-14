@@ -540,8 +540,8 @@ public:
   );
 
   // MULLION-SHADER (docs/swtor/README.md): `shaders` failed at `step`, each dumped as <sha1>.dxbc when
-  // MULLION_SHADER_DUMP_PATH names a folder (at most 32 a process). none: the pipeline's, by `name` alone, undumped (a
-  // compile thread's, which no longer has the application's bytecode)
+  // MULLION_SHADER_DUMP_PATH names a folder (at most 32 a process). none: the pipeline's (a compile thread's, a
+  // variant's), from kept_shaders with a folder, else by `name` alone
   void Failed(shader_lines::Step step, std::span<const D3D12_SHADER_BYTECODE> shaders, std::string_view message);
   // Failed's line for a shader refused before it is read: its container, or its stage against `Type`'s
   void StageRefused(D3D12_SHADER_BYTECODE Bytecode, int Type);
@@ -557,6 +557,9 @@ public:
   // profile names can be looked at
   std::string name;
   void Name(std::initializer_list<D3D12_SHADER_BYTECODE> Shaders);
+  // with MULLION_SHADER_DUMP_PATH, its shaders' bytes, one copy of each shader for the process, for a failure that
+  // comes when the application may have freed them (a compile thread's, a variant's at draw time)
+  std::vector<std::shared_ptr<const std::string>> kept_shaders;
 };
 
 // the variant the pipelines this thread makes now are, for their MULLION-PIPELINE line (MTLD3D12PipelineState::Fuller)
