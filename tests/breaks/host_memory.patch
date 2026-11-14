@@ -1,0 +1,12 @@
+# allocatedMiB, the key SWTOR on Mac's session report reads from d9mt's DIAG MEM line, renamed to STATS's allocMiB
+--- a/src/mullion/mullion_memory.hpp
++++ b/src/mullion/mullion_memory.hpp
+@@ -75,7 +75,7 @@
+ Line(const Numbers &n, const Clock &at) {
+   char line[640];
+   std::snprintf(line, sizeof(line),
+-                "DIAG MEM frame=%llu allocatedMiB=%llu footprintMiB=%llu footprintPeakMiB=%llu budgetMiB=%llu"
++                "DIAG MEM frame=%llu allocMiB=%llu footprintMiB=%llu footprintPeakMiB=%llu budgetMiB=%llu"
+                 " usageMiB=%llu workingSetMiB=%llu | system: swapMiB=%llu compressedMiB=%llu freeMiB=%llu"
+                 " pageouts=%llu swapouts=%llu | heaps=%llu/%llu | at=%02u:%02u:%02u.%03u",
+                 (unsigned long long)n.frame, MiB(n.allocated), MiB(n.footprint), MiB(n.footprint_peak), MiB(n.budget),

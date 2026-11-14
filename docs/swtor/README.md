@@ -26,6 +26,7 @@ are set.
 | `MULLION_SESSION_HEADER` | off (`1` turns it on) | Writes the session header (below) when the first Direct3D 12 device is created, with one read-only bridge call for what the Windows side can't read. Off until the Mac run shows the header right on an M1 and an M5 Max; SWTOR on Mac's DX12 dev build turns it on | No header and no bridge call for it |
 | `MULLION_STATS` | off (`1` turns it on) | Writes a `STATS` line (below) each second of presenting, and counts what it reports. Read once, when `d3d12core.dll` loads. SWTOR on Mac's DX12 dev build turns it on | No line, and nothing counted: each place that counts tests one flag (below) |
 | `MULLION_HITCH_MS` | `50` | With `MULLION_STATS=1`, a frame (Present to Present) this many ms long or longer gets a `HITCH` line, and its `COMPILE` line is at `warn`. Whole ms, 1 to 60000; anything else is 50. Read once, at the first Present counted | Nothing to restore: it only moves a threshold, and `MULLION_STATS` off writes no `HITCH` |
+| `MULLION_MEMSTATS` | `0` | A `DIAG MEM` line (below) at each sample of the bridge's memory sampler: `1` every 5 s, `N` from 2 to 3600 every `N` s; anything else is `0`. With it on, the game's `ID3D12Heap`s are counted as they are made and released. Read once, when `d3d12core.dll` loads. SWTOR on Mac's Debug Logging turns it on (private ticket 14) | No `DIAG MEM` line and no heap count. The sampler still runs, every 30 s, for `MULLION-MEMORY-PRESSURE` |
 | `MULLION_GPU_ERROR_DETAIL` | off (`1` turns it on) | Every Metal 3 command buffer asks Metal for each encoder's status (`MTLCommandBufferErrorOptionEncoderExecutionStatus`), and every pass's encoder gets a label, so `MULLION-GPU-ERROR` lists the encoders that didn't complete by name (below). Costs a label string a pass and Metal's per-encoder status; off until its frame time is measured on an M5 Max. `MULLION_D3D12_GPU_ERRORS` and `MULLION_TRACE_GPU=heavy` imply it. The bridge reads it too, for the status | No status asked for and no labels but upstream's: `ClearPass`, `ResolvePass`, and the profile's and the heavy pass trace's |
 
 A test hook, not a switch, and only in a build with the tests (`-Denable_tests=true`): `MULLION_TEST_GPU_ERROR=<code>`
@@ -59,6 +60,8 @@ removed with `DXGI_ERROR_DEVICE_HUNG`. A release build doesn't have it.
 | `MULLION-GPU-HUNG at= queue= cmdbuf= waitedMs= status=name(n) encoders=r/c/b present= flight=` | Always, once for a command buffer the queue has waited on for 10 s (2 s, or `MULLION_TRACE_GPU_HANG_MS`, with `MULLION_TRACE_GPU`), after the flight dump. Mullion goes on waiting and the device stays. Replaces `command buffer <n> of queue <pointer> has not completed for …` | `d3d12.log`, at `warn` | The same, on a freeze |
 | `MULLION-FEATURE-LEVEL asked= reaches= tiledResourcesTier= macOS=` | Always, each time `D3D12CreateDevice` refuses the feature level asked for. Replaces `D3D12CreateDevice: feature level <n> is not supported` | `d3d12.log`, at `warn` | The same, when the game won't start |
 | `mullion: flight record of <reason> in <executable>.flight` | Each flight dump. The file's name only: the folder is `MULLION_DIAG_PATH`, or `~/Library/Logs/Mullion` | The process's stderr (`wine.log`): the bridge writes it | Me: which dump to open |
+| `DIAG MEM frame= allocatedMiB= footprintMiB= footprintPeakMiB= budgetMiB= usageMiB= workingSetMiB= \| system: swapMiB= compressedMiB= freeMiB= pageouts= swapouts= \| heaps=n/MiB \| at=` | With `MULLION_MEMSTATS` on, at the first Present after each sample of the bridge's memory sampler; none while nothing presents | `d3d12.log` (`wine.log`), at `warn` | The app's session report, which reads d9mt's line of that name (`frame`, `allocatedMiB`); me, when a session degrades |
+| `MULLION-MEMORY-PRESSURE at= swapMiB= footprintMiB= ramMiB=` | Always, once per process, at the first Present after the first sample in which the Mac swapped out while the process's footprint was over half its RAM | The same, at `warn` | Me, on "it got slow after an hour" from an 8 or 16 GB Mac |
 
 ### The session header
 
@@ -303,6 +306,44 @@ placement sparse resources: macOS 26.4. On an older `macOS` this line is why the
 
 None of the three holds a pointer or a host path. The flight file's name keeps `MULLION-GPU-ERROR`'s text rules, cut to
 40 bytes, a space as `_`.
+
+### The memory lines
+
+Memory in the main log, from the samples of the bridge's memory sampler, written at the first Present after each,
+from the thread that presents. [`tests/swtor/fixtures/session.log`](../../tests/swtor/fixtures/session.log) has twelve
+`DIAG MEM` lines, one each 5 s of its session; `host_memory` fails when the formatter stops writing them, and the app's
+report takes the session's memory peak and its frame count from them when the log has no `STATS`.
+
+| Field | What it is |
+|---|---|
+| `frame` | The process's Presents so far, as `MULLION-GPU-ERROR`'s `frame` |
+| `allocatedMiB` | Metal's `currentAllocatedSize` at the line |
+| `footprintMiB`, `footprintPeakMiB` | The process's memory footprint at the sample, and its peak (`task_info(TASK_VM_INFO)`: `phys_footprint`, `ledger_phys_footprint_peak`). The whole Wine process: the game, Wine and Mullion |
+| `budgetMiB`, `usageMiB` | What `QueryVideoMemoryInfo` tells the game for local memory at the line: its budget (Metal's recommended working set, or less with `dxgi.maxDeviceMemory`) and usage (Metal's allocation) |
+| `workingSetMiB` | Metal's `recommendedMaxWorkingSetSize` |
+| `swapMiB` | The system's swap in use (`vm.swapusage`) |
+| `compressedMiB`, `freeMiB` | The system's compressed and free memory (`host_statistics64`) |
+| `pageouts`, `swapouts` | The system's pageouts and swapouts since the sample before; 0 at the first |
+| `heaps` | The game's `ID3D12Heap`s alive at the line, and their MiB. Committed resources aren't in it |
+| `at` | The local time of the line, `HH:MM:SS.mmm` |
+
+`frame` and `allocatedMiB` are the report's names and are never renamed. Without per-category accounting (d9mt's
+`texRT`, `vbibGpu`, ...): Mullion keeps none.
+
+`MULLION-MEMORY-PRESSURE`: the first sample in which the system swapped out since the sample before while the
+process's footprint was over half the Mac's RAM (`hw.memsize`). `swapMiB` and `footprintMiB` as above, `ramMiB` the
+RAM. Once a process, with `MULLION_MEMSTATS` on or off.
+
+The sampler is one thread for the process, `mullion-memory`, started at the first Present. It also writes the trace's
+`[memory] sampler:` sentence every 5 s with `MULLION_TRACE_MEMORY`, as before, so two readers share one thread. Each wake
+reads `task_info` once, `host_statistics64` once and `vm.swapusage` once, and writes the sample into a struct of
+`d3d12core.dll`'s (bridge call 217, `WMTMemorySampler`). With both switches off it wakes every 30 s. Each Present pays
+two loads and a compare to find no new sample; one that finds one formats the lines and makes one log call, and with
+`MULLION_MEMSTATS` on asks Metal for its allocation and working set and `QueryVideoMemoryInfo` for the budget. With it
+on, each `ID3D12Heap` made or released adds two relaxed atomics.
+
+Lines come at Presents: a process that stops presenting writes none until it presents again, and gets the pressure line
+then.
 
 ## CI
 

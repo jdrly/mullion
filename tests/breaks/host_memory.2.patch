@@ -1,0 +1,12 @@
+# the pressure rule at half the RAM and over, not over half only
+--- a/src/mullion/mullion_memory.hpp
++++ b/src/mullion/mullion_memory.hpp
+@@ -88,7 +88,7 @@
+ // pressure: the system swapped out since the sample before, while the process's footprint is over half the Mac's RAM
+ inline bool
+ Pressure(const Numbers &n) {
+-  return n.swapouts > 0 && n.physical_memory && n.footprint > n.physical_memory / 2;
++  return n.swapouts > 0 && n.physical_memory && n.footprint >= n.physical_memory / 2;
+ }
+ 
+ inline std::string

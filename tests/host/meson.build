@@ -42,6 +42,9 @@ test('host_hitch', executable('host_hitch', 'hitch.cpp', override_options : ['cp
 test('host_device_lines', executable('host_device_lines', 'device_lines.cpp', override_options : ['cpp_std=c++20'],
                                      native : true),
      args : files('../swtor/fixtures/session.log'))
+# the DIAG MEM and MULLION-MEMORY-PRESSURE lines, MULLION_MEMSTATS's grammar, and the fixture's DIAG MEM lines
+test('host_memory', executable('host_memory', 'memory.cpp', override_options : ['cpp_std=c++20'], native : true),
+     args : files('../swtor/fixtures/session.log'))
 test('host_rc_self_move', executable('host_rc_self_move', 'rc.cpp',
                                     override_options : ['cpp_std=c++20'], native : true))
 test('host_denorm', executable('host_denorm', 'denorm.cpp', include_directories : include_directories('metal'),

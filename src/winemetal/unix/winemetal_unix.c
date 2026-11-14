@@ -5151,41 +5151,138 @@ trace_flusher(void *unused) {
   return NULL;
 }
 
-// `memory`: every 5 s, the process's memory footprint and the system's swap and paging, as a game that runs out of
-// memory or starts paging shows it
+// the memory sampler: one thread for the process, for two readers. The trace's `memory` category gets a sentence every
+// 5 s: the process's memory footprint and the system's swap and paging, as a game that runs out of memory or starts
+// paging shows it. WMTMemorySampler gets the same numbers in its struct at its own period (src/mullion/mullion_memory.hpp).
+// Each wake reads task_info once, host_statistics64 once and vm.swapusage once
+static pthread_mutex_t sampler_lock = PTHREAD_MUTEX_INITIALIZER;
+static pthread_cond_t sampler_changed = PTHREAD_COND_INITIALIZER;
+static bool sampler_started, sampler_trace;
+static struct WMTMemorySample *sampler_out;
+static uint32_t sampler_seconds;
+
+// paging since the reader's last sample; 0 at its first
+struct sampler_paging {
+  uint64_t pageouts, swapouts;
+};
+
+static void
+sampler_paging_take(struct sampler_paging *last, const vm_statistics64_data_t *vm, uint64_t *pageouts,
+                    uint64_t *swapouts) {
+  *pageouts = last->pageouts ? vm->pageouts - last->pageouts : 0;
+  *swapouts = last->swapouts ? vm->swapouts - last->swapouts : 0;
+  last->pageouts = vm->pageouts;
+  last->swapouts = vm->swapouts;
+}
+
+static uint64_t
+sampler_now_ms(void) {
+  return clock_gettime_nsec_np(CLOCK_UPTIME_RAW) / 1000000;
+}
+
 static void *
-trace_memory_sampler(void *unused) {
+memory_sampler(void *unused) {
   (void)unused;
-  pthread_setname_np("mullion-trace-memory");
-  uint64_t pageouts = 0, swapouts = 0;
+  pthread_setname_np("mullion-memory");
+  uint64_t physical_memory = 0;
+  size_t size = sizeof(physical_memory);
+  if (sysctlbyname("hw.memsize", &physical_memory, &size, NULL, 0))
+    physical_memory = 0;
+  struct sampler_paging trace_paging = {0}, out_paging = {0};
+  uint64_t trace_due = 0, out_due = 0;
+  pthread_mutex_lock(&sampler_lock);
   for (;;) {
-    task_vm_info_data_t task;
-    mach_msg_type_number_t count = TASK_VM_INFO_COUNT;
-    vm_statistics64_data_t vm;
-    mach_msg_type_number_t vm_count = HOST_VM_INFO64_COUNT;
-    struct xsw_usage swap = {0};
-    size_t swap_size = sizeof(swap);
-    if (task_info(mach_task_self(), TASK_VM_INFO, (task_info_t)&task, &count) == KERN_SUCCESS &&
-        host_statistics64(mach_host_self(), HOST_VM_INFO64, (host_info64_t)&vm, &vm_count) == KERN_SUCCESS) {
-      sysctlbyname("vm.swapusage", &swap, &swap_size, NULL, 0);
-      uint64_t page = vm_kernel_page_size;
-      char line[256];
-      int length = snprintf(line, sizeof(line),
-                            "[memory] sampler: process footprint %llu MB (peak %llu MB); system: swap used %llu MB, "
-                            "compressed %llu MB, free %llu MB, %llu pageouts and %llu swapouts in the last 5 s",
-                            task.phys_footprint >> 20, task.ledger_phys_footprint_peak >> 20, swap.xsu_used >> 20,
-                            (vm.compressor_page_count * page) >> 20, (vm.free_count * page) >> 20,
-                            pageouts ? vm.pageouts - pageouts : 0, swapouts ? vm.swapouts - swapouts : 0);
-      pageouts = vm.pageouts;
-      swapouts = vm.swapouts;
-      pthread_mutex_lock(&trace_lock);
-      trace_lines(line, length);
-      fflush(trace_file);
-      pthread_mutex_unlock(&trace_lock);
+    uint64_t now = sampler_now_ms();
+    bool trace = sampler_trace && now >= trace_due;
+    struct WMTMemorySample *out = sampler_out && now >= out_due ? sampler_out : NULL;
+    if (trace || out) {
+      // the writes to the trace log and the struct happen unlocked: _WMTTraceWrite takes this lock under trace_lock
+      pthread_mutex_unlock(&sampler_lock);
+      task_vm_info_data_t task;
+      mach_msg_type_number_t count = TASK_VM_INFO_COUNT;
+      vm_statistics64_data_t vm;
+      mach_msg_type_number_t vm_count = HOST_VM_INFO64_COUNT;
+      struct xsw_usage swap = {0};
+      size_t swap_size = sizeof(swap);
+      if (task_info(mach_task_self(), TASK_VM_INFO, (task_info_t)&task, &count) == KERN_SUCCESS &&
+          host_statistics64(mach_host_self(), HOST_VM_INFO64, (host_info64_t)&vm, &vm_count) == KERN_SUCCESS) {
+        sysctlbyname("vm.swapusage", &swap, &swap_size, NULL, 0);
+        uint64_t page = vm_kernel_page_size, pageouts, swapouts;
+        if (trace) {
+          sampler_paging_take(&trace_paging, &vm, &pageouts, &swapouts);
+          char line[256];
+          int length = snprintf(line, sizeof(line),
+                                "[memory] sampler: process footprint %llu MB (peak %llu MB); system: swap used %llu MB, "
+                                "compressed %llu MB, free %llu MB, %llu pageouts and %llu swapouts in the last 5 s",
+                                task.phys_footprint >> 20, task.ledger_phys_footprint_peak >> 20, swap.xsu_used >> 20,
+                                (vm.compressor_page_count * page) >> 20, (vm.free_count * page) >> 20, pageouts,
+                                swapouts);
+          pthread_mutex_lock(&trace_lock);
+          trace_lines(line, length);
+          fflush(trace_file);
+          pthread_mutex_unlock(&trace_lock);
+        }
+        if (out) {
+          sampler_paging_take(&out_paging, &vm, &pageouts, &swapouts);
+          uint32_t sequence = __atomic_load_n(&out->sequence, __ATOMIC_RELAXED);
+          __atomic_store_n(&out->sequence, sequence + 1, __ATOMIC_RELAXED);
+          __atomic_thread_fence(__ATOMIC_RELEASE);
+          out->footprint = task.phys_footprint;
+          out->footprint_peak = task.ledger_phys_footprint_peak;
+          out->swap_used = swap.xsu_used;
+          out->compressed = vm.compressor_page_count * page;
+          out->free_memory = vm.free_count * page;
+          out->pageouts = pageouts;
+          out->swapouts = swapouts;
+          out->physical_memory = physical_memory;
+          __atomic_store_n(&out->sequence, sequence + 2, __ATOMIC_RELEASE);
+        }
+      }
+      pthread_mutex_lock(&sampler_lock);
+      if (trace)
+        trace_due = now + 5000;
+      if (out)
+        out_due = now + (uint64_t)sampler_seconds * 1000;
+      continue;
     }
-    sleep(5);
+    // until the next reader is due, or a reader is added (which is due at once)
+    uint64_t due = UINT64_MAX;
+    if (sampler_trace)
+      due = trace_due;
+    if (sampler_out && out_due < due)
+      due = out_due;
+    uint64_t wait = due - now;
+    struct timespec relative = {.tv_sec = (time_t)(wait / 1000), .tv_nsec = (long)(wait % 1000) * 1000000};
+    pthread_cond_timedwait_relative_np(&sampler_changed, &sampler_lock, &relative);
   }
   return NULL;
+}
+
+// a reader for the sampler: the trace's, or WMTMemorySampler's struct. The thread starts with the first
+static void
+memory_sampler_add(bool trace, struct WMTMemorySample *out, uint32_t seconds) {
+  pthread_mutex_lock(&sampler_lock);
+  if (trace)
+    sampler_trace = true;
+  if (out && !sampler_out) {
+    sampler_seconds = seconds ? seconds : 1;
+    sampler_out = out;
+  }
+  if (!sampler_started) {
+    pthread_t sampler;
+    sampler_started = !pthread_create(&sampler, NULL, memory_sampler, NULL);
+    if (sampler_started)
+      pthread_detach(sampler);
+  }
+  pthread_cond_signal(&sampler_changed);
+  pthread_mutex_unlock(&sampler_lock);
+}
+
+static NTSTATUS
+_WMTMemorySampler(void *obj) {
+  struct unixcall_memory_sampler *params = obj;
+  memory_sampler_add(false, params->sample.ptr, (uint32_t)params->seconds);
+  return STATUS_SUCCESS;
 }
 
 static NTSTATUS
@@ -5216,11 +5313,8 @@ _WMTTraceWrite(void *obj) {
         pthread_t flusher;
         if (!pthread_create(&flusher, NULL, trace_flusher, NULL))
           pthread_detach(flusher);
-        if (params->memory_samples) {
-          pthread_t sampler;
-          if (!pthread_create(&sampler, NULL, trace_memory_sampler, NULL))
-            pthread_detach(sampler);
-        }
+        if (params->memory_samples)
+          memory_sampler_add(true, NULL, 0);
       }
     }
     if (params->encoder_errors)
@@ -7548,6 +7642,7 @@ const void *__wine_unix_call_funcs[] = {
     &_WMTGetSessionFacts,
     &_WMTGetGPUError,
     &_WMTCachePrepare,
+    &_WMTMemorySampler,
 };
 
 #ifndef MULLION_NATIVE
@@ -7768,6 +7863,7 @@ const void *__wine_unix_call_wow64_funcs[] = {
     &_WMTGetSessionFacts,
     &_WMTGetGPUError,
     &_WMTCachePrepare,
+    &_WMTMemorySampler,
 };
 _Static_assert(sizeof(__wine_unix_call_wow64_funcs) / sizeof(__wine_unix_call_wow64_funcs[0]) == WMTUnixCallCount,
                "32-bit bridge call count");

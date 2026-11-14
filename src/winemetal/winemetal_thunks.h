@@ -603,6 +603,11 @@ struct unixcall_cache_prepare {
   struct WMTMemoryPointer prepared;
 };
 
+struct unixcall_memory_sampler {
+  struct WMTMemoryPointer sample;
+  uint64_t seconds;
+};
+
 struct unixcall_wmtdiag_write {
   struct WMTConstMemoryPointer directory, lines;
   uint64_t length;
