@@ -717,6 +717,18 @@ past a buffer and 4 texels past a texture. Both run on the rented M1 under Metal
   `.7` take the fallback away from the view or from one load path each, `.8` clamps no index, and `.9` to `.14` leave
   the constant buffer's, the SRV's, the UAV's, the texture's, the sampler's or the counter's out. Each fails at that
   view, at the trace or at that kind.
+
+  #7's two fixes in the converter: `host_converter_fixes` has the native `airconv` convert a pixel shader that
+  declares `v1` as a system value the converter doesn't handle, once by `dcl_input_ps_siv` (a vertex id) and once by
+  `dcl_input_ps_sgv` (an instance id), and copies it to its render target. The declaration is ignored, so each has to
+  convert to a `shader_main` without arguments. The same shader with a front face, which the converter handles, has
+  to convert to one argument, so the check can see one. A DXIL compute shader with one typed SRV, LLVM assembly in the
+  test that the converter's own LLVM makes bitcode, has to convert with floats and be refused with doubles, with
+  exactly `unsupported: a typed resource of doubles`. It, `host_guard_static_ranges` and `host_check_root_ranges` make
+  their shaders with [`tests/host/airconv_host.hpp`](../../tests/host/airconv_host.hpp). Its breaks,
+  `tests/breaks/host_converter_fixes{,.2}.patch`, put back the `dcl_input_ps_siv` and `dcl_input_ps_sgv` cases that
+  copy `v1` from an argument never chosen, of a function that has none, and `.3` takes the refusal out, so the shader
+  converts. Each fails at that shader.
 - **Publish** (`ubuntu-24.04`, after the other jobs): packs the artifact into `mullion-swtor-<commit>.tar.xz` and
   checks that it unpacks to the same files, hash for hash. Only for a push to `swtor-on-mac` does it upload the archive
   (§ Releases). It is the only job with `contents: write`.
