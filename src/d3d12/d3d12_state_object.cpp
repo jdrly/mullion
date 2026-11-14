@@ -340,9 +340,8 @@ class MTLD3D12StateObjectImpl : public MTLD3D12DeviceChild<MTLD3D12StateObject, 
       shaders.insert({ExportName(name), {library, name, info}});
     Export(shaders, {desc.pExports, desc.NumExports}, shaders_);
     libraries_.push_back(library);
-    if (device_->NamesPasses())
-      this->name +=
-          ShaderDigest(desc.DXILLibrary.pShaderBytecode, desc.DXILLibrary.BytecodeLength).string() + " ";
+    this->name +=
+        ShaderDigest(desc.DXILLibrary.pShaderBytecode, desc.DXILLibrary.BytecodeLength).string() + " ";
     for (auto &subobject : ReadSubobjects(desc.DXILLibrary)) {
       if (!desc.NumExports)
         subobjects.push_back({library.get(), subobject});
@@ -436,14 +435,13 @@ public:
   // identifiers
   HRESULT
   Initialize(const D3D12_STATE_OBJECT_DESC *pDesc, MTLD3D12StateObjectImpl *pParent) {
-    auto start = device_->NamesPasses() ? std::chrono::steady_clock::now() : std::chrono::steady_clock::time_point();
+    auto start = std::chrono::steady_clock::now();
     type_ = pDesc->Type;
     libraries_.clear();
     if (pParent) {
       if (type_ != D3D12_STATE_OBJECT_TYPE_RAYTRACING_PIPELINE || pParent->type_ != type_)
         return FAIL(E_INVALIDARG);
-      if (device_->NamesPasses())
-        name = pParent->name;
+      name = pParent->name;
       shaders_ = pParent->shaders_;
       exports_ = pParent->exports_;
       root_signatures_ = pParent->root_signatures_;
@@ -525,8 +523,7 @@ public:
       case D3D12_STATE_SUBOBJECT_TYPE_EXISTING_COLLECTION: {
         auto &desc = *(const D3D12_EXISTING_COLLECTION_DESC *)subobject.pDesc;
         auto collection = static_cast<MTLD3D12StateObjectImpl *>(desc.pExistingCollection);
-        if (device_->NamesPasses())
-          name += collection->name;
+        name += collection->name;
         Export(collection->shaders_, {desc.pExports, desc.NumExports}, shaders_);
         Export(collection->exports_, {desc.pExports, desc.NumExports}, exports_);
         if (!collection->deferred_) {
@@ -879,7 +876,7 @@ public:
       if (pParent)
         stack_size_ = pParent->stack_size_;
     }
-    if (device_->NamesPasses() && type_ == D3D12_STATE_OBJECT_TYPE_RAYTRACING_PIPELINE)
+    if (type_ == D3D12_STATE_OBJECT_TYPE_RAYTRACING_PIPELINE)
       device_->PipelineMade(name, "ray", start);
     return S_OK;
   }
@@ -949,7 +946,7 @@ public:
     uint32_t depth = std::max<uint64_t>(std::min(stack_size_, max_call_depth_), 1);
     auto &made = pipelines_[depth];
     if (!made.pipeline) {
-      auto start = device_->NamesPasses() ? std::chrono::steady_clock::now() : std::chrono::steady_clock::time_point();
+      auto start = std::chrono::steady_clock::now();
       auto library = device_->GetLib().getLibrary();
       // the table has each function at its slot; the pipeline links them all
       std::vector<obj_handle_t> slots(SM50_RAY_FUNCTION_FIRST_SHADER), linked;
@@ -1015,8 +1012,7 @@ public:
       }
       if (!made.pipeline)
         return false;
-      if (device_->NamesPasses())
-        device_->PipelineMade(name, "ray", start);
+      device_->PipelineMade(name, "ray", start);
     }
     Pipeline = made.pipeline;
     Table = made.table;

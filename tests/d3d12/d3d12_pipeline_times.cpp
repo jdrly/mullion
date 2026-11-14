@@ -1,7 +1,7 @@
-// contract: with the GPU error diagnostic set, each successful pipeline creation or deferred variant that ends
-// after the device's first non-test Present reaches a queue reports its shader name, kind and elapsed milliseconds
-// immediately; each queue release reports the device's count, sum and maximum. no Present means zero; unset means
-// no reports.
+// contract: each successful pipeline creation or deferred variant that ends after the device's first non-test Present
+// reaches a queue reports its shader name, kind and elapsed milliseconds immediately, as a MULLION-PIPELINE line with
+// late=yes, whether the GPU error diagnostic is set or not; with it set, each queue release reports the device's count,
+// sum and maximum (MULLION-PIPELINE-TOTALS). no Present means zero; unset means no totals.
 // "The only place in the Pipeline where adjacency information is visible to the application is in the Geometry
 // Shader." (D3D11.3 functional specification, 8.15). without a geometry shader, adjacent vertices do not form the
 // rasterized triangle. the even vertices below cover the target; the odd ones lie outside it. this exercises
@@ -42,7 +42,30 @@ struct Parameter { uint value; };
 [shader("callable")] void callable(inout Parameter parameter) { parameter.value = VALUE; }
 )hlsl";
 
-static const std::string made_prefix = "D3D12 pipeline made: ", totals_prefix = "D3D12 pipeline totals: ";
+static const std::string made_prefix = "MULLION-PIPELINE at=", totals_prefix = "MULLION-PIPELINE-TOTALS ";
+
+// a field's value in a line of key=value fields
+static std::string
+field(const std::string &line, const std::string &key) {
+  auto at = line.find(" " + key + "=");
+  if (at == std::string::npos)
+    return "";
+  at += key.size() + 2;
+  return line.substr(at, line.find(' ', at) - at);
+}
+
+// a pipeline line of a late pipeline: "<kind>; <SHA-1> <SHA-1> ", as the child writes its expected names
+static bool
+late_pipeline(const std::string &line, std::string &reported) {
+  if (line.find(made_prefix) == std::string::npos || field(line, "late") != "yes")
+    return false;
+  auto name = field(line, "name");
+  for (auto &c : name)
+    if (c == ',')
+      c = ' ';
+  reported = field(line, "kind") + "; " + name + (name.empty() ? "" : " ");
+  return true;
+}
 
 static std::string
 logs(const std::filesystem::path &directory) {
@@ -105,18 +128,17 @@ child(int argc, char **argv) {
       return 1;
     }
   }
-  char directory[MAX_PATH], setting[MAX_PATH];
+  char directory[MAX_PATH];
   GetEnvironmentVariableA("MULLION_LOG_PATH", directory, sizeof(directory));
-  const bool enabled = GetEnvironmentVariableA("MULLION_D3D12_GPU_ERRORS", setting, sizeof(setting)) != 0;
   const bool presents = strcmp(argv[3], "never") != 0;
   std::multiset<std::string> expected;
   auto checkpoint = [&] {
-    auto text = logs(directory);
+    std::istringstream lines(logs(directory));
     size_t count = 0;
-    for (size_t at = 0; (at = text.find(made_prefix, at)) != std::string::npos; at += made_prefix.size())
-      count++;
-    expect(count == (enabled ? expected.size() : 0), "%zu immediate reports, want %zu", count,
-        enabled ? expected.size() : 0);
+    std::string reported;
+    for (std::string line; std::getline(lines, line);)
+      count += late_pipeline(line, reported);
+    expect(count == expected.size(), "%zu immediate reports, want %zu", count, expected.size());
   };
   ComPtr<ID3D12Device5> device;
   CHECK(D3D12CreateDevice(nullptr, D3D_FEATURE_LEVEL_11_0, IID_PPV_ARGS(&device)));
@@ -425,35 +447,29 @@ main(int argc, char **argv) {
       expect(bool(manifest), "child wrote expected shader names");
       std::string line;
       while (std::getline(manifest, line))
-        if (setting)
-          expected.insert(line);
+        expected.insert(line);
       manifest.close();
       auto text = logs(directory);
       std::istringstream lines(text);
       double sum = 0, longest = 0;
       UINT totals = 0;
       while (std::getline(lines, line)) {
-        if (auto at = line.find(made_prefix); at != std::string::npos) {
-          auto end = line.rfind("; ");
-          std::istringstream fields(line.substr(end + 2));
-          double ms = -1;
-          std::string unit, extra;
-          fields >> ms >> unit;
-          expect(fields && std::isfinite(ms) && ms >= 0 && unit == "ms" && !(fields >> extra),
-              "bad pipeline time: %s", line.c_str());
-          reported.insert(line.substr(at + made_prefix.size(), end - at - made_prefix.size()));
+        if (std::string name; late_pipeline(line, name)) {
+          char *end = nullptr;
+          auto text = field(line, "ms");
+          double ms = std::strtod(text.c_str(), &end);
+          expect(!text.empty() && *end == 0 && std::isfinite(ms) && ms >= 0, "bad pipeline time: %s", line.c_str());
+          reported.insert(name);
           sum += ms;
           longest = std::max(longest, ms);
         }
-        if (auto at = line.find(totals_prefix); at != std::string::npos) {
-          std::istringstream fields(line.substr(at + totals_prefix.size()));
-          UINT64 count = 0;
-          double total = -1, most = -1;
-          std::string after, first, present, ms, total_word, max_ms, longest_word, extra;
-          fields >> count >> after >> first >> present >> total >> ms >> total_word >> most >> max_ms >> longest_word;
-          expect(fields && after == "after" && first == "first" && present == "Present;" && ms == "ms" &&
-                  total_word == "total;" && max_ms == "ms" && longest_word == "longest" && !(fields >> extra) &&
-                  count == expected.size() && count == reported.size() && total == sum && most == longest,
+        if (line.find(totals_prefix) != std::string::npos) {
+          // each a tenth of a ms: the sum of the rounded times is within half a tenth of each of the total
+          auto count = std::strtoull(field(line, "late").c_str(), nullptr, 10);
+          double total = std::strtod(field(line, "ms").c_str(), nullptr);
+          double most = std::strtod(field(line, "longestMs").c_str(), nullptr);
+          expect(count == expected.size() && count == reported.size() &&
+                     std::abs(total - sum) <= 0.05 * double(count + 1) && most == longest,
               "bad device totals: %s", line.c_str());
           totals++;
         }

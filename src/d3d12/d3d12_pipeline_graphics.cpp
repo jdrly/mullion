@@ -643,9 +643,12 @@ CompileFunction(
     if (auto function = cached())
       return function;
   }
-  // MULLION_STATS: a lookup the cache missed, and a shader converted
+  // MULLION_STATS: a lookup the cache missed, and a shader converted: its time, and the presenting thread's in the
+  // HITCH line when it is not in CreatePipelineState already (a variant's, at draw time)
   if (stats::on && enabled)
     stats::counters.cache_misses.fetch_add(1, std::memory_order_relaxed);
+  hitch::Scope converting(hitch::ShaderConvert);
+  hitch::Timed timed(hitch::counters.shaders, hitch::counters.shader_ns);
   SM50ShaderBitcode bitcode;
   SM50Error sm50_error;
   if (compile(arguments, name, &bitcode, &sm50_error)) {
@@ -1105,7 +1108,7 @@ public:
     std::lock_guard<mullion::mutex> lock(topology_mutex_);
     auto &variant = topology_variants_[topology * 2 + counting];
     if (!variant && topology_inputs_) {
-      auto start = device_->NamesPasses() ? std::chrono::steady_clock::now() : std::chrono::steady_clock::time_point();
+      auto start = std::chrono::steady_clock::now();
       auto &in = *topology_inputs_;
       SM50Shader shader_vs;
       MTL_SHADER_REFLECTION reflection;
@@ -1117,8 +1120,8 @@ public:
       // patches only stream out: nothing rasterizes them without a tessellator
       if (SUCCEEDED(InitializeShader(device_, {in.vs.data(), in.vs.size()}, &shader_vs, &reflection)))
         variant = GeometryVariant(topology_inputs_, shader_vs, {}, {}, strip, counting, primitive, !patch, hr);
-      if (variant && device_->NamesPasses())
-        device_->PipelineMade(name, "graphics", start);
+      if (variant)
+        device_->PipelineMade(name, "graphics", start, "topology");
     }
     return variant;
   }
@@ -1414,7 +1417,7 @@ public:
           rasterizer.FillMode != D3D12_FILL_MODE_SOLID)
         return E_INVALIDARG;
     }
-    auto start = device_->NamesPasses() ? std::chrono::steady_clock::now() : std::chrono::steady_clock::time_point();
+    auto start = std::chrono::steady_clock::now();
     stream_output = pDesc->StreamOutput.NumEntries;
     mesh_shader = MS.pShaderBytecode;
     pixel_shader = pDesc->PS.pShaderBytecode;
@@ -2005,8 +2008,7 @@ public:
     if (quad_lines)
       RasterizeAsLines(*this);
 
-    if (device_->NamesPasses())
-      device_->PipelineMade(name, "graphics", start);
+    device_->PipelineMade(name, mesh_shader ? "mesh" : "graphics", start);
     return S_OK;
   }
 
@@ -2068,6 +2070,7 @@ public:
     if (found != descriptor.variants.end())
       return found->second;
     WMT::Reference<WMT::Error> error;
+    auto start = std::chrono::steady_clock::now();
     // Metal's pipeline formats must match its pass, including the slots with no texture (Metal Programming Guide,
     // Graphics Rendering: Render Command Encoder, Creating and Configuring a Render Pipeline Descriptor)
     auto pipeline = std::visit(
@@ -2109,6 +2112,7 @@ public:
       ERR("Failed to create attachment PSO of shaders ", name, ": ", error.description().getUTF8String());
       return {};
     }
+    device_->PipelineMade(name, mesh_shader ? "mesh" : "graphics", start, "targets");
     return descriptor.variants.emplace(key, std::move(pipeline)).first->second;
   }
 
@@ -2248,8 +2252,16 @@ Lean(MTLD3D12PipelineState &pso, MTLD3D12Device *device, const PipelineStateStre
 ID3D12PipelineState *
 MTLD3D12PipelineState::Fuller(MTLD3D12Device *Device) {
   std::lock_guard<mullion::mutex> lock(shader_mutex);
-  if (!fuller && FAILED(lean->Create(Device, __uuidof(ID3D12PipelineState), (void **)&fuller)))
-    ERR("pipeline ", name, ": the variant that emulates its samplers failed");
+  // its MULLION-PIPELINE line names the variant
+  struct Variant {
+    Variant() { made_variant = "sampler-emulation"; }
+    ~Variant() { made_variant = nullptr; }
+  };
+  if (!fuller) {
+    Variant variant;
+    if (FAILED(lean->Create(Device, __uuidof(ID3D12PipelineState), (void **)&fuller)))
+      ERR("pipeline ", name, ": the variant that emulates its samplers failed");
+  }
   return fuller.ptr();
 }
 

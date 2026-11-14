@@ -18,6 +18,7 @@
 
 #include "d3d12_acceleration_structure.hpp"
 #include "mullion_diag.hpp"
+#include "mullion_gpu_error.hpp"
 #include "airconv_ray.h"
 #include "d3d12_device.hpp"
 #include "d3d12_device_child.hpp"
@@ -764,12 +765,14 @@ public:
   HRESULT STDMETHODCALLTYPE
   CreateGraphicsPipelineState(const D3D12_GRAPHICS_PIPELINE_STATE_DESC *pDesc, REFIID riid, void **ppPipelineState) {
     InitReturnPtr(ppPipelineState);
+    hitch::Scope creating(hitch::ShaderConvert);
     return mullion::CreateGraphicsPipelineState(this, pDesc, riid, ppPipelineState);
   };
 
   HRESULT STDMETHODCALLTYPE
   CreateComputePipelineState(const D3D12_COMPUTE_PIPELINE_STATE_DESC *pDesc, REFIID riid, void **ppPipelineState) {
     InitReturnPtr(ppPipelineState);
+    hitch::Scope creating(hitch::ShaderConvert);
     return mullion::CreateComputePipelineState(this, pDesc, riid, ppPipelineState);
   };
 
@@ -2013,8 +2016,10 @@ public:
         if (left->fetch_sub(1) == 1)
           done();
       });
-    if (!hEvent)
+    if (!hEvent) {
+      hitch::Scope waiting(hitch::FenceWait);
       set->wait(false);
+    }
     return S_OK;
   };
 
@@ -2026,6 +2031,7 @@ public:
   HRESULT STDMETHODCALLTYPE
   CreatePipelineState(const D3D12_PIPELINE_STATE_STREAM_DESC *pDesc, REFIID riid, void **ppPipelineState) {
     InitReturnPtr(ppPipelineState);
+    hitch::Scope creating(hitch::ShaderConvert);
     PipelineStateStream desc;
     if (HRESULT hr = desc.Parse(pDesc); FAILED(hr))
       return hr;
@@ -2596,7 +2602,9 @@ public:
   }
 
   void
-  PipelineMade(const std::string &name, const char *kind, std::chrono::steady_clock::time_point start) {
+  PipelineMade(
+      const std::string &name, const char *kind, std::chrono::steady_clock::time_point start, const char *variant
+  ) {
     auto end = std::chrono::steady_clock::now(), present = first_present.load();
     double ms = std::chrono::duration<double, std::milli>(end - start).count();
     // the profile's pipeline time (tools/mullion-diag), on the thread that made it
@@ -2609,22 +2617,31 @@ public:
     // stutter), heavy every one
     if (late || ms >= 20 || trace::Heavy(trace::Shader))
       TRACE_IN(Shader, kind, " pipeline ", name, ": ", ms, " ms", late ? ", after the first present" : "");
-    if (!late)
+    if (!late && ms < hitch::kSlowPipelineMs)
       return;
-    std::lock_guard<mullion::mutex> lock(pass_names_lock_);
-    late_pipelines_++;
-    pipeline_ms_ += ms;
-    longest_pipeline_ms_ = std::max(longest_pipeline_ms_, ms);
-    Logger::info(str::format("D3D12 pipeline made: ", kind, "; ", name, "; ",
-        std::setprecision(std::numeric_limits<double>::max_digits10), ms, " ms"));
+    if (late) {
+      std::lock_guard<mullion::mutex> lock(pass_names_lock_);
+      late_pipelines_++;
+      pipeline_ms_ += ms;
+      longest_pipeline_ms_ = std::max(longest_pipeline_ms_, ms);
+    }
+    // the process's 30 lines in 10 s, the clock read under the lock so that the limit's window only moves forward
+    static mullion::mutex lines_lock;
+    static gpu_error::Limiter lines;
+    std::lock_guard<mullion::mutex> lock(lines_lock);
+    uint64_t dropped = 0;
+    if (!lines.Allow(hitch::SteadyNs(), dropped))
+      return;
+    SYSTEMTIME local;
+    GetLocalTime(&local);
+    Logger::info(hitch::PipelineLine({local.wHour, local.wMinute, local.wSecond, local.wMilliseconds}, kind, ms, late,
+                                     variant ? variant : made_variant ? made_variant : "base", name, dropped));
   }
 
   void
   ReportPipelineTotals() {
     std::lock_guard<mullion::mutex> lock(pass_names_lock_);
-    Logger::info(str::format("D3D12 pipeline totals: ", late_pipelines_, " after first Present; ",
-        std::setprecision(std::numeric_limits<double>::max_digits10), pipeline_ms_, " ms total; ",
-        longest_pipeline_ms_, " ms longest"));
+    Logger::info(hitch::PipelineTotalsLine(late_pipelines_, pipeline_ms_, longest_pipeline_ms_));
   }
 
   HRESULT

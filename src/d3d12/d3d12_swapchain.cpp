@@ -36,9 +36,11 @@
 #include "config/config.hpp"
 #include "util_env.hpp"
 #include "util_switch.hpp"
+#include "mullion_hitch.hpp"
 #include "mullion_stats.hpp"
 #include <bit>
 #include <cfloat>
+#include <cstdlib>
 #include <limits>
 
 /**
@@ -120,6 +122,15 @@ public:
 // by default; SWTOR on Mac's DX12 dev build turns it on. Read once: off, a Present pays one load and one branch
 static sw::Switch<bool> kStats{"MULLION_STATS", false, sw::exactlyOne};
 const bool stats::on = kStats();
+
+// MULLION_HITCH_MS: with MULLION_STATS=1, a frame this long or longer has a HITCH line. Whole ms, more than 0; read once
+static unsigned
+PositiveMs(const std::string &raw, const unsigned &fallback) {
+  char *end = nullptr;
+  unsigned long ms = raw.empty() ? 0 : std::strtoul(raw.c_str(), &end, 10);
+  return ms && *end == '\0' && ms <= 60'000 ? unsigned(ms) : fallback;
+}
+static sw::Switch<unsigned> kHitchMs{"MULLION_HITCH_MS", hitch::kDefaultMs, PositiveMs};
 
 // the swap chain whose Presents the line counts: the first to present, until it goes. Two swap chains presenting
 // would otherwise both close windows over the same counters
@@ -298,14 +309,28 @@ public:
     if (stats_owner.load(std::memory_order_relaxed) != this && !stats_owner.compare_exchange_strong(none, this))
       return;
     static stats::Window window;
+    static hitch::Frames frames;
+    static const double hitch_ms = kHitchMs();
     auto now = uint64_t(std::chrono::duration_cast<std::chrono::nanoseconds>(
                             std::chrono::steady_clock::now().time_since_epoch()).count());
-    if (!window.Add(now))
+    auto totals = stats::Read();
+    bool due = window.Add(now);
+    SYSTEMTIME local{};
+    // the frame's lines first: the report counts a HITCH in the second the next STATS line closes
+    if (frames.End(now, hitch::Take(), totals, hitch::Read(), hitch_ms)) {
+      GetLocalTime(&local);
+      // COMPILE at warn in a hitch, as d9mt's
+      if (frames.Hitch())
+        Logger::warn(frames.HitchLine({local.wHour, local.wMinute, local.wSecond, local.wMilliseconds}) +
+                     (frames.Compile() ? "\n" + frames.CompileLine() : ""));
+      else
+        Logger::info(frames.CompileLine());
+    }
+    if (!due)
       return;
-    SYSTEMTIME local;
     GetLocalTime(&local);
     std::string text;
-    for (auto &line : window.Take(now, stats::Read(), device_->GetMTLDevice().currentAllocatedSize(),
+    for (auto &line : window.Take(now, totals, device_->GetMTLDevice().currentAllocatedSize(),
                                   {local.wHour, local.wMinute, local.wSecond, local.wMilliseconds}))
       text += (text.empty() ? "" : "\n") + line;
     // one message: its lines stay together
@@ -915,6 +940,8 @@ public:
       hr = DXGI_STATUS_OCCLUDED;
     if (PresentFlags & DXGI_PRESENT_TEST)
       return hr;
+    // MULLION_STATS: the call's time, to the end of its frame, in the frame's HITCH line
+    hitch::Scope presenting(hitch::Present);
     auto began = diag::profile ? diag::Now() : 0;
     // a window the picture keeps its size in may have another size by now
     if (settings_.Update(desc_, fullscreen_desc_.Windowed, hWnd, *presenter))
@@ -964,6 +991,7 @@ public:
 
     presentation_count_ += 1;
     current_buffer_ = (current_buffer_ + 1) % backbuffers_.size();
+    presenting.End();
     if (stats::on)
       CountPresent();
     if (began) {

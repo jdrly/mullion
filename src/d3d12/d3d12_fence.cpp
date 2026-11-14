@@ -245,7 +245,9 @@ public:
         SetEvent(object.get());
       });
     } else {
+      hitch::Scope waiting(hitch::FenceWait);
       completion->Expect(Value)->wait(false);
+      waiting.End();
       waited();
     }
     return S_OK;

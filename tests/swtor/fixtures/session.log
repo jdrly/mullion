@@ -22,6 +22,8 @@ warn:  STATS t=16 fps=60.0 ms=16.7/16.7/16.7 slow33=0 slow50=0 | cb=3.0 rp=12.0 
 warn:  STATS t=17 fps=60.0 ms=16.7/16.7/16.7 slow33=0 slow50=0 | cb=3.0 rp=12.0 cp=2.0 draws=852 | sh=0 pso=0 wait=0/0.0ms cache=0/0 | allocMiB=2140 | at=20:00:21.003
 warn:  STATS t=18 fps=60.0 ms=16.7/16.7/16.7 slow33=0 slow50=0 | cb=3.0 rp=12.0 cp=2.0 draws=852 | sh=0 pso=0 wait=0/0.0ms cache=0/0 | allocMiB=2160 | at=20:00:22.004
 warn:  STATS t=19 fps=60.0 ms=16.7/16.7/16.7 slow33=0 slow50=0 | cb=3.0 rp=12.0 cp=2.0 draws=852 | sh=0 pso=0 wait=0/0.0ms cache=0/0 | allocMiB=2180 | at=20:00:23.005
+warn:  HITCH frame=967 dtMs=120.0 inDriverMs=0.4 (0%) | present=1/0.4ms | queue: gpuMs=10.4 encodeMs=2.1 behind=2 | at=20:00:23.125
+warn:  COMPILE frame=967 dtMs=120.0 shaders=2/18.2ms psos=1/31.0ms renderWait=1/38.6ms cache=0/2 queued=0
 warn:  STATS t=20 fps=60.0 ms=16.7/120.0/120.0 slow33=1 slow50=1 | cb=3.0 rp=12.0 cp=2.0 draws=852 | sh=2 pso=1 wait=1/38.6ms cache=0/2 | allocMiB=2200 | at=20:00:24.006
 warn:  STATS t=21 fps=60.0 ms=16.7/16.7/16.7 slow33=0 slow50=0 | cb=3.0 rp=12.0 cp=2.0 draws=852 | sh=0 pso=0 wait=0/0.0ms cache=0/0 | allocMiB=2220 | at=20:00:25.000
 warn:  STATS t=22 fps=60.0 ms=16.7/16.7/16.7 slow33=0 slow50=0 | cb=3.0 rp=12.0 cp=2.0 draws=853 | sh=0 pso=0 wait=0/0.0ms cache=0/0 | allocMiB=2240 | at=20:00:26.001
@@ -43,6 +45,9 @@ warn:  STATS t=37 fps=60.0 ms=16.7/16.7/16.7 slow33=0 slow50=0 | cb=3.0 rp=12.0 
 warn:  STATS t=38 fps=60.0 ms=16.7/16.7/16.7 slow33=0 slow50=0 | cb=3.0 rp=12.0 cp=2.0 draws=854 | sh=0 pso=0 wait=0/0.0ms cache=0/0 | allocMiB=2400 | at=20:00:42.003
 warn:  STATS t=39 fps=60.0 ms=16.7/16.7/16.7 slow33=0 slow50=0 | cb=3.0 rp=12.0 cp=2.0 draws=855 | sh=0 pso=0 wait=0/0.0ms cache=0/0 | allocMiB=2400 | at=20:00:43.004
 warn:  STATS t=40 fps=60.0 ms=16.7/16.7/16.7 slow33=0 slow50=0 | cb=3.0 rp=12.0 cp=2.0 draws=855 | sh=0 pso=0 wait=0/0.0ms cache=0/0 | allocMiB=2400 | at=20:00:44.005
+info:  COMPILE frame=2227 dtMs=45.0 shaders=0/0.0ms psos=0/0.0ms renderWait=0/0.0ms cache=0/0 queued=0
+warn:  HITCH frame=2228 dtMs=70.0 inDriverMs=40.0 (57%) | pipelineWait=1/38.6ms present=1/1.4ms | queue: gpuMs=9.8 encodeMs=2.3 behind=2 | at=20:00:44.142
+warn:  COMPILE frame=2228 dtMs=70.0 shaders=2/18.2ms psos=1/31.0ms renderWait=1/38.6ms cache=0/2 queued=0
 warn:  STATS t=41 fps=60.0 ms=16.7/70.0/70.0 slow33=2 slow50=1 | cb=3.0 rp=12.0 cp=2.0 draws=855 | sh=2 pso=1 wait=1/38.6ms cache=0/2 | allocMiB=2400 | at=20:00:45.006
 warn:  STATS t=42 fps=60.0 ms=16.7/16.7/16.7 slow33=0 slow50=0 | cb=3.0 rp=12.0 cp=2.0 draws=855 | sh=0 pso=0 wait=0/0.0ms cache=0/0 | allocMiB=2400 | at=20:00:46.000
 warn:  STATS t=43 fps=60.0 ms=16.7/16.7/16.7 slow33=0 slow50=0 | cb=3.0 rp=12.0 cp=2.0 draws=855 | sh=0 pso=0 wait=0/0.0ms cache=0/0 | allocMiB=2400 | at=20:00:47.001
