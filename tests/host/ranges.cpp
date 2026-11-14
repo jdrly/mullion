@@ -145,6 +145,13 @@ main() {
     equal(root_counts.section(root_last), "SetRootView=1");
   }
 
+  // the descriptors a heap has from a table's base: 4 of 32 bytes from the start, 1 from the last, none known outside it
+  check(DescriptorsLeft(0x1000, 0x1000, 0x1080, 32) == 4, "a table at a heap's start has its 4 descriptors");
+  check(DescriptorsLeft(0x1060, 0x1000, 0x1080, 32) == 1, "a table at a heap's last descriptor has 1");
+  check(DescriptorsLeft(0x1080, 0x1000, 0x1080, 32) == UINT32_MAX, "a table at a heap's end is in no heap");
+  check(DescriptorsLeft(0x0fe0, 0x1000, 0x1080, 32) == UINT32_MAX, "a table before a heap is in no heap");
+  check(DescriptorsLeft(0x1000, 0, 0, 0) == UINT32_MAX, "with no heap bound, no count");
+
   // the bridge's Metal 4 lengths: what a buffer has from an offset, before, at and past its end
   check(buffer_remaining(256, 0) == 256, "a buffer's length from its start");
   check(buffer_remaining(256, 200) == 56, "what is left from an offset inside it");

@@ -64,6 +64,12 @@ foreach front_end : ['dxil', 'dxbc']
   test('d3d12_root_view_ranges_indirect_' + front_end, exe, args: [front_end, 'indirect'],
        env: ['MULLION_D3D12_CHECK_RANGES=1'], timeout: 600)
 endforeach
+# jdrly/mullion: descriptor indices clamped below the descriptors a heap has from a table's start (part 6)
+exe = executable('d3d12_descriptor_index_ranges', ['d3d12_descriptor_index_ranges.cpp'], dependencies: d3d12_test_deps)
+foreach front_end : ['dxil', 'dxbc']
+  test('d3d12_descriptor_index_ranges_' + front_end, exe, args: [front_end], env: ['MULLION_D3D12_CHECK_RANGES=1'],
+       timeout: 600)
+endforeach
 exe = executable('d3d12_trace_log',['d3d12_trace_log.cpp'], dependencies: d3d12_test_deps + [cpp.find_library('d3d11')])
 test('d3d12_trace_log', exe, timeout: 600)
 exe = executable('d3d12_copy_memory', ['d3d12_copy_memory.cpp'], dependencies: d3d12_test_deps)

@@ -550,6 +550,9 @@ enum SM50_SHADER_FLAG {
   /* jdrly/mullion: root CBVs, SRVs and UAVs are checked against a length the root arguments carry after the lock table,
      a qword per root descriptor parameter in order (MULLION_D3D12_CHECK_RANGES=1); a local root signature's are not */
   SM50_SHADER_FLAG_CHECK_ROOT_RANGES = 1 << 29,
+  /* jdrly/mullion: a dynamic descriptor index is clamped below the descriptors its heap has from the table's start, a
+     count the root arguments carry per table and directly indexed heap after the root views' lengths (part 6) */
+  SM50_SHADER_FLAG_CHECK_DESCRIPTOR_INDICES = 1 << 28,
 };
 
 struct SM50_SHADER_COMMON_DATA {

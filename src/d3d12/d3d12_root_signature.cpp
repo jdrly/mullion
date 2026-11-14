@@ -437,6 +437,7 @@ class MTLD3D12RootSignatureImpl : public MTLD3D12DeviceChild<MTLD3D12RootSignatu
   std::vector<uint8_t> blob_;
   std::vector<uint32_t> qword_offsets_;
   std::vector<uint32_t> root_length_qwords_;
+  std::vector<uint32_t> table_count_qwords_;
 
   std::vector<Rc<Sampler>> static_samplers_; // which is not really "static"
   /**
@@ -624,6 +625,16 @@ public:
                                                          type == D3D12_ROOT_PARAMETER_TYPE_UAV)
           root_length_qwords_[i] = total_qwords++;
       RootLengthQwords = root_length_qwords_.data();
+      // then each descriptor table's count, and the directly indexed heaps'
+      table_count_qwords_.assign(desc.NumParameters, ~0u);
+      for (unsigned i = 0; i < desc.NumParameters; i++)
+        if (desc.pParameters[i].ParameterType == D3D12_ROOT_PARAMETER_TYPE_DESCRIPTOR_TABLE)
+          table_count_qwords_[i] = total_qwords++;
+      TableCountQwords = table_count_qwords_.data();
+      if (ResourceHeapQword != ~0u)
+        ResourceHeapCountQword = total_qwords++;
+      if (SamplerHeapQword != ~0u)
+        SamplerHeapCountQword = total_qwords++;
     }
     UploadQwords = total_qwords;
     StreamOutput = desc.Flags & D3D12_ROOT_SIGNATURE_FLAG_ALLOW_STREAM_OUTPUT;

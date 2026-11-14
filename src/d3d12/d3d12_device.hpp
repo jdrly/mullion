@@ -457,9 +457,16 @@ public:
   // SRV or UAV parameter's length, after the lock table (SM50_SHADER_FLAG_CHECK_ROOT_RANGES), and ~0u for other
   // parameters; null without the switch, and for a local root signature
   uint32_t const *RootLengthQwords = nullptr;
+  // jdrly/mullion: with MULLION_D3D12_CHECK_RANGES=1, a global root signature's root argument holding each descriptor
+  // table parameter's descriptor count, after the root views' lengths, and ~0u for other parameters; then the
+  // directly indexed heaps' counts, ~0u without the heap (SM50_SHADER_FLAG_CHECK_DESCRIPTOR_INDICES). Null and ~0u
+  // without the switch, and for a local root signature
+  uint32_t const *TableCountQwords = nullptr;
+  uint32_t ResourceHeapCountQword = ~0u, SamplerHeapCountQword = ~0u;
   // the most any root signature uploads: a qword per parameter (a DWORD of root cost at least), then the two heaps and
-  // the lock table
-  static constexpr uint32_t kMaxUploadQwords = D3D12_MAX_ROOT_COST + 3;
+  // the lock table. jdrly/mullion: with MULLION_D3D12_CHECK_RANGES=1 also a root view's length (a root view costs two
+  // DWORDs) and a table's count (a table costs one) per parameter, and the two heaps' counts: twice the parameters'
+  static constexpr uint32_t kMaxUploadQwords = 2 * D3D12_MAX_ROOT_COST + 5;
 
   size_t NumStaticSamplers;
   uint64_t const *EncodedStaticSamplers;

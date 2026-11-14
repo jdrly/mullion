@@ -278,6 +278,9 @@ class MTLD3D12GraphicsCommandListImpl : public MTLD3D12DeviceChild<MTLD3D12Graph
 
   // GPU addresses of the bound CBV/SRV/UAV and sampler heaps (SetDescriptorHeaps)
   uint64_t resource_heap_ = 0, sampler_heap_ = 0;
+  // jdrly/mullion: MULLION_D3D12_CHECK_RANGES: where the bound heaps end, their descriptors' size and their count
+  uint64_t resource_heap_end_ = 0, sampler_heap_end_ = 0, resource_heap_increment_ = 0, sampler_heap_increment_ = 0;
+  uint64_t resource_heap_count_ = 0, sampler_heap_count_ = 0;
 
   // a bundle keeps its calls, and ExecuteBundle replays them on the calling list: they read the state the caller set and
   // leave theirs set, as bundles inherit and pass state
@@ -3153,7 +3156,59 @@ public:
     }
     WriteHeapArguments(rootsig_graphics_.ptr(), rootarg_graphics_staging_, DirtyState::GraphicsRootArguments);
     WriteHeapArguments(rootsig_compute_.ptr(), rootarg_compute_staging_, DirtyState::ComputeRootArguments);
+    if (kRangesOn)
+      BindHeapExtents(HeapCount, Heaps);
   };
+
+  // MULLION_D3D12_CHECK_RANGES: where the heaps just bound end, and the descriptor counts of the tables and directly
+  // indexed heaps of both root signatures, which their tables' bases are now counted against
+  void
+  BindHeapExtents(UINT HeapCount, ID3D12DescriptorHeap *const *Heaps) {
+    for (unsigned i = 0; i < HeapCount; i++) {
+      D3D12_DESCRIPTOR_HEAP_DESC desc;
+      Heaps[i]->GetDesc(&desc);
+      bool sampler = desc.Type == D3D12_DESCRIPTOR_HEAP_TYPE_SAMPLER;
+      uint64_t increment = device_->GetDescriptorHandleIncrementSize(desc.Type);
+      (sampler ? sampler_heap_end_ : resource_heap_end_) = (sampler ? sampler_heap_ : resource_heap_) + increment * desc.NumDescriptors;
+      (sampler ? sampler_heap_increment_ : resource_heap_increment_) = increment;
+      (sampler ? sampler_heap_count_ : resource_heap_count_) = desc.NumDescriptors;
+    }
+    WriteDescriptorCounts(rootsig_graphics_.ptr(), rootarg_graphics_staging_, DirtyState::GraphicsRootArguments);
+    WriteDescriptorCounts(rootsig_compute_.ptr(), rootarg_compute_staging_, DirtyState::ComputeRootArguments);
+  }
+
+  // MULLION_D3D12_CHECK_RANGES: the descriptors the bound heap holding a table's base has from there
+  // (SM50_SHADER_FLAG_CHECK_DESCRIPTOR_INDICES); UINT32_MAX, no clamp, for a base in no bound heap
+  uint64_t
+  TableDescriptors(uint64_t base) {
+    auto left = ranges::DescriptorsLeft(base, resource_heap_, resource_heap_end_, resource_heap_increment_);
+    return left != UINT32_MAX ? left
+                              : ranges::DescriptorsLeft(base, sampler_heap_, sampler_heap_end_, sampler_heap_increment_);
+  }
+
+  void
+  SetTableCount(MTLD3D12RootSignature *rootsig, uint64_t *staging, DirtyState dirty, UINT Index, uint64_t Base) {
+    auto &count = staging[rootsig->TableCountQwords[Index]];
+    if (auto left = TableDescriptors(Base); count != left) {
+      count = left;
+      dirty_state_.set(dirty);
+    }
+  }
+
+  // MULLION_D3D12_CHECK_RANGES: every descriptor count a root signature carries, its tables' and its heaps'
+  void
+  WriteDescriptorCounts(MTLD3D12RootSignature *rootsig, uint64_t *staging, DirtyState dirty) {
+    if (!rootsig || !rootsig->TableCountQwords)
+      return;
+    for (UINT i = 0; i < rootsig->ParameterSlots; i++)
+      if (rootsig->TableCountQwords[i] != ~0u)
+        staging[rootsig->TableCountQwords[i]] = TableDescriptors(staging[rootsig->SlotQwordOffsets[i]]);
+    if (rootsig->ResourceHeapCountQword != ~0u)
+      staging[rootsig->ResourceHeapCountQword] = resource_heap_count_ ? resource_heap_count_ : UINT32_MAX;
+    if (rootsig->SamplerHeapCountQword != ~0u)
+      staging[rootsig->SamplerHeapCountQword] = sampler_heap_count_ ? sampler_heap_count_ : UINT32_MAX;
+    dirty_state_.set(dirty);
+  }
 
   void STDMETHODCALLTYPE
   SetComputeRootSignature(ID3D12RootSignature *pRootSignature) {
@@ -3165,8 +3220,10 @@ public:
       rootsig_compute_ = static_cast<MTLD3D12RootSignature *>(pRootSignature);
       assert(rootsig_compute_->UploadQwords <= std::size(rootarg_compute_staging_));
       WriteHeapArguments(rootsig_compute_.ptr(), rootarg_compute_staging_, DirtyState::ComputeRootArguments);
-      if (kRangesOn)
+      if (kRangesOn) {
         ClearRootViewLengths(rootsig_compute_.ptr(), rootarg_compute_staging_);
+        WriteDescriptorCounts(rootsig_compute_.ptr(), rootarg_compute_staging_, DirtyState::ComputeRootArguments);
+      }
     } else {
       rootsig_compute_ = nullptr;
     }
@@ -3183,8 +3240,10 @@ public:
       rootsig_graphics_ = static_cast<MTLD3D12RootSignature *>(pRootSignature);
       assert(rootsig_graphics_->UploadQwords <= std::size(rootarg_graphics_staging_));
       WriteHeapArguments(rootsig_graphics_.ptr(), rootarg_graphics_staging_, DirtyState::GraphicsRootArguments);
-      if (kRangesOn)
+      if (kRangesOn) {
         ClearRootViewLengths(rootsig_graphics_.ptr(), rootarg_graphics_staging_);
+        WriteDescriptorCounts(rootsig_graphics_.ptr(), rootarg_graphics_staging_, DirtyState::GraphicsRootArguments);
+      }
     } else {
       rootsig_graphics_ = nullptr;
     }
@@ -3199,6 +3258,8 @@ public:
       return;
     if (kRangesOn && rootsig->RootLengthQwords)
       Value = BindRootView(rootsig, staging, dirty, Index, Value);
+    if (kRangesOn && rootsig->TableCountQwords && rootsig->TableCountQwords[Index] != ~0u)
+      SetTableCount(rootsig, staging, dirty, Index, Value);
     auto &slot = staging[rootsig->SlotQwordOffsets[Index]];
     if (slot == Value)
       return;

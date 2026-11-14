@@ -126,6 +126,16 @@ RootViewBinding(uint64_t address, bool held, uint64_t end, uint64_t null_buffer)
   return {address, std::min<uint64_t>(end - address, UINT32_MAX)};
 }
 
+// how many descriptors a shader-visible heap from `start` to `end`, `increment` bytes each, has from `base` on: the
+// count a dynamic descriptor index through a table at `base` is clamped below (SM50_SHADER_FLAG_CHECK_DESCRIPTOR_INDICES).
+// UINT32_MAX, no clamp, for a base in no heap the list has bound: what it holds is not Mullion's to know
+inline uint64_t
+DescriptorsLeft(uint64_t base, uint64_t start, uint64_t end, uint64_t increment) {
+  if (!increment || base < start || base >= end)
+    return UINT32_MAX;
+  return std::min<uint64_t>((end - base) / increment, UINT32_MAX);
+}
+
 // the address ranges of live buffers a check found, newest first, kept while buffer_generation is the one they were
 // found at, for the device they were found in. Numbers only, never a
 // buffer: a range outlives nothing. Not thread-safe: each command list has its own, each thread making views its own

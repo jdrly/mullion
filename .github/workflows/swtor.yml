@@ -387,8 +387,10 @@ jobs:
           # view's end as address + size (host_ranges.3.patch), the bridge's Metal 4 length from an offset as
           # length - offset, which wraps past the end (host_ranges.4.patch), kept address ranges that outlive a
           # buffer released (host_ranges.5.patch), a root view's bound past 32 bits (host_ranges.6.patch), or a command
-          # list's found buffer that outlives one (host_ranges.8.patch), host_ranges has to fail
-          for p in host_ranges host_ranges.2 host_ranges.3 host_ranges.4 host_ranges.5 host_ranges.6 host_ranges.8; do
+          # list's found buffer that outlives one (host_ranges.8.patch), or a table at its heap's end counted as in it
+          # (host_ranges.7.patch), host_ranges has to fail
+          for p in host_ranges host_ranges.2 host_ranges.3 host_ranges.4 host_ranges.5 host_ranges.6 host_ranges.7 \
+            host_ranges.8; do
             git apply "tests/breaks/$p.patch"
             status=0
             meson test -C build host_ranges --print-errorlogs >"$RUNNER_TEMP/$p.txt" 2>&1 || status=$?
@@ -403,12 +405,15 @@ jobs:
           grep -qF 'failed: a buffer made or released forgets every range' "$RUNNER_TEMP/host_ranges.5.txt"
           grep -qF 'failed: a root view in a buffer of 5 GiB is bound at 4 GiB' "$RUNNER_TEMP/host_ranges.6.txt"
           grep -qF 'failed: a buffer released or made forgets the buffer found' "$RUNNER_TEMP/host_ranges.8.txt"
+          grep -qF "failed: a table at a heap's end is in no heap" "$RUNNER_TEMP/host_ranges.7.txt"
           [[ -z $(git status --porcelain -- src/winemetal) ]]
           # the root views' checks in the converter (SM50_SHADER_FLAG_CHECK_ROOT_RANGES): with a root CBV, SRV or UAV
           # left unchecked under the flag (tests/breaks/host_check_root_ranges{,.2,.3}.patch), host_check_root_ranges
           # has to fail, at that view; and with a failed check's load reading a root SRV's start instead of the lock
-          # table, for the view or one load path (host_check_root_ranges.{4,5,6,7}.patch), at the trace of the loads
-          for n in "" .2 .3 .4 .5 .6 .7; do
+          # table, for the view or one load path (host_check_root_ranges.{4,5,6,7}.patch), at the trace of the loads;
+          # and with no descriptor index clamped, or a constant buffer's, an SRV's or a UAV's through a table
+          # (host_check_root_ranges.{8,9,10,11}.patch), at that kind
+          for n in "" .2 .3 .4 .5 .6 .7 .8 .9 .10 .11; do
             git apply "tests/breaks/host_check_root_ranges$n.patch"
             status=0
             meson test -C build host_check_root_ranges --print-errorlogs >"$RUNNER_TEMP/root$n.txt" 2>&1 || status=$?
@@ -421,6 +426,15 @@ jobs:
           grep -qF 'FAILED: a root UAV is checked with the flag' "$RUNNER_TEMP/root.3.txt"
           for n in .4 .5 .6 .7; do
             grep -qF 'FAILED: every load past a root SRV reads the lock table with the flag' "$RUNNER_TEMP/root$n.txt"
+          done
+          for n in .8 .9; do
+            grep -qF "FAILED: a constant buffer's descriptor index is clamped with the flag" "$RUNNER_TEMP/root$n.txt"
+          done
+          for n in .8 .10; do
+            grep -qF "FAILED: an SRV's descriptor index is clamped with the flag" "$RUNNER_TEMP/root$n.txt"
+          done
+          for n in .8 .11; do
+            grep -qF "FAILED: a UAV's descriptor index is clamped with the flag" "$RUNNER_TEMP/root$n.txt"
           done
           [[ -z $(git status --porcelain -- src/airconv) ]]
           [[ -z $(git status --porcelain -- src/mullion) ]]

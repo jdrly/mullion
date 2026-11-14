@@ -67,6 +67,12 @@ static cl::opt<bool> CheckRootRanges(
   cl::desc("Check root CBVs, SRVs and UAVs against a length the root arguments carry after the lock table")
 );
 
+// jdrly/mullion: MULLION_D3D12_CHECK_RANGES=1, as the device passes it
+static cl::opt<bool> CheckDescriptorIndices(
+  "check-descriptor-indices", cl::init(false),
+  cl::desc("Clamp descriptor indices below a count the root arguments carry after the root views' lengths")
+);
+
 static cl::opt<bool>
   EmitLLVM("S", cl::init(false), cl::desc("Write output as LLVM assembly"));
 
@@ -278,6 +284,8 @@ int main(int argc, char **argv) {
     data.flags = SM50_SHADER_FLAG(data.flags | SM50_SHADER_FLAG_GUARD_STATIC_RANGES);
   if (CheckRootRanges)
     data.flags = SM50_SHADER_FLAG(data.flags | SM50_SHADER_FLAG_CHECK_ROOT_RANGES);
+  if (CheckDescriptorIndices)
+    data.flags = SM50_SHADER_FLAG(data.flags | SM50_SHADER_FLAG_CHECK_DESCRIPTOR_INDICES);
   data.simd_width = 0; // no device to ask; a vertex shader's wave has no lane count here
   data.next = 0;
   data.type = SM50_SHADER_COMMON;

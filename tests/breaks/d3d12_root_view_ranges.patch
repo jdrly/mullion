@@ -5,8 +5,8 @@
          metal_version_(SM50_SHADER_METAL_VERSION(ShaderMetalVersion(adapter_->GetMTLDevice()))),
          shader_flags_(SM50_SHADER_FLAG(
              GPUShaderFlags(adapter_->GetMTLDevice()) | GuardStaticRangesFlag() |
--            (ranges::on ? SM50_SHADER_FLAG_CHECK_ROOT_RANGES : SM50_SHADER_FLAG{})
-+            (false ? SM50_SHADER_FLAG_CHECK_ROOT_RANGES : SM50_SHADER_FLAG{})
+-            (ranges::on ? SM50_SHADER_FLAG_CHECK_ROOT_RANGES : SM50_SHADER_FLAG{}) |
++            (false ? SM50_SHADER_FLAG_CHECK_ROOT_RANGES : SM50_SHADER_FLAG{}) |
+             (ranges::on ? SM50_SHADER_FLAG_CHECK_DESCRIPTOR_INDICES : SM50_SHADER_FLAG{})
          )) {
      mesh_bytes_per_draw = MeshBytesPerDraw(adapter_->GetMTLDevice());
-   }

@@ -1,0 +1,12 @@
+# a UAV's buffer descriptor index through a table is not clamped
+--- a/src/airconv/dxbc_binding_rootsig.cpp
++++ b/src/airconv/dxbc_binding_rootsig.cpp
+@@ -378,7 +378,7 @@
+     }
+     auto [Pointer, Metadata] = GetBufferDescriptor(
+         Builder, HeapPointer, Index, Builder.getIntTy()->getPointerTo(1), UAV.range.lower_bound, DescriptorOffset, true,
+-        DescriptorCount(Builder, UAV.arg_index)
++        nullptr
+     );
+ 
+     return BufferDescriptor{

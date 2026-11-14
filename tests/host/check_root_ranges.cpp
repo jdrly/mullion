@@ -6,6 +6,9 @@
 // - the table alone: one output with or without the flag. the flag changes nothing but root descriptors;
 // - a root CBV, SRV or UAV: more bounds compares (`icmp ult`) with the flag than without. upstream checks a root
 //   descriptor against nothing, and the flag checks each against the length its root arguments carry.
+// - a constant buffer, SRV or UAV through a descriptor table, the other two root descriptors: more bounds compares with
+//   -check-descriptor-indices (SM50_SHADER_FLAG_CHECK_DESCRIPTOR_INDICES) than without, each kind on its own. its
+//   descriptor index is clamped below the count of descriptors the heap has from the table's start.
 //
 //   host_check_root_ranges <airconv>
 //
@@ -370,6 +373,114 @@ trace(const std::string &ir, std::initializer_list<uint32_t> views, uint32_t loc
   return out;
 }
 
+// the loads of descriptors through the table at field `table` of one function's argument buffer struct, and how many of
+// them have an index that depends on field `count`, the table's descriptor count (-check-descriptor-indices). a
+// descriptor's address is a getelementptr of the table's pointer, whose indices the clamp computes from the count; the
+// optimizer folds the clamp into whatever form it likes, so the test follows what the indices depend on, by name
+struct Descriptors {
+  unsigned loads = 0, clamped = 0;
+};
+
+static Descriptors
+descriptors(const std::string &ir, int table, int count) {
+  struct Definition {
+    std::string op;
+    std::vector<std::string> operands;
+    int field = -1; // the struct field a getelementptr or bitcast of the argument buffer struct points at
+  };
+  std::map<std::string, Definition> defs;
+  std::vector<std::string> loads;
+  std::string arguments; // the argument buffer struct's argument
+  std::istringstream lines(ir);
+  bool in_function = false;
+  for (std::string line; std::getline(lines, line);) {
+    if (line.rfind("define ", 0) == 0) {
+      in_function = true;
+      auto at = line.find("%argument_buffer_struct addrspace(2)* %");
+      if (at != std::string::npos) {
+        arguments = line.substr(line.find('%', at + 1));
+        arguments = arguments.substr(0, arguments.find_first_of(",)"));
+      }
+      continue;
+    }
+    if (line == "}")
+      in_function = false;
+    auto eq = line.find(" = ");
+    if (!in_function || line.size() < 3 || line.compare(0, 3, "  %") || eq == std::string::npos)
+      continue;
+    auto name = line.substr(2, eq - 2);
+    std::istringstream words(line.substr(eq + 3));
+    Definition def;
+    words >> def.op;
+    for (std::string word; words >> word;) {
+      while (!word.empty() && (word.back() == ',' || word.back() == ')'))
+        word.pop_back();
+      if (word.size() > 1 && word[0] == '%' && word.find("argument_buffer_struct") == std::string::npos)
+        def.operands.push_back(word);
+    }
+    if (def.op == "getelementptr" && line.find("%argument_buffer_struct, ") != std::string::npos)
+      def.field = std::stoi(line.substr(line.rfind("i32 ") + 4));
+    else if (def.op == "bitcast" && !def.operands.empty() && def.operands[0] == arguments)
+      def.field = 0;
+    if (def.op == "load")
+      loads.push_back(name);
+    defs[name] = def;
+  }
+  // the field a value was loaded from, -1 for none
+  auto field_of = [&](const std::string &value) {
+    auto it = defs.find(value);
+    if (it == defs.end() || it->second.op != "load" || it->second.operands.empty())
+      return -1;
+    auto at = defs.find(it->second.operands[0]);
+    return at == defs.end() ? -1 : at->second.field;
+  };
+  // whether a value depends on a load of field `field`, through any arithmetic, compare, cast or select
+  std::set<std::string> seen;
+  std::function<bool(const std::string &, int)> depends = [&](const std::string &value, int field) -> bool {
+    if (field_of(value) == field)
+      return true;
+    auto it = defs.find(value);
+    if (it == defs.end() || it->second.op == "load" || !seen.insert(value + "@" + std::to_string(field)).second)
+      return false;
+    for (auto &operand : it->second.operands)
+      if (depends(operand, field))
+        return true;
+    return false;
+  };
+  // a load's address: the getelementptrs and casts down to a pointer loaded from a field; through the table, whether an
+  // index on the way depends on the count
+  Descriptors out;
+  for (auto &load : loads) {
+    if (defs[load].operands.empty())
+      continue;
+    bool through_table = false, clamped = false;
+    std::string at = defs[load].operands[0];
+    for (int steps = 0; steps < 16; steps++) {
+      if (field_of(at) == table) {
+        through_table = true;
+        break;
+      }
+      auto it = defs.find(at);
+      if (it == defs.end() || it->second.operands.empty())
+        break;
+      auto &def = it->second;
+      if (def.op == "getelementptr")
+        for (size_t i = 1; i < def.operands.size(); i++) {
+          seen.clear();
+          clamped = clamped || depends(def.operands[i], count);
+        }
+      else if (def.op != "bitcast" && def.op != "addrspacecast")
+        break;
+      at = def.operands[0];
+    }
+    if (!through_table)
+      continue;
+    out.loads++;
+    out.clamped += clamped;
+  }
+  return out;
+}
+
 int
 main(int argc, char **argv) {
   if (argc != 2) {
@@ -440,6 +551,34 @@ main(int argc, char **argv) {
     check(before.unguarded > 0, "without the flag the loads of root SRVs read the view, as the trace can tell");
     check(after.from_views >= 6, "the shader's six loads of root SRVs are found with the flag");
     check(after.from_views && !after.unguarded, "every load past a root SRV reads the lock table with the flag");
+  }
+  // descriptor indices: one kind through a table, the others root descriptors, so that its clamp alone counts
+  write("tcbv.rs", container({{"RTS0", root_signature({{table, {range_cbv}}, {srv, {}}, {uav, {}}})}}));
+  write("tsrv.rs", container({{"RTS0", root_signature({{table, {range_srv}}, {cbv, {}}, {uav, {}}})}}));
+  write("tuav.rs", container({{"RTS0", root_signature({{table, {range_uav}}, {cbv, {}}, {srv, {}}})}}));
+  auto convert_indices = [&](const std::string &name, bool clamped) {
+    std::string out = name + (clamped ? ".clamped.ll" : ".unclamped.ll");
+    std::string command = "\"" + std::string(argv[1]) + "\" -S" + (clamped ? " -check-descriptor-indices" : "") +
+                          " -root-signature \"" + (dir / (name + ".rs")).string() + "\" -o \"" + (dir / out).string() +
+                          "\" \"" + (dir / "shader.dxbc").string() + "\"";
+    if (std::system(command.c_str()) != 0) {
+      std::printf("FAILED: %s\n", command.c_str());
+      failures++;
+      return std::string();
+    }
+    return read(dir / out);
+  };
+  // fields: the table 0, two root views 1 and 2, the lock table 3, the table's count 4
+  for (auto [name, what] : {std::pair{"tcbv", "a constant buffer's descriptor index is clamped with the flag"},
+                            std::pair{"tsrv", "an SRV's descriptor index is clamped with the flag"},
+                            std::pair{"tuav", "a UAV's descriptor index is clamped with the flag"}}) {
+    auto plain = convert_indices(name, false), clamped = convert_indices(name, true);
+    if (plain.empty() || clamped.empty())
+      continue;
+    auto before = descriptors(plain, 0, 4), after = descriptors(clamped, 0, 4);
+    std::printf("%s: %u descriptor loads, %u clamped without the flag; %u, %u clamped with it\n", name, before.loads,
+                before.clamped, after.loads, after.clamped);
+    check(after.loads && after.clamped == after.loads && !before.clamped, what);
   }
   // MULLION_KEEP_OUTPUT: the outputs stay, for a pull request to attach
   if (std::getenv("MULLION_KEEP_OUTPUT"))

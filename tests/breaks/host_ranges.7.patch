@@ -1,0 +1,12 @@
+# a table at its heap's end counts as in the heap, with no descriptors
+--- a/src/mullion/mullion_ranges.hpp
++++ b/src/mullion/mullion_ranges.hpp
+@@ -131,7 +131,7 @@
+ // UINT32_MAX, no clamp, for a base in no heap the list has bound: what it holds is not Mullion's to know
+ inline uint64_t
+ DescriptorsLeft(uint64_t base, uint64_t start, uint64_t end, uint64_t increment) {
+-  if (!increment || base < start || base >= end)
++  if (!increment || base < start || base > end)
+     return UINT32_MAX;
+   return std::min<uint64_t>((end - base) / increment, UINT32_MAX);
+ }
