@@ -406,8 +406,9 @@ jobs:
           [[ -z $(git status --porcelain -- src/winemetal) ]]
           # the root views' checks in the converter (SM50_SHADER_FLAG_CHECK_ROOT_RANGES): with a root CBV, SRV or UAV
           # left unchecked under the flag (tests/breaks/host_check_root_ranges{,.2,.3}.patch), host_check_root_ranges
-          # has to fail, at that view
-          for n in "" .2 .3; do
+          # has to fail, at that view; and with a failed check's load reading a root SRV's start instead of the lock
+          # table, for the view or one load path (host_check_root_ranges.{4,5,6,7}.patch), at the trace of the loads
+          for n in "" .2 .3 .4 .5 .6 .7; do
             git apply "tests/breaks/host_check_root_ranges$n.patch"
             status=0
             meson test -C build host_check_root_ranges --print-errorlogs >"$RUNNER_TEMP/root$n.txt" 2>&1 || status=$?
@@ -418,6 +419,9 @@ jobs:
           grep -qF 'FAILED: a root CBV is checked with the flag' "$RUNNER_TEMP/root.txt"
           grep -qF 'FAILED: a root SRV is checked with the flag' "$RUNNER_TEMP/root.2.txt"
           grep -qF 'FAILED: a root UAV is checked with the flag' "$RUNNER_TEMP/root.3.txt"
+          for n in .4 .5 .6 .7; do
+            grep -qF 'FAILED: every load past a root SRV reads the lock table with the flag' "$RUNNER_TEMP/root$n.txt"
+          done
           [[ -z $(git status --porcelain -- src/airconv) ]]
           [[ -z $(git status --porcelain -- src/mullion) ]]
           # the window lines: with an activation alone written as d9mt's visibility line

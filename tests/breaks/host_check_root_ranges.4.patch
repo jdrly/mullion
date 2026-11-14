@@ -1,0 +1,12 @@
+# a checked root SRV has no fallback: a load whose check fails reads the view's start
+--- a/src/airconv/dxbc_binding_rootsig.cpp
++++ b/src/airconv/dxbc_binding_rootsig.cpp
+@@ -308,7 +308,7 @@
+     auto HeapPointer = GetArgument(Builder, RootSignatureArgumentIndex, SRV.arg_index);
+     if (DescriptorOffset == ~0u) {
+       if (auto Length = RootViewLength(Builder, D3D12_DESCRIPTOR_RANGE_TYPE_SRV, Range))
+-        return BufferDescriptor{HeapPointer, Length, SRV.structure_stride, false, true, GetAtomicLocks(Builder)};
++        return BufferDescriptor{HeapPointer, Length, SRV.structure_stride, false, true};
+       return BufferDescriptor{HeapPointer, Builder.builder.getInt64(0xffffffff), SRV.structure_stride, false, false};
+     }
+     auto [Pointer, Metadata] = GetBufferDescriptor(

@@ -1,0 +1,12 @@
+# a structured load at a constant offset reads past its element from the view's start, fallback or not
+--- a/src/airconv/nt/dxbc_converter_base.cpp
++++ b/src/airconv/nt/dxbc_converter_base.cpp
+@@ -3418,7 +3418,7 @@
+         Element, ir.CreateUDiv(DecodeRawBufferByteLength(Buf->Metadata), ir.getInt32(Buf->StructureStride))
+     );
+     At = ir.CreateSelect(Within, At, ir.getInt32(0));
+-    auto Read = FallingBack(*Buf, Within);
++    auto Read = *Buf;
+     return LoadBufferWords(Read, ir.CreateZExt(At, ir.getInt64Ty()), load.dst, load.feedback, Within);
+   }
+   // in 64 bits: an element index scaled by the stride can wrap 32 and pass the bounds check

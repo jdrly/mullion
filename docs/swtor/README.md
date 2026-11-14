@@ -548,7 +548,9 @@ and writes immediates to a released buffer's address before one inside a buffer;
 `tests/breaks/d3d12_cbv_ranges.patch`, takes both as given.
 
 `tests/d3d12/d3d12_root_view_ranges.cpp` reads a row of a root CBV, an element of a root SRV and of a root UAV past
-their 256-byte buffers, and stores past the UAV's, then reads a root SRV 16 bytes before its buffer's end inside those bytes and past them; its control, `tests/breaks/d3d12_root_view_ranges.patch`, converts
+their 256-byte buffers, and stores past the UAV's, reads a `uint4` element with 8 of its bytes left as 0, then reads a
+root SRV 16 bytes before its buffer's end inside those bytes and past them; `d3d12_root_view_ranges_indirect` also
+reads a root SRV that an `ExecuteIndirect` set and reset, as 0; its control, `tests/breaks/d3d12_root_view_ranges.patch`, converts
 without the checks.
 
 `tests/d3d12/d3d12_copy_ranges.cpp` runs every kind of drop above and one copy in range after each, and the planes of
@@ -666,8 +668,13 @@ past a buffer and 4 texels past a texture. Both run on the rented M1 under Metal
   convert `host_guard_static_ranges`' compute shader for root signatures that bind its constant buffer, its SRV or its
   UAV as a root descriptor and the others through a volatile table, and for one with the table alone, with and
   without `-check-root-ranges`. The table alone has to convert byte for byte the same; each root view has to gain
-  bounds compares (`icmp ult`). Its controls, `tests/breaks/host_check_root_ranges{,.2,.3}.patch`, leave a root CBV,
-  SRV or UAV unchecked under the flag, and the test has to fail on each, at that view.
+  bounds compares (`icmp ult`). A second shader loads two root SRVs by the three paths a load whose check can fail
+  takes (a structured load at a constant offset, four words of one at an offset the shader computes, a raw load), and
+  the test traces each load's address in the LLVM assembly, by name through `getelementptr`, casts and `select`, to the
+  root arguments' fields: with the flag every load of a root SRV has to pass a `select` of the view and the lock table,
+  and without it none does. Its controls, `tests/breaks/host_check_root_ranges{,.2,.3}.patch`, leave a root CBV, SRV
+  or UAV unchecked under the flag, and `.4` to `.7` take the fallback away from the view or from one load path each;
+  the test has to fail on each, at that view or at the trace.
 - **Publish** (`ubuntu-24.04`, after the other jobs): packs the artifact into `mullion-swtor-<commit>.tar.xz` and
   checks that it unpacks to the same files, hash for hash. Only for a push to `swtor-on-mac` does it upload the archive
   (§ Releases). It is the only job with `contents: write`.

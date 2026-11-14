@@ -1,0 +1,12 @@
+# LoadBufferValue reads a failed check's value from the view's start, fallback or not
+--- a/src/airconv/nt/dxbc_converter_base.cpp
++++ b/src/airconv/nt/dxbc_converter_base.cpp
+@@ -4122,7 +4122,7 @@
+   auto Check = llvm::dyn_cast<llvm::SelectInst>(Ptr);
+   auto Within = Check ? Check->getCondition() : ir.CreateIsNotNull(Ptr);
+   auto Value = Load(ir.CreateSelect(Within, Check ? Check->getTrueValue() : Ptr,
+-                                    ir.CreatePointerCast(Buffer.Fallback ? Buffer.Fallback : Buffer.Pointer, Ptr->getType())));
++                                    ir.CreatePointerCast(Buffer.Pointer, Ptr->getType())));
+   return ir.CreateSelect(Within, Value, llvm::Constant::getNullValue(Type));
+ }
+ 

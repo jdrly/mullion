@@ -12,7 +12,12 @@
 // the shader and the root signatures are made here, token by token, so no compiler or binary fixture is needed.
 #include "../../libs/DXBCParser/d3d12tokenizedprogramformat.hpp"
 #include "../dxbc_hash.hpp"
+#include <algorithm>
 #include <cstdio>
+#include <functional>
+#include <map>
+#include <set>
+#include <sstream>
 #include <cstdlib>
 #include <filesystem>
 #include <fstream>
@@ -150,6 +155,53 @@ program() {
   return p;
 }
 
+// cs_5_0, the loads of root SRVs whose bounds checks can fail, one of each path the converter takes:
+//   dcl_resource_structured t0, 16
+//   dcl_resource_raw t1
+//   dcl_uav_structured u0, 16
+//   dcl_input vThreadID.x
+//   dcl_temps 2
+//   dcl_thread_group 1, 1, 1
+//   ld_structured r0.x, vThreadID.x, l(0), t0.xxxx       ; a constant offset: one compare for the element
+//   ld_structured r1.xyzw, vThreadID.x, r0.x, t0.xyzw    ; an offset the shader computes: four units, one bound
+//   ld_raw r0.y, r0.x, t1.xxxx                           ; a raw load: its own bound
+//   iadd r1.x, r1.x, r0.y
+//   store_structured u0.xyzw, vThreadID.x, l(0), r1.xyzw
+//   ret
+static Words
+fallback_program() {
+  constexpr uint32_t x = D3D10_SB_OPERAND_4_COMPONENT_MASK_X, y = D3D10_SB_OPERAND_4_COMPONENT_MASK_Y,
+                     all = D3D10_SB_OPERAND_4_COMPONENT_MASK_ALL;
+  Words p{ENCODE_D3D10_SB_TOKENIZED_PROGRAM_VERSION_TOKEN(D3D11_SB_COMPUTE_SHADER, 5, 0), 0};
+  instruction(p, D3D11_SB_OPCODE_DCL_RESOURCE_STRUCTURED, {empty(D3D10_SB_OPERAND_TYPE_RESOURCE, 0), {16}});
+  instruction(p, D3D11_SB_OPCODE_DCL_RESOURCE_RAW, {empty(D3D10_SB_OPERAND_TYPE_RESOURCE, 1)});
+  instruction(p, D3D11_SB_OPCODE_DCL_UNORDERED_ACCESS_VIEW_STRUCTURED,
+              {empty(D3D11_SB_OPERAND_TYPE_UNORDERED_ACCESS_VIEW, 0), {16}});
+  instruction(p, D3D10_SB_OPCODE_DCL_INPUT,
+              {{four(D3D11_SB_OPERAND_TYPE_INPUT_THREAD_ID, x, D3D10_SB_OPERAND_4_COMPONENT_MASK_MODE,
+                     D3D10_SB_OPERAND_INDEX_0D)}});
+  instruction(p, D3D10_SB_OPCODE_DCL_TEMPS, {{2}});
+  instruction(p, D3D11_SB_OPCODE_DCL_THREAD_GROUP, {{1, 1, 1}});
+  instruction(p, D3D11_SB_OPCODE_LD_STRUCTURED,
+              {masked(D3D10_SB_OPERAND_TYPE_TEMP, 0, x), thread_x(), immediate(0),
+               swizzled(D3D10_SB_OPERAND_TYPE_RESOURCE, 0, D3D10_SB_OPERAND_4_COMPONENT_REPLICATEX)});
+  instruction(p, D3D11_SB_OPCODE_LD_STRUCTURED,
+              {masked(D3D10_SB_OPERAND_TYPE_TEMP, 1, all), thread_x(), selected(D3D10_SB_OPERAND_TYPE_TEMP, 0, 0),
+               swizzled(D3D10_SB_OPERAND_TYPE_RESOURCE, 0, D3D10_SB_OPERAND_4_COMPONENT_NOSWIZZLE)});
+  instruction(p, D3D11_SB_OPCODE_LD_RAW,
+              {masked(D3D10_SB_OPERAND_TYPE_TEMP, 0, y), selected(D3D10_SB_OPERAND_TYPE_TEMP, 0, 0),
+               swizzled(D3D10_SB_OPERAND_TYPE_RESOURCE, 1, D3D10_SB_OPERAND_4_COMPONENT_REPLICATEX)});
+  instruction(p, D3D10_SB_OPCODE_IADD,
+              {masked(D3D10_SB_OPERAND_TYPE_TEMP, 1, x), selected(D3D10_SB_OPERAND_TYPE_TEMP, 1, 0),
+               selected(D3D10_SB_OPERAND_TYPE_TEMP, 0, 1)});
+  instruction(p, D3D11_SB_OPCODE_STORE_STRUCTURED,
+              {masked(D3D11_SB_OPERAND_TYPE_UNORDERED_ACCESS_VIEW, 0, all), thread_x(), immediate(0),
+               swizzled(D3D10_SB_OPERAND_TYPE_TEMP, 1, D3D10_SB_OPERAND_4_COMPONENT_NOSWIZZLE)});
+  instruction(p, D3D10_SB_OPCODE_RET);
+  p[1] = p.size();
+  return p;
+}
+
 // a container of parts, each a name and its words, signed with the hash Direct3D checks
 static std::string
 container(std::initializer_list<std::pair<const char *, Words>> parts) {
@@ -176,11 +228,12 @@ container(std::initializer_list<std::pair<const char *, Words>> parts) {
 }
 
 // a version 1.1 root signature (RTS0) of `parameters`: each a root descriptor of `kind` (D3D12_ROOT_PARAMETER_TYPE:
-// 2 CBV, 3 SRV, 4 UAV) at register 0, or a descriptor table (0) of volatile ranges of `kinds` (D3D12_DESCRIPTOR_RANGE_TYPE:
+// 2 CBV, 3 SRV, 4 UAV) at `reg`, or a descriptor table (0) of volatile ranges of `kinds` (D3D12_DESCRIPTOR_RANGE_TYPE:
 // 0 SRV, 1 UAV, 2 CBV), one descriptor each at register 0
 struct Parameter {
   uint32_t kind;
   std::vector<uint32_t> ranges;
+  uint32_t reg = 0;
 };
 
 static Words
@@ -191,7 +244,7 @@ root_signature(std::initializer_list<Parameter> parameters) {
   for (auto &parameter : parameters) {
     entries.insert(entries.end(), {parameter.kind, all, uint32_t(at + 4 * payloads.size())});
     if (parameter.kind) {
-      payloads.insert(payloads.end(), {0, 0, 0}); // register, space, flags
+      payloads.insert(payloads.end(), {parameter.reg, 0, 0}); // register, space, flags
       continue;
     }
     uint32_t ranges = at + 4 * (payloads.size() + 2);
@@ -216,6 +269,105 @@ count(const std::string &text, const std::string &what) {
   for (auto at = text.find(what); at != std::string::npos; at = text.find(what, at + 1))
     n++;
   return n;
+}
+
+// the loads of one function of LLVM assembly whose address comes from a root view: a pointer the function loads from
+// one of `views`, fields of its argument buffer struct. each is `guarded` when its address passes a select between a
+// pointer from the root view and one from field `locks`, the lock table, which a load whose check fails reads from.
+// the trace follows definitions by name, through getelementptr, casts and selects, not by their order or numbering
+struct Loads {
+  unsigned from_views = 0, unguarded = 0;
+};
+
+static Loads
+trace(const std::string &ir, std::initializer_list<uint32_t> views, uint32_t locks) {
+  struct Definition {
+    std::string op;
+    std::vector<std::string> operands; // the values it uses, in order
+    int field = -1;                    // a getelementptr of the argument buffer struct: its field
+  };
+  std::map<std::string, Definition> defs;
+  std::vector<std::string> loads;
+  std::istringstream lines(ir);
+  bool in_function = false;
+  for (std::string line; std::getline(lines, line);) {
+    if (line.rfind("define ", 0) == 0) {
+      in_function = true;
+      continue;
+    }
+    if (line == "}")
+      in_function = false;
+    auto eq = line.find(" = ");
+    if (!in_function || line.size() < 3 || line.compare(0, 3, "  %") || eq == std::string::npos)
+      continue;
+    auto name = line.substr(2, eq - 2);
+    std::istringstream words(line.substr(eq + 3));
+    Definition def;
+    words >> def.op;
+    for (std::string word; words >> word;) {
+      while (!word.empty() && (word.back() == ',' || word.back() == ')'))
+        word.pop_back();
+      if (word.size() > 1 && word[0] == '%')
+        def.operands.push_back(word);
+    }
+    if (def.op == "getelementptr" && line.find("%argument_buffer_struct, ") != std::string::npos) {
+      auto at = line.rfind("i32 ");
+      def.field = std::stoi(line.substr(at + 4));
+    }
+    if (def.op == "load")
+      loads.push_back(name);
+    defs[name] = def;
+  }
+  // the values a pointer is a view or the lock table by: a load from that field
+  std::function<int(const std::string &)> field_of = [&](const std::string &value) -> int {
+    auto it = defs.find(value);
+    if (it == defs.end() || it->second.op != "load")
+      return -1;
+    for (auto &operand : it->second.operands)
+      if (auto at = defs.find(operand); at != defs.end() && at->second.field >= 0)
+        return at->second.field;
+    return -1;
+  };
+  // which fields a pointer comes from, and whether it passed a select of a view and the lock table on the way
+  std::function<void(const std::string &, std::set<int> &, bool &)> reach = [&](const std::string &value,
+                                                                                std::set<int> &fields, bool &guarded) {
+    if (int field = field_of(value); field >= 0) {
+      fields.insert(field);
+      return;
+    }
+    auto it = defs.find(value);
+    if (it == defs.end())
+      return;
+    auto &def = it->second;
+    if (def.op == "select" && def.operands.size() == 3) {
+      std::set<int> a, b;
+      bool ga = false, gb = false;
+      reach(def.operands[1], a, ga);
+      reach(def.operands[2], b, gb);
+      auto view = [&](const std::set<int> &f) {
+        return std::any_of(views.begin(), views.end(), [&](uint32_t v) { return f.count(v); });
+      };
+      guarded = guarded || (view(a) && b.count(locks)) || (view(b) && a.count(locks)) || ga || gb;
+      fields.insert(a.begin(), a.end());
+      fields.insert(b.begin(), b.end());
+      return;
+    }
+    if ((def.op == "getelementptr" || def.op == "bitcast" || def.op == "addrspacecast") && !def.operands.empty())
+      reach(def.operands[0], fields, guarded);
+  };
+  Loads out;
+  for (auto &load : loads) {
+    if (defs[load].operands.empty())
+      continue;
+    std::set<int> fields;
+    bool guarded = false;
+    reach(defs[load].operands[0], fields, guarded);
+    if (!std::any_of(views.begin(), views.end(), [&](uint32_t v) { return fields.count(v); }))
+      continue;
+    out.from_views++;
+    out.unguarded += !guarded;
+  }
+  return out;
 }
 
 int
@@ -262,6 +414,32 @@ main(int argc, char **argv) {
     auto before = count(plain, "icmp ult"), after = count(checked, "icmp ult");
     std::printf("%s: %zu bounds compares without the flag, %zu with it\n", name, before, after);
     check(after > before, what);
+  }
+  // the loads of root SRVs whose checks can fail: with the flag every one reads a failed check's value from the lock
+  // table, not from the view's start, which may have fewer bytes than one load; without it they read the view
+  // (fields: t0 0, t1 1, u0 2, the lock table 3, then the three lengths)
+  write("fallback.dxbc", container({{"ISGN", {0, 8}}, {"OSGN", {0, 8}}, {"SHEX", fallback_program()}}));
+  write("fallback.rs", container({{"RTS0", root_signature({{srv, {}, 0}, {srv, {}, 1}, {uav, {}, 0}})}}));
+  auto convert_fallback = [&](bool checked) {
+    std::string out = checked ? "fallback.checked.ll" : "fallback.ll";
+    std::string command = "\"" + std::string(argv[1]) + "\" -S" + (checked ? " -check-root-ranges" : "") +
+                          " -root-signature \"" + (dir / "fallback.rs").string() + "\" -o \"" + (dir / out).string() +
+                          "\" \"" + (dir / "fallback.dxbc").string() + "\"";
+    if (std::system(command.c_str()) != 0) {
+      std::printf("FAILED: %s\n", command.c_str());
+      failures++;
+      return std::string();
+    }
+    return read(dir / out);
+  };
+  auto plain = convert_fallback(false), checked = convert_fallback(true);
+  if (!plain.empty() && !checked.empty()) {
+    auto before = trace(plain, {0, 1}, 3), after = trace(checked, {0, 1}, 3);
+    std::printf("fallback: %u loads of root SRVs, %u unguarded without the flag; %u, %u unguarded with it\n",
+                before.from_views, before.unguarded, after.from_views, after.unguarded);
+    check(before.unguarded > 0, "without the flag the loads of root SRVs read the view, as the trace can tell");
+    check(after.from_views >= 6, "the shader's six loads of root SRVs are found with the flag");
+    check(after.from_views && !after.unguarded, "every load past a root SRV reads the lock table with the flag");
   }
   // MULLION_KEEP_OUTPUT: the outputs stay, for a pull request to attach
   if (std::getenv("MULLION_KEEP_OUTPUT"))
