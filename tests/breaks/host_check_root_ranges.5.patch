@@ -1,8 +1,8 @@
 # LoadBufferUnits reads a load that isn't whole from the view's start, fallback or not
 --- a/src/airconv/nt/dxbc_converter_base.cpp
 +++ b/src/airconv/nt/dxbc_converter_base.cpp
-@@ -4142,7 +4142,6 @@
-   auto Whole = ir.CreateICmpULT(Last, Units);
+@@ -4146,7 +4146,6 @@ Converter::LoadBufferUnits(
+   CountMiss(Buffer.Counted, Whole);
    // Read reads through `Buffer`, which its caller passed: with a fallback, the start it reads from when not whole is that
    auto Start = Buffer.Pointer;
 -  Buffer.Pointer = FallingBack(Buffer, Whole).Pointer;

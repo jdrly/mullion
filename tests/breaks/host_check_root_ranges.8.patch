@@ -1,7 +1,7 @@
 # no descriptor index is clamped: Clamped gives the index as it is
 --- a/src/airconv/dxbc_binding_rootsig.cpp
 +++ b/src/airconv/dxbc_binding_rootsig.cpp
-@@ -69,7 +69,7 @@
+@@ -159,7 +159,7 @@ public:
    // a descriptor index below `Count`: one past it reads the heap's last descriptor, not memory past the heap
    llvm::Value *
    Clamped(llvm::air::AIRBuilder &AIR, llvm::Value *Index, llvm::Value *Count) {
@@ -9,4 +9,4 @@
 +    if (true)
        return Index;
      auto &B = AIR.builder;
-     return B.CreateSelect(B.CreateICmpULT(Index, Count), Index, B.CreateSub(Count, AIR.getInt(1)));
+     auto Within = B.CreateICmpULT(Index, Count);

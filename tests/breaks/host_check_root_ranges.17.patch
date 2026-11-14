@@ -1,0 +1,11 @@
+# a structured load of several units past its view is not counted
+--- a/src/airconv/nt/dxbc_converter_base.cpp
++++ b/src/airconv/nt/dxbc_converter_base.cpp
+@@ -4143,7 +4143,6 @@ Converter::LoadBufferUnits(
+   auto Bytes = DecodeRawBufferByteLength(Buffer.Metadata);
+   auto Units = ir.CreateZExtOrTrunc(ir.CreateUDiv(Bytes, llvm::ConstantInt::get(Bytes->getType(), UnitBytes)), Last->getType());
+   auto Whole = ir.CreateICmpULT(Last, Units);
+-  CountMiss(Buffer.Counted, Whole);
+   // Read reads through `Buffer`, which its caller passed: with a fallback, the start it reads from when not whole is that
+   auto Start = Buffer.Pointer;
+   Buffer.Pointer = FallingBack(Buffer, Whole).Pointer;

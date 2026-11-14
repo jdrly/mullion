@@ -70,6 +70,13 @@ foreach front_end : ['dxil', 'dxbc']
   test('d3d12_descriptor_index_ranges_' + front_end, exe, args: [front_end], env: ['MULLION_D3D12_CHECK_RANGES=1'],
        timeout: 600)
 endforeach
+# jdrly/mullion: the checks shaders make themselves count where they fail, and the device reads the counts back
+# (private ticket 33)
+exe = executable('d3d12_shader_check_counts', ['d3d12_shader_check_counts.cpp'], dependencies: d3d12_test_deps)
+foreach front_end : ['dxil', 'dxbc']
+  test('d3d12_shader_check_counts_' + front_end, exe, args: [front_end],
+       env: ['MULLION_D3D12_CHECK_RANGES=1', 'MULLION_D3D12_GUARD_STATIC_RANGES=1'], timeout: 600)
+endforeach
 # jdrly/mullion: ExecuteIndirect dropped when its commands or count run past their buffers (part 4)
 exe = executable('d3d12_indirect_ranges', ['d3d12_indirect_ranges.cpp'], dependencies: d3d12_test_deps)
 foreach front_end : ['dxil', 'dxbc']

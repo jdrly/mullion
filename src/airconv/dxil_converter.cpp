@@ -2134,6 +2134,7 @@ convert_dxil(
     // a raw index is masked to 32 bits of bytes above, so it compares in the GPU's 32-bit integers
     auto within = b.StructureStride ? ir.CreateICmpULT(index, ir.CreateZExt(units, index->getType()))
                                     : ir.CreateICmpULT(ir.CreateTrunc(index, units->getType()), units);
+    dxbc.CountMiss(b.Counted, within);
     return ir.CreateSelect(within, ptr, Constant::getNullValue(ptr->getType()));
   };
   // system inputs read the way DXBC reads them (the coverage mask honors the PSO sample mask)
@@ -3111,7 +3112,9 @@ convert_dxil(
       if (buffer.Metadata) {
         auto end = ir.CreateAdd(offset, ir.getInt64(ctx.module.getDataLayout().getTypeStoreSize(ty).getFixedSize()));
         auto zero = ir.CreatePointerCast(dxbc.ZeroRow(), ir.getInt8Ty()->getPointerTo(space));
-        pointer = ir.CreateSelect(ir.CreateICmpULE(end, buffer.Metadata), pointer, zero);
+        auto within = ir.CreateICmpULE(end, buffer.Metadata);
+        dxbc.CountMiss(buffer.Counted, within);
+        pointer = ir.CreateSelect(within, pointer, zero);
       }
       ret = ir.CreateAlignedLoad(
           ty, ir.CreatePointerCast(pointer, ty->getPointerTo(space)),
@@ -3368,6 +3371,7 @@ convert_dxil(
         auto at = ir.CreateUDiv(ir.CreateAdd(ir.CreateMul(a(2), ir.getInt32(stride)), inner), ir.getInt32(unit_bytes));
         auto within =
             ir.CreateICmpULT(a(2), ir.CreateUDiv(dxbc.DecodeRawBufferByteLength(b.Metadata), ir.getInt32(stride)));
+        dxbc.CountMiss(b.Counted, within);
         // units reads through `b`: with a fallback, the start it reads from when not within is that
         auto start = b.Pointer;
         b.Pointer = dxbc.FallingBack(b, within).Pointer;

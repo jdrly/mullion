@@ -234,6 +234,53 @@ main() {
         "MULLION-RANGE call=CreateConstantBufferView what=viewSize given=512 limit=256 action=dropped");
   equal(counts.section(last), "CreateConstantBufferView=1 WriteBufferImmediate=1");
 
+  // the checks shaders count: what each kind's word added since the last read goes into RANGE as Shader<Kind>, with a
+  // line the first time a kind adds any in the process, whatever the device; a word that wrapped counts what it added
+  {
+    Counts shader_counts;
+    std::array<uint64_t, size_t(Call::Count)> shader_last{};
+    ShaderCheckWords devices;
+    uint32_t words[kShaderChecks] = {}, other_words[kShaderChecks] = {};
+    ShaderChecks device{words}, other{other_words};
+    auto lines = [](const std::vector<std::string> &said) {
+      std::string all;
+      for (auto &line : said)
+        all += (all.empty() ? "" : "\n  ") + line;
+      return all;
+    };
+    devices.add(&device);
+    equal(lines(devices.read(shader_counts)), "");
+    equal(shader_counts.section(shader_last), "");
+    words[1] = 3;
+    equal(lines(devices.read(shader_counts)), "MULLION-RANGE call=Shader what=rootView given=3 action=checked");
+    equal(shader_counts.section(shader_last), "ShaderRootView=3");
+    words[0] = 2, words[1] = 5, words[2] = 1;
+    equal(lines(devices.read(shader_counts)),
+          "MULLION-RANGE call=Shader what=staticRange given=2 action=checked\n  "
+          "MULLION-RANGE call=Shader what=descriptorIndex given=1 action=checked");
+    equal(shader_counts.section(shader_last), "ShaderStaticRange=2 ShaderRootView=2 ShaderDescriptorIndex=1");
+    equal(lines(devices.read(shader_counts)), "");
+    equal(shader_counts.section(shader_last), "");
+    // from 2 to 2^32 - 1, then past 2^32 to 1: 2^32 - 1 in all
+    words[0] = UINT32_MAX;
+    devices.read(shader_counts);
+    words[0] = 1;
+    devices.read(shader_counts);
+    equal(shader_counts.section(shader_last), "ShaderStaticRange=4294967295");
+    // another device's words count in the same section, and say nothing a kind said already
+    devices.add(&other);
+    other_words[1] = 7;
+    equal(lines(devices.read(shader_counts)), "");
+    equal(shader_counts.section(shader_last), "ShaderRootView=7");
+    // a device that ends is read a last time, then never again
+    other_words[1] = 9;
+    equal(lines(devices.remove(&other, shader_counts)), "");
+    other_words[1] = 20;
+    devices.read(shader_counts);
+    equal(shader_counts.section(shader_last), "ShaderRootView=2");
+    check(devices.remove(&other, shader_counts).empty(), "a device removed twice");
+  }
+
   if (failures)
     std::printf("%u failed\n", failures);
   return failures ? 1 : 0;

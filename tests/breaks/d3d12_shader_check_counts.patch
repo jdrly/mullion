@@ -1,0 +1,12 @@
+# shaders convert without counting their checks
+--- a/src/airconv/dxbc_binding_rootsig.cpp
++++ b/src/airconv/dxbc_binding_rootsig.cpp
+@@ -78,7 +78,7 @@ CountFailedCheck(BindingMap &Binding, llvm::air::AIRBuilder &AIR, llvm::Value *W
+   // MULLION_AIRCONV_SKIP=check-counts leaves the counting out, to measure what it costs (it is in the shader cache's key)
+   static const bool skip = [] {
+     auto names = getenv("MULLION_AIRCONV_SKIP") ?: getenv("DXMT_AIRCONV_SKIP");
+-    return names && strstr(names, "check-counts");
++    return true;
+   }();
+   // a geometry shader's counting pass for stream output runs every access again in the pass that writes: it counts there
+   if (skip || AIR.DiscardWrites)

@@ -1,0 +1,12 @@
+# a device that ends isn't read a last time
+--- a/src/mullion/mullion_ranges.hpp
++++ b/src/mullion/mullion_ranges.hpp
+@@ -413,7 +413,7 @@ public:
+     if (it == devices_.end())
+       return {};
+     devices_.erase(it);
+-    return device->read(to, said_);
++    return {};
+   }
+ 
+   // every device's, at a STATS line

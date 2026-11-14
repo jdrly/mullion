@@ -26,10 +26,100 @@
 #include <set>
 #include <cmath>
 #include <cassert>
+#include <cstdlib>
+#include <cstring>
 
 namespace mullion::dxbc {
 
 using namespace llvm::air;
+
+// jdrly/mullion: `mullion.count_checks(locks, missed)`: for each kind whose bit `missed` has (SM50_CHECK_KIND), 1 added
+// to the kind's word of the lock table, after the mask (word 0), the locks and the flag of an atomic that gave up.
+// Nothing when `missed` is 0. Inlined wherever it is called
+static llvm::Function *
+CountChecks(llvm::air::AIRBuilder &AIR, llvm::Type *Locks) {
+  auto &B = AIR.builder;
+  auto &M = *B.GetInsertBlock()->getModule();
+  if (auto Fn = M.getFunction("mullion.count_checks"))
+    return Fn;
+  auto Fn = llvm::Function::Create(
+      llvm::FunctionType::get(B.getVoidTy(), {Locks, B.getInt32Ty()}, false), llvm::GlobalValue::InternalLinkage,
+      "mullion.count_checks", M
+  );
+  Fn->addFnAttr(llvm::Attribute::AlwaysInline);
+  auto Table = Fn->getArg(0), Missed = Fn->getArg(1);
+  auto Block = [&](const char *Name) { return llvm::BasicBlock::Create(M.getContext(), Name, Fn); };
+  llvm::IRBuilderBase::InsertPointGuard Guard(B);
+  B.SetInsertPoint(Block("entry"));
+  auto Done = Block("done"), Count = Block("count");
+  B.CreateCondBr(B.CreateICmpEQ(Missed, B.getInt32(0)), Done, Count);
+  B.SetInsertPoint(Count);
+  auto Mask = B.CreateLoad(B.getInt32Ty(), Table);
+  for (uint32_t Kind = 0; Kind < SM50_CHECK_KINDS; Kind++) {
+    auto Add = Block("count_kind"), Next = Block("next_kind");
+    B.CreateCondBr(B.CreateICmpNE(B.CreateAnd(Missed, B.getInt32(1u << Kind)), B.getInt32(0)), Add, Next);
+    B.SetInsertPoint(Add);
+    auto Word = B.CreateGEP(B.getInt32Ty(), Table, {B.CreateAdd(Mask, B.getInt32(3 + Kind))});
+    // the word is the device's own, which nothing the shader reads holds: the optimizer may keep values it loaded
+    // before, which an atomic that may write any memory would make it load again
+    llvm::cast<llvm::CallInst>(AIR.CreateAtomicRMW(llvm::AtomicRMWInst::Add, Word, B.getInt32(1)))
+        ->addFnAttr(llvm::Attribute::InaccessibleMemOnly);
+    B.CreateBr(Next);
+    B.SetInsertPoint(Next);
+  }
+  B.CreateBr(Done);
+  B.SetInsertPoint(Done);
+  B.CreateRetVoid();
+  return Fn;
+}
+
+void
+CountFailedCheck(BindingMap &Binding, llvm::air::AIRBuilder &AIR, llvm::Value *Within, uint32_t Kind) {
+  // MULLION_AIRCONV_SKIP=check-counts leaves the counting out, to measure what it costs (it is in the shader cache's key)
+  static const bool skip = [] {
+    auto names = getenv("MULLION_AIRCONV_SKIP") ?: getenv("DXMT_AIRCONV_SKIP");
+    return names && strstr(names, "check-counts");
+  }();
+  // a geometry shader's counting pass for stream output runs every access again in the pass that writes: it counts there
+  if (skip || AIR.DiscardWrites)
+    return;
+  auto Locks = Binding.GetAtomicLocks(AIR);
+  if (!Locks)
+    return;
+  auto &B = AIR.builder;
+  B.CreateCall(
+      CountChecks(AIR, Locks->getType()), {Locks, B.CreateSelect(Within, B.getInt32(0), B.getInt32(1u << Kind))}
+  );
+}
+
+void
+FinishCheckCounts(llvm::Module &M) {
+  auto Count = M.getFunction("mullion.count_checks");
+  if (!Count)
+    return;
+  std::map<llvm::Function *, std::vector<llvm::CallInst *>> Sites;
+  for (auto User : Count->users())
+    if (auto Call = llvm::dyn_cast<llvm::CallInst>(User); Call && Call->getCalledFunction() == Count)
+      Sites[Call->getFunction()].push_back(Call);
+  auto TyLocks = Count->getFunctionType()->getParamType(0);
+  for (auto &[F, Calls] : Sites) {
+    llvm::IRBuilder<> B(&*F->getEntryBlock().getFirstInsertionPt());
+    auto Locks = B.CreateAlloca(TyLocks), Missed = B.CreateAlloca(B.getInt32Ty());
+    B.CreateStore(llvm::Constant::getNullValue(TyLocks), Locks);
+    B.CreateStore(B.getInt32(0), Missed);
+    for (auto Call : Calls) {
+      B.SetInsertPoint(Call);
+      B.CreateStore(Call->getArgOperand(0), Locks);
+      B.CreateStore(B.CreateOr(B.CreateLoad(B.getInt32Ty(), Missed), Call->getArgOperand(1)), Missed);
+      Call->eraseFromParent();
+    }
+    for (auto &Block : *F)
+      if (auto Ret = llvm::dyn_cast<llvm::ReturnInst>(Block.getTerminator())) {
+        B.SetInsertPoint(Ret);
+        B.CreateCall(Count, {B.CreateLoad(TyLocks, Locks), B.CreateLoad(B.getInt32Ty(), Missed)});
+      }
+  }
+}
 
 class RootSignatureBindingMap : public BindingMap {
 public:
@@ -72,7 +162,9 @@ public:
     if (!Count)
       return Index;
     auto &B = AIR.builder;
-    return B.CreateSelect(B.CreateICmpULT(Index, Count), Index, B.CreateSub(Count, AIR.getInt(1)));
+    auto Within = B.CreateICmpULT(Index, Count);
+    CountFailedCheck(*this, AIR, Within, SM50_CHECK_DESCRIPTOR_INDEX);
+    return B.CreateSelect(Within, Index, B.CreateSub(Count, AIR.getInt(1)));
   }
 
   // a constant, structured or raw buffer's pointer and metadata (its byte length). `typed`, for a structured or raw
@@ -162,14 +254,20 @@ public:
     }
     if (DescriptorOffset == ~0u) {
       auto Pointer = GetArgument(Builder, RootSignatureArgumentIndex, CBuf.arg_index);
-      return ConstantBufferDescriptor{Pointer, RootViewLength(Builder, D3D12_DESCRIPTOR_RANGE_TYPE_CBV, Range)};
+      auto Length = RootViewLength(Builder, D3D12_DESCRIPTOR_RANGE_TYPE_CBV, Range);
+      return ConstantBufferDescriptor{
+          Pointer, Length, Length ? std::optional<uint32_t>(SM50_CHECK_ROOT_VIEW) : std::nullopt
+      };
     }
     auto HeapPointer = GetArgument(Builder, RootSignatureArgumentIndex, CBuf.arg_index);
     auto [Pointer, Metadata] = GetBufferDescriptor(
         Builder, HeapPointer, Index, Builder.getIntTy(4)->getPointerTo(2), CBuf.range.lower_bound, DescriptorOffset,
         false, DescriptorCount(Builder, CBuf.arg_index)
     );
-    return ConstantBufferDescriptor{Pointer, Unbounded.count({D3D12_DESCRIPTOR_RANGE_TYPE_CBV, Range}) ? nullptr : Metadata};
+    return ConstantBufferDescriptor{
+        Pointer, Unbounded.count({D3D12_DESCRIPTOR_RANGE_TYPE_CBV, Range}) ? nullptr : Metadata,
+        GuardCounted(D3D12_DESCRIPTOR_RANGE_TYPE_CBV, Range)
+    };
   }
 
   SamplerDescriptor
@@ -342,7 +440,9 @@ public:
     auto HeapPointer = GetArgument(Builder, RootSignatureArgumentIndex, SRV.arg_index);
     if (DescriptorOffset == ~0u) {
       if (auto Length = RootViewLength(Builder, D3D12_DESCRIPTOR_RANGE_TYPE_SRV, Range))
-        return BufferDescriptor{HeapPointer, Length, SRV.structure_stride, false, true, GetAtomicLocks(Builder)};
+        return BufferDescriptor{
+            HeapPointer, Length, SRV.structure_stride, false, true, GetAtomicLocks(Builder), SM50_CHECK_ROOT_VIEW
+        };
       return BufferDescriptor{HeapPointer, Builder.builder.getInt64(0xffffffff), SRV.structure_stride, false, false};
     }
     auto [Pointer, Metadata] = GetBufferDescriptor(
@@ -351,7 +451,8 @@ public:
     );
 
     return BufferDescriptor{
-        Pointer, Metadata, SRV.structure_stride, false, !Unbounded.count({D3D12_DESCRIPTOR_RANGE_TYPE_SRV, Range})
+        Pointer, Metadata, SRV.structure_stride, false, !Unbounded.count({D3D12_DESCRIPTOR_RANGE_TYPE_SRV, Range}),
+        nullptr, GuardCounted(D3D12_DESCRIPTOR_RANGE_TYPE_SRV, Range)
     };
   }
 
@@ -370,7 +471,8 @@ public:
     if (DescriptorOffset == ~0u) {
       if (auto Length = RootViewLength(Builder, D3D12_DESCRIPTOR_RANGE_TYPE_UAV, Range))
         return BufferDescriptor{
-            HeapPointer, Length, UAV.structure_stride, UAV.global_coherent, true, GetAtomicLocks(Builder)
+            HeapPointer, Length, UAV.structure_stride, UAV.global_coherent, true, GetAtomicLocks(Builder),
+            SM50_CHECK_ROOT_VIEW
         };
       return BufferDescriptor{
           HeapPointer, Builder.builder.getInt64(0xffffffff), UAV.structure_stride, UAV.global_coherent, false
@@ -383,7 +485,8 @@ public:
 
     return BufferDescriptor{
         Pointer, Metadata, UAV.structure_stride, UAV.global_coherent,
-        !Unbounded.count({D3D12_DESCRIPTOR_RANGE_TYPE_UAV, Range})
+        !Unbounded.count({D3D12_DESCRIPTOR_RANGE_TYPE_UAV, Range}), nullptr,
+        GuardCounted(D3D12_DESCRIPTOR_RANGE_TYPE_UAV, Range)
     };
   }
 
@@ -432,6 +535,14 @@ public:
 
   // the table ranges whose descriptors root signature 1.1 says are static, by range type (BufferDescriptor::Bounded)
   std::set<std::pair<D3D12_DESCRIPTOR_RANGE_TYPE, RangeId>> Unbounded;
+  // jdrly/mullion: the static ranges whose checks SM50_SHADER_FLAG_GUARD_STATIC_RANGES alone keeps, by range type
+  std::set<std::pair<D3D12_DESCRIPTOR_RANGE_TYPE, RangeId>> Guarded;
+
+  // what a failed check of a view through a table counts as: a static range's that the guard keeps, else nothing
+  std::optional<uint32_t>
+  GuardCounted(D3D12_DESCRIPTOR_RANGE_TYPE Type, RangeId Range) {
+    return Guarded.count({Type, Range}) ? std::optional<uint32_t>(SM50_CHECK_STATIC_RANGE) : std::nullopt;
+  }
   // jdrly/mullion: a root CBV, SRV or UAV's length in the root arguments (SM50_SHADER_FLAG_CHECK_ROOT_RANGES); a root
   // view not in it carries none, as upstream's never do. A load past a root SRV or UAV reads its dropped value from
   // the lock table of 64-bit atomics, which every root signature binds, instead of the view's start, which may have
@@ -563,13 +674,18 @@ setup_binding_rootsig(
         // D3D12_DESCRIPTOR_RANGE_FLAG_DESCRIPTORS_STATIC_KEEPING_BUFFER_BOUNDS_CHECKS, which the bundled header lacks
         constexpr uint32_t kKeepsBoundsChecks = 0x10000;
         bool bounded = uint32_t(range.Flags) & (D3D12_DESCRIPTOR_RANGE_FLAG_DESCRIPTORS_VOLATILE | kKeepsBoundsChecks);
-        // jdrly/mullion: MULLION_D3D12_GUARD_STATIC_RANGES=1 keeps a static range's checks too
-        bounded = bounded || (shader_flags & SM50_SHADER_FLAG_GUARD_STATIC_RANGES);
+        // jdrly/mullion: MULLION_D3D12_GUARD_STATIC_RANGES=1 keeps a static range's checks too, and counts where they fail
+        bool guarded = !bounded && (shader_flags & SM50_SHADER_FLAG_GUARD_STATIC_RANGES);
+        bounded = bounded || guarded;
         auto bind = [&](RangeId id) {
           if (bounded)
             binding_map->Unbounded.erase({range.RangeType, id});
           else
             binding_map->Unbounded.insert({range.RangeType, id});
+          if (guarded)
+            binding_map->Guarded.insert({range.RangeType, id});
+          else
+            binding_map->Guarded.erase({range.RangeType, id});
         };
         switch (range.RangeType) {
         case D3D12_DESCRIPTOR_RANGE_TYPE_SRV: {

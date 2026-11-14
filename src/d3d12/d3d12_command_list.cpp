@@ -181,9 +181,12 @@ static sw::Switch<bool> kCheckRanges{"MULLION_D3D12_CHECK_RANGES", false, sw::ex
 static const bool kRangesOn = kCheckRanges();
 const bool ranges::on = kRangesOn;
 
-// RANGE after STATS: the calls the checks dropped in the window
+// RANGE after STATS: the calls the checks dropped in the window, and the checks shaders counted themselves, which their
+// devices' words say (ranges::ShaderChecks)
 static stats::SectionRegistrar kRangeSection{"RANGE", [](double, uint64_t) {
   static std::array<uint64_t, size_t(ranges::Call::Count)> last{};
+  for (auto &line : ranges::shader_check_words.read(ranges::counts))
+    WARN(line);
   return ranges::counts.section(last);
 }};
 

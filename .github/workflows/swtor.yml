@@ -382,8 +382,9 @@ jobs:
               # whatever its depth, a view's end as address + size, the bridge's Metal 4 length from an offset as
               # length - offset, which wraps past the end, a buffer made or released keeping the ranges, a root view's
               # bound past 32 bits, a table at its heap's end counted as in it, a command list's found buffer outliving
-              # one, a table's span cut to its last range, and an ExecuteIndirect's last command counted as a whole
-              # stride
+              # one, a table's span cut to its last range, an ExecuteIndirect's last command counted as a whole
+              # stride, a shader check's word counted as its value instead of what it added, and a device's words not
+              # read when it ends
               host_ranges) lines=('  Size 18446744073709551608 240') x=x ;;
               host_ranges.2) lines=('failed: a 3D footprint') ;;
               host_ranges.3) lines=('  Size 18446744073709551360 256') x=x ;;
@@ -394,6 +395,8 @@ jobs:
               host_ranges.8) lines=('failed: a buffer released or made forgets the buffer found') ;;
               host_ranges.9) lines=("failed: a range placed before another doesn't shorten the table") ;;
               host_ranges.10) lines=('failed: four commands of stride 32 and 12 bytes of arguments take 108') ;;
+              host_ranges.11) lines=('  ShaderStaticRange=2 ShaderRootView=5 ShaderDescriptorIndex=1') x=x ;;
+              host_ranges.12) lines=('  ShaderRootView=2') x=x ;;
               # the window lines with an activation alone written as d9mt's visibility line, what the watch said
               # last following only the lines it wrote, and an activation line clearing the count of lines left out
               host_window_lines) lines=("failed: an activation alone isn't a visibility line for the report") ;;
@@ -422,6 +425,17 @@ jobs:
                 lines=('FAILED: every descriptor load through the resource table is clamped with the flag') ;;
               host_check_root_ranges.13)
                 lines=('FAILED: every descriptor load through the sampler table is clamped with the flag') ;;
+              # and a failed check left uncounted at a constant buffer's row, a raw load, a load of several units, a
+              # load at a constant offset or a store, at the root views' count; a clamp or a static range's checks
+              # uncounted, at that kind's; each check counted where it fails instead of once at the return, or every
+              # check counted, failed or not, at the one atomic (private ticket 33)
+              host_check_root_ranges.1[5-9])
+                lines=('FAILED: every check of a root view counts where it fails') ;;
+              host_check_root_ranges.20) lines=("FAILED: a descriptor index's clamps count where they clamp") ;;
+              host_check_root_ranges.21)
+                lines=("FAILED: every check of a static range counts where it fails, as a root view's do") ;;
+              host_check_root_ranges.2[23])
+                lines=("FAILED: a root view's checks count in one atomic, which no check that passes reaches") ;;
               # #7's fixes undone: a pixel shader's unhandled dcl_input_ps_siv or dcl_input_ps_sgv copying v1 from an
               # argument never chosen, and a DXIL typed resource of doubles converted instead of refused
               host_converter_fixes) lines=('FAILED: an unhandled dcl_input_ps_siv converts and adds no argument') ;;

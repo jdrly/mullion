@@ -1,0 +1,12 @@
+# a shader's check counts the word's value at each read, not what it added since the last
+--- a/src/mullion/mullion_ranges.hpp
++++ b/src/mullion/mullion_ranges.hpp
+@@ -382,7 +382,7 @@ struct ShaderChecks {
+   read(Counts &to, std::array<std::atomic<bool>, kShaderChecks> &said) {
+     std::vector<std::string> lines;
+     for (size_t kind = 0; kind < kShaderChecks; kind++) {
+-      uint32_t now = __atomic_load_n(&words[kind], __ATOMIC_RELAXED), added = now - last[kind];
++      uint32_t now = __atomic_load_n(&words[kind], __ATOMIC_RELAXED), added = now;
+       last[kind] = now;
+       if (!added)
+         continue;

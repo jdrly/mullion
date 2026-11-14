@@ -1,12 +1,10 @@
 # a scalar constant-buffer load has no lowering
 --- a/src/airconv/dxil_converter.cpp
 +++ b/src/airconv/dxil_converter.cpp
-@@ -2752,26 +2752,6 @@
-           break;
-         }
+@@ -3100,28 +3100,6 @@ convert_dxil(
        });
--      break;
--    }
+       break;
+     }
 -    case CBufferLoad: {
 -      // DXIL.rst CBufferLoad aligns the offset; DXR shader records can put root constants after one DWORD. past the
 -      // bound size it reads 0 (D3D11.3 7.5): from a row of zeros instead, as LoadConstantBuffer does
@@ -19,12 +17,16 @@
 -      if (buffer.Metadata) {
 -        auto end = ir.CreateAdd(offset, ir.getInt64(ctx.module.getDataLayout().getTypeStoreSize(ty).getFixedSize()));
 -        auto zero = ir.CreatePointerCast(dxbc.ZeroRow(), ir.getInt8Ty()->getPointerTo(space));
--        pointer = ir.CreateSelect(ir.CreateICmpULE(end, buffer.Metadata), pointer, zero);
+-        auto within = ir.CreateICmpULE(end, buffer.Metadata);
+-        dxbc.CountMiss(buffer.Counted, within);
+-        pointer = ir.CreateSelect(within, pointer, zero);
 -      }
 -      ret = ir.CreateAlignedLoad(
 -          ty, ir.CreatePointerCast(pointer, ty->getPointerTo(space)),
 -          std::min(Align(constant(a(3))), getKnownAlignment(buffer.Pointer, ctx.module.getDataLayout()))
 -      );
-       break;
-     }
+-      break;
+-    }
      case CBufferLoadLegacy: {
+       // a 16-byte row, as the elements DXIL reads it as: four of 32 bits, eight of 16 or two of 64
+       auto sty = cast<StructType>(ty);

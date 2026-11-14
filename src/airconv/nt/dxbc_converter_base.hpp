@@ -65,6 +65,7 @@ struct BufferResourceHandle {
   bool GlobalCoherent;
   bool Bounded = true; // BufferDescriptor::Bounded
   llvm::Value *Fallback = nullptr; // BufferDescriptor::Fallback
+  std::optional<uint32_t> Counted = std::nullopt; // BufferDescriptor::Counted
   // the metadata an access is checked against, where it has to be
   llvm::Value *Bounds() const { return Bounded ? Metadata : nullptr; }
 };
@@ -76,6 +77,7 @@ struct AtomicBufferResourceHandle {
   mask_t Mask;
   bool GlobalCoherent;
   bool Bounded = true;
+  std::optional<uint32_t> Counted = std::nullopt; // BufferDescriptor::Counted
   llvm::Value *Bounds() const { return Bounded ? Metadata : nullptr; }
 };
 
@@ -652,7 +654,8 @@ public:
   MakeBufferHandle(const BufferDescriptor &Descriptor, Swizzle Swizzle) {
     return {
         Descriptor.Pointer, Descriptor.Metadata, Descriptor.StructureStride, Swizzle,
-        Descriptor.GlobalCoherent && SupportsMemoryCoherency(), Descriptor.Bounded, Descriptor.Fallback
+        Descriptor.GlobalCoherent && SupportsMemoryCoherency(), Descriptor.Bounded, Descriptor.Fallback,
+        Descriptor.Counted
     };
   }
 
@@ -665,6 +668,10 @@ public:
       Handle.Pointer = ir.CreateSelect(Within, Buffer.Pointer, ir.CreatePointerCast(Buffer.Fallback, Buffer.Pointer->getType()));
     return Handle;
   }
+
+  // jdrly/mullion: counts a check of a view of kind `Counted` (BufferDescriptor::Counted) that fails where `Within` is
+  // false, where a flag added the check: nothing otherwise
+  void CountMiss(const std::optional<uint32_t> &Counted, llvm::Value *Within);
 
   TextureResourceHandle
   MakeTextureHandle(const TextureDescirptor &Descriptor, Swizzle Swizzle) {

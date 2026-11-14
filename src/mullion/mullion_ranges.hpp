@@ -31,7 +31,9 @@
 #include <atomic>
 #include <cstddef>
 #include <cstdint>
+#include <mutex>
 #include <string>
+#include <vector>
 
 namespace mullion::ranges {
 
@@ -267,6 +269,10 @@ enum class Call : unsigned {
   SetRootView,
   SetRootDescriptorTable,
   ExecuteIndirect,
+  // a check in a shader (ShaderChecks), by its kind, in SM50_CHECK_KIND's order
+  ShaderStaticRange,
+  ShaderRootView,
+  ShaderDescriptorIndex,
   Count
 };
 
@@ -291,6 +297,12 @@ CallName(Call call) {
     return "SetRootDescriptorTable";
   case Call::ExecuteIndirect:
     return "ExecuteIndirect";
+  case Call::ShaderStaticRange:
+    return "ShaderStaticRange";
+  case Call::ShaderRootView:
+    return "ShaderRootView";
+  case Call::ShaderDescriptorIndex:
+    return "ShaderDescriptorIndex";
   default:
     return "?";
   }
@@ -308,8 +320,8 @@ struct Counts {
   std::array<std::atomic<uint64_t>, size_t(Call::Count)> calls{};
 
   void
-  add(Call call) {
-    calls[size_t(call)].fetch_add(1, std::memory_order_relaxed);
+  add(Call call, uint64_t n = 1) {
+    calls[size_t(call)].fetch_add(n, std::memory_order_relaxed);
   }
 
   // the RANGE section's text for the window that ends: the calls dropped since `last`, the counts at the window
@@ -345,5 +357,83 @@ struct Site {
     return said.exchange(true, std::memory_order_relaxed) ? std::string() : Line(call, side, overrun, action);
   }
 };
+
+// the checks shaders make themselves, which the CPU doesn't see happen: SM50_CHECK_KIND's kinds, in its order
+// (src/airconv/airconv_public.h). Where one fails, the shader adds 1 to its kind's word of the device's lock table, once
+// per call of the function that failed it however often it did. The words wrap at 2^32
+constexpr size_t kShaderChecks = 3;
+
+inline const char *
+ShaderCheckName(size_t kind) {
+  static constexpr const char *names[kShaderChecks] = {"staticRange", "rootView", "descriptorIndex"};
+  return kind < kShaderChecks ? names[kind] : "?";
+}
+
+// one device's words, which its shaders write and only they: the CPU reads them, at each STATS line and when the device
+// ends, and what each kind added since the last read is counted in the RANGE section as Shader<Kind>. Not thread-safe:
+// ShaderCheckWords reads each under its lock
+struct ShaderChecks {
+  const uint32_t *words = nullptr; // kShaderChecks of them, the GPU's
+  std::array<uint32_t, kShaderChecks> last{};
+
+  // what each kind added since the last read, counted in `to`; the line to write for each kind that added any, the
+  // first time a kind does in the process (`said`)
+  std::vector<std::string>
+  read(Counts &to, std::array<std::atomic<bool>, kShaderChecks> &said) {
+    std::vector<std::string> lines;
+    for (size_t kind = 0; kind < kShaderChecks; kind++) {
+      uint32_t now = __atomic_load_n(&words[kind], __ATOMIC_RELAXED), added = now - last[kind];
+      last[kind] = now;
+      if (!added)
+        continue;
+      to.add(Call(size_t(Call::ShaderStaticRange) + kind), added);
+      if (!said[kind].exchange(true, std::memory_order_relaxed))
+        lines.push_back(std::string("MULLION-RANGE call=Shader what=") + ShaderCheckName(kind) +
+                        " given=" + std::to_string(added) + " action=checked");
+    }
+    return lines;
+  }
+};
+
+// the words of every device whose shaders count their checks, which a device adds when it makes its lock table and
+// removes before it releases it
+class ShaderCheckWords {
+public:
+  void
+  add(ShaderChecks *device) {
+    std::lock_guard lock(mutex_);
+    devices_.push_back(device);
+  }
+
+  // reads the device's words a last time: the lines that gives
+  std::vector<std::string>
+  remove(ShaderChecks *device, Counts &to) {
+    std::lock_guard lock(mutex_);
+    auto it = std::find(devices_.begin(), devices_.end(), device);
+    if (it == devices_.end())
+      return {};
+    devices_.erase(it);
+    return device->read(to, said_);
+  }
+
+  // every device's, at a STATS line
+  std::vector<std::string>
+  read(Counts &to) {
+    std::lock_guard lock(mutex_);
+    std::vector<std::string> lines;
+    for (auto device : devices_)
+      for (auto &line : device->read(to, said_))
+        lines.push_back(std::move(line));
+    return lines;
+  }
+
+private:
+  std::mutex mutex_;
+  std::vector<ShaderChecks *> devices_;
+  std::array<std::atomic<bool>, kShaderChecks> said_{};
+};
+
+// this DLL's
+inline ShaderCheckWords shader_check_words;
 
 } // namespace mullion::ranges

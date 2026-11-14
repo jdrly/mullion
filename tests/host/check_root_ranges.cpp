@@ -9,6 +9,12 @@
 // - a constant buffer, SRV or UAV through a descriptor table, the other two root descriptors: more bounds compares with
 //   -check-descriptor-indices (SM50_SHADER_FLAG_CHECK_DESCRIPTOR_INDICES) than without, each kind on its own. its
 //   descriptor index is clamped below the count of descriptors the heap has from the table's start.
+// - a check any of the three flags adds counts where it fails (private ticket 33): a shader with one access down each
+//   path a check takes (a constant buffer's row, a raw load, a structured load at a constant offset and at one it
+//   computes, a structured store) is converted with root views (-check-root-ranges), with a table of static ranges
+//   (-guard-static-ranges) and with a volatile table (-check-descriptor-indices). Each kind's count is one atomic add
+//   to the kind's word of the lock table, behind a branch on the bounds compares of that kind's checks: every one of
+//   them, and nothing that passes reaches the atomic. Without the flags nothing counts.
 //
 //   host_check_root_ranges <airconv>
 //
@@ -185,13 +191,82 @@ heap_program() {
   return p;
 }
 
+// cs_5_0, an access down each path a bounds check takes, each against its own bound:
+//   dcl_constantbuffer cb0[4], dynamicIndexed
+//   dcl_resource_structured t0, 16
+//   dcl_resource_raw t1
+//   dcl_uav_structured u0, 16
+//   dcl_input vThreadID.x
+//   dcl_temps 3
+//   dcl_thread_group 1, 1, 1
+//   mov r1.x, vThreadID.x
+//   ld_structured r0.x, vThreadID.x, l(0), t0.xxxx       ; a constant offset: one compare for the element
+//   ld_structured r2.xyzw, vThreadID.x, r0.x, t0.xyzw    ; an offset the shader computes: four units, one bound
+//   ld_raw r0.y, r0.x, t1.xxxx                           ; a raw load: its own bound
+//   iadd r2.x, r2.x, r0.y
+//   iadd r2.x, r2.x, cb0[r1.x + 0].x                     ; a constant buffer's row
+//   store_structured u0.x, vThreadID.x, l(0), r2.x       ; a store
+//   ret
+static Words
+counted_program() {
+  constexpr uint32_t x = D3D10_SB_OPERAND_4_COMPONENT_MASK_X, y = D3D10_SB_OPERAND_4_COMPONENT_MASK_Y,
+                     all = D3D10_SB_OPERAND_4_COMPONENT_MASK_ALL;
+  Words p{ENCODE_D3D10_SB_TOKENIZED_PROGRAM_VERSION_TOKEN(D3D11_SB_COMPUTE_SHADER, 5, 0), 0};
+  instruction(
+      p, D3D10_SB_OPCODE_DCL_CONSTANT_BUFFER,
+      {{four(D3D10_SB_OPERAND_TYPE_CONSTANT_BUFFER, D3D10_SB_OPERAND_4_COMPONENT_NOSWIZZLE,
+             D3D10_SB_OPERAND_4_COMPONENT_SWIZZLE_MODE, D3D10_SB_OPERAND_INDEX_2D),
+        0, 4}},
+      ENCODE_D3D10_SB_D3D10_SB_CONSTANT_BUFFER_ACCESS_PATTERN(D3D10_SB_CONSTANT_BUFFER_DYNAMIC_INDEXED)
+  );
+  instruction(p, D3D11_SB_OPCODE_DCL_RESOURCE_STRUCTURED, {empty(D3D10_SB_OPERAND_TYPE_RESOURCE, 0), {16}});
+  instruction(p, D3D11_SB_OPCODE_DCL_RESOURCE_RAW, {empty(D3D10_SB_OPERAND_TYPE_RESOURCE, 1)});
+  instruction(p, D3D11_SB_OPCODE_DCL_UNORDERED_ACCESS_VIEW_STRUCTURED,
+              {empty(D3D11_SB_OPERAND_TYPE_UNORDERED_ACCESS_VIEW, 0), {16}});
+  instruction(p, D3D10_SB_OPCODE_DCL_INPUT,
+              {{four(D3D11_SB_OPERAND_TYPE_INPUT_THREAD_ID, x, D3D10_SB_OPERAND_4_COMPONENT_MASK_MODE,
+                     D3D10_SB_OPERAND_INDEX_0D)}});
+  instruction(p, D3D10_SB_OPCODE_DCL_TEMPS, {{3}});
+  instruction(p, D3D11_SB_OPCODE_DCL_THREAD_GROUP, {{1, 1, 1}});
+  instruction(p, D3D10_SB_OPCODE_MOV, {masked(D3D10_SB_OPERAND_TYPE_TEMP, 1, x), thread_x()});
+  instruction(p, D3D11_SB_OPCODE_LD_STRUCTURED,
+              {masked(D3D10_SB_OPERAND_TYPE_TEMP, 0, x), thread_x(), immediate(0),
+               swizzled(D3D10_SB_OPERAND_TYPE_RESOURCE, 0, D3D10_SB_OPERAND_4_COMPONENT_REPLICATEX)});
+  instruction(p, D3D11_SB_OPCODE_LD_STRUCTURED,
+              {masked(D3D10_SB_OPERAND_TYPE_TEMP, 2, all), thread_x(), selected(D3D10_SB_OPERAND_TYPE_TEMP, 0, 0),
+               swizzled(D3D10_SB_OPERAND_TYPE_RESOURCE, 0, D3D10_SB_OPERAND_4_COMPONENT_NOSWIZZLE)});
+  instruction(p, D3D11_SB_OPCODE_LD_RAW,
+              {masked(D3D10_SB_OPERAND_TYPE_TEMP, 0, y), selected(D3D10_SB_OPERAND_TYPE_TEMP, 0, 0),
+               swizzled(D3D10_SB_OPERAND_TYPE_RESOURCE, 1, D3D10_SB_OPERAND_4_COMPONENT_REPLICATEX)});
+  instruction(p, D3D10_SB_OPCODE_IADD,
+              {masked(D3D10_SB_OPERAND_TYPE_TEMP, 2, x), selected(D3D10_SB_OPERAND_TYPE_TEMP, 2, 0),
+               selected(D3D10_SB_OPERAND_TYPE_TEMP, 0, 1)});
+  Words element{four(D3D10_SB_OPERAND_TYPE_CONSTANT_BUFFER, ENCODE_D3D10_SB_OPERAND_4_COMPONENT_SELECT_1(0),
+                     D3D10_SB_OPERAND_4_COMPONENT_SELECT_1_MODE, D3D10_SB_OPERAND_INDEX_2D) |
+                    ENCODE_D3D10_SB_OPERAND_INDEX_REPRESENTATION(0, D3D10_SB_OPERAND_INDEX_IMMEDIATE32) |
+                    ENCODE_D3D10_SB_OPERAND_INDEX_REPRESENTATION(1, D3D10_SB_OPERAND_INDEX_IMMEDIATE32_PLUS_RELATIVE),
+                0, 0};
+  auto relative = selected(D3D10_SB_OPERAND_TYPE_TEMP, 1, 0);
+  element.insert(element.end(), relative.begin(), relative.end());
+  instruction(p, D3D10_SB_OPCODE_IADD,
+              {masked(D3D10_SB_OPERAND_TYPE_TEMP, 2, x), selected(D3D10_SB_OPERAND_TYPE_TEMP, 2, 0), element});
+  instruction(p, D3D11_SB_OPCODE_STORE_STRUCTURED,
+              {masked(D3D11_SB_OPERAND_TYPE_UNORDERED_ACCESS_VIEW, 0, x), thread_x(), immediate(0),
+               selected(D3D10_SB_OPERAND_TYPE_TEMP, 2, 0)});
+  instruction(p, D3D10_SB_OPCODE_RET);
+  p[1] = p.size();
+  return p;
+}
+
 // a version 1.1 root signature (RTS0) of `parameters`: each a root descriptor of `kind` (D3D12_ROOT_PARAMETER_TYPE:
-// 2 CBV, 3 SRV, 4 UAV) at `reg`, or a descriptor table (0) of volatile ranges of `kinds` (D3D12_DESCRIPTOR_RANGE_TYPE:
-// 0 SRV, 1 UAV, 2 CBV), one descriptor each at register 0
+// 2 CBV, 3 SRV, 4 UAV) at `reg`, or a descriptor table (0) of volatile or static ranges of `kinds`
+// (D3D12_DESCRIPTOR_RANGE_TYPE: 0 SRV, 1 UAV, 2 CBV), one descriptor each at its register
 struct Parameter {
   uint32_t kind;
   std::vector<uint32_t> ranges;
   uint32_t reg = 0;
+  std::vector<uint32_t> registers = {}; // a table's ranges' registers, 0 for each without one
+  bool is_static = false;               // a table's ranges are static (flags 0), not volatile
 };
 
 static Words
@@ -207,8 +282,9 @@ root_signature(std::initializer_list<Parameter> parameters) {
     }
     uint32_t ranges = at + 4 * (payloads.size() + 2);
     payloads.insert(payloads.end(), {uint32_t(parameter.ranges.size()), ranges});
-    for (auto kind : parameter.ranges)
-      payloads.insert(payloads.end(), {kind, 1, 0, 0, volatile_, append});
+    for (size_t i = 0; i < parameter.ranges.size(); i++)
+      payloads.insert(payloads.end(), {parameter.ranges[i], 1, i < parameter.registers.size() ? parameter.registers[i] : 0,
+                                       0, parameter.is_static ? 0 : volatile_, append});
   }
   header.insert(header.end(), entries.begin(), entries.end());
   header.insert(header.end(), payloads.begin(), payloads.end());
@@ -441,6 +517,212 @@ descriptors(const std::string &ir, int table, int count) {
   return out;
 }
 
+// the checks one function counts (SM50_CHECK_KIND): each atomic add to a word of the lock table at field `locks`, by its
+// kind, and the bounds compares the nearest branch that guards it depends on (its leaves). A word's address is the
+// table, indexed by the table's word 0 (its mask) plus 3 and the kind. A guard's leaves are the compares reached from
+// its condition through the logic that gathers a function's checks (select, and, or, the test of a kind's bit),
+// stopping at an ordering compare (`icmp ult` and the like), which is a bounds check's. `bounds` lists, for the fields
+// given, every ordering compare that depends on a load of one of them: the checks against a root view's length or a
+// table's count. All by name, as the trace above
+struct Counted {
+  std::map<int, unsigned> atomics;              // per kind
+  std::map<int, std::set<std::string>> leaves;  // per kind, of every atomic's guard
+  std::map<int, unsigned> unguarded;            // per kind: atomics no conditional branch leads to
+  std::set<std::string> bounds;
+};
+
+static Counted
+counted(const std::string &ir, int locks, std::initializer_list<int> fields = {}) {
+  struct Definition {
+    std::string op, predicate, block;
+    std::vector<std::string> operands;
+    std::vector<long long> constants; // integer constants among its operands
+    int field = -1;
+    bool from_i1 = false; // a zext of an i1, which is bit 0 only
+  };
+  struct Block {
+    std::vector<std::string> preds;
+    std::string condition; // of its conditional branch, else ""
+  };
+  std::map<std::string, Definition> defs;
+  std::map<std::string, Block> blocks;
+  std::vector<std::pair<std::string, std::string>> adds; // an atomic add's address and its block
+  std::istringstream lines(ir);
+  bool in_function = false;
+  std::string block;
+  for (std::string line; std::getline(lines, line);) {
+    if (line.rfind("define ", 0) == 0) {
+      in_function = line.find("@shader_main(") != std::string::npos;
+      block = "entry";
+      continue;
+    }
+    if (line == "}")
+      in_function = false;
+    if (!in_function || line.empty())
+      continue;
+    if (line[0] != ' ' && line[0] != ';') {
+      block = "%" + line.substr(0, line.find(':'));
+      if (block == "%entry")
+        block = "entry";
+      continue;
+    }
+    // a branch: its targets' predecessor, and its condition
+    if (line.rfind("  br ", 0) == 0) {
+      std::istringstream words(line);
+      std::string word, condition;
+      std::vector<std::string> targets;
+      for (bool next_label = false; words >> word;) {
+        while (!word.empty() && word.back() == ',')
+          word.pop_back();
+        if (next_label)
+          targets.push_back(word == "%entry" ? "entry" : word);
+        else if (word[0] == '%')
+          condition = word;
+        next_label = word == "label";
+      }
+      for (auto &target : targets)
+        blocks[target].preds.push_back(block);
+      if (targets.size() == 2)
+        blocks[block].condition = condition;
+      continue;
+    }
+    if (line.find("@air.atomic.global.add.u.i32(") != std::string::npos) {
+      auto at = line.find("* %", line.find("@air.atomic.global.add.u.i32("));
+      auto pointer = line.substr(at + 2);
+      adds.push_back({pointer.substr(0, pointer.find_first_of(", ")), block});
+      continue;
+    }
+    auto eq = line.find(" = ");
+    if (line.compare(0, 3, "  %") || eq == std::string::npos)
+      continue;
+    auto name = line.substr(2, eq - 2);
+    std::istringstream words(line.substr(eq + 3));
+    Definition def;
+    def.block = block;
+    words >> def.op;
+    if (def.op == "icmp")
+      words >> def.predicate;
+    def.from_i1 = def.op == "zext" && line.find("zext i1 ") != std::string::npos;
+    for (std::string word; words >> word;) {
+      while (!word.empty() && (word.back() == ',' || word.back() == ')' || word.back() == ']'))
+        word.pop_back();
+      if (word.size() > 1 && word[0] == '%' && word.find("argument_buffer_struct") == std::string::npos &&
+          word.rfind("%struct.", 0) != 0)
+        def.operands.push_back(word);
+      else if (!word.empty() && (std::isdigit((unsigned char)word[0]) || (word[0] == '-' && word.size() > 1)))
+        def.constants.push_back(std::atoll(word.c_str()));
+    }
+    if (def.op == "getelementptr" && line.find("%argument_buffer_struct, ") != std::string::npos)
+      def.field = std::stoi(line.substr(line.rfind("i32 ") + 4));
+    defs[name] = def;
+  }
+  auto def_of = [&](const std::string &value) -> const Definition * {
+    auto it = defs.find(value);
+    return it == defs.end() ? nullptr : &it->second;
+  };
+  // the field a value was loaded from, -1 for none
+  auto field_of = [&](const std::string &value) {
+    auto d = def_of(value);
+    if (!d || d->op != "load" || d->operands.empty())
+      return -1;
+    auto at = def_of(d->operands[0]);
+    return at ? at->field : -1;
+  };
+  // an atomic's kind: its address is the lock table indexed by the table's word 0 plus 3 and the kind
+  auto kind_of = [&](const std::string &pointer) {
+    auto gep = def_of(pointer);
+    if (!gep || gep->op != "getelementptr" || gep->operands.size() != 2 || field_of(gep->operands[0]) != locks)
+      return -1;
+    auto index = def_of(gep->operands[1]);
+    while (index && (index->op == "sext" || index->op == "zext") && !index->operands.empty())
+      index = def_of(index->operands[0]);
+    if (!index || index->op != "add" || index->operands.size() != 1 || index->constants.size() != 1)
+      return -1;
+    auto mask = def_of(index->operands[0]);
+    if (!mask || mask->op != "load" || mask->operands.empty() || mask->operands[0] != gep->operands[0])
+      return -1;
+    return int(index->constants[0]) - 3;
+  };
+  // the leaves of `value`, following only the bits of `mask`: a kind's bit test (`and` with its bit) follows that bit,
+  // a select of constants follows its condition when one of them has a bit followed, and an i1 is all its bits
+  std::set<std::string> seen;
+  std::function<void(const std::string &, uint64_t, std::set<std::string> &)> leaves_of =
+      [&](const std::string &value, uint64_t mask, std::set<std::string> &out) {
+        auto d = def_of(value);
+        if (!d || !mask || !seen.insert(value + "/" + std::to_string(mask)).second)
+          return;
+        if (d->op == "icmp" && d->predicate != "eq" && d->predicate != "ne") {
+          out.insert(value);
+          return;
+        }
+        if (d->from_i1) {
+          if (mask & 1)
+            leaves_of(d->operands[0], ~0ull, out);
+        } else if (d->op == "icmp" || d->op == "freeze" || d->op == "zext" || d->op == "sext" || d->op == "trunc") {
+          for (auto &operand : d->operands)
+            leaves_of(operand, d->op == "icmp" ? ~0ull : mask, out);
+        } else if (d->op == "and" && d->constants.size() == 1) {
+          leaves_of(d->operands[0], mask & d->constants[0], out);
+        } else if ((d->op == "shl" || d->op == "lshr") && d->constants.size() == 1 && d->operands.size() == 1) {
+          leaves_of(d->operands[0], d->op == "shl" ? mask >> d->constants[0] : mask << d->constants[0], out);
+        } else if (d->op == "and" || d->op == "or" || d->op == "xor" || d->op == "phi") {
+          for (auto &operand : d->operands)
+            if (operand.rfind("%", 0) == 0 && !blocks.count(operand))
+              leaves_of(operand, mask, out);
+        } else if (d->op == "select" && !d->operands.empty()) {
+          bool chooses = false;
+          for (auto constant : d->constants)
+            chooses = chooses || (uint64_t(constant) & mask);
+          std::set<std::string> values;
+          for (size_t i = 1; i < d->operands.size(); i++)
+            leaves_of(d->operands[i], mask, values);
+          if (chooses || !values.empty() || d->operands.size() == 3)
+            leaves_of(d->operands[0], ~0ull, out);
+          out.insert(values.begin(), values.end());
+        }
+      };
+  Counted out;
+  for (auto &[pointer, at] : adds) {
+    int kind = kind_of(pointer);
+    if (kind < 0)
+      continue;
+    out.atomics[kind]++;
+    // the nearest conditional branch on the way to it, through blocks of one predecessor
+    std::string guard;
+    for (auto b = at; blocks[b].preds.size() == 1;) {
+      b = blocks[b].preds[0];
+      if (!blocks[b].condition.empty()) {
+        guard = blocks[b].condition;
+        break;
+      }
+    }
+    std::set<std::string> leaves;
+    seen.clear();
+    if (!guard.empty())
+      leaves_of(guard, ~0ull, leaves);
+    out.unguarded[kind] += leaves.empty();
+    out.leaves[kind].insert(leaves.begin(), leaves.end());
+  }
+  // the ordering compares that depend on a load of one of `fields`
+  std::function<bool(const std::string &)> depends = [&](const std::string &value) -> bool {
+    if (std::find(fields.begin(), fields.end(), field_of(value)) != fields.end())
+      return true;
+    auto d = def_of(value);
+    if (!d || d->op == "load" || !seen.insert(value).second)
+      return false;
+    for (auto &operand : d->operands)
+      if (depends(operand))
+        return true;
+    return false;
+  };
+  for (auto &[name, def] : defs) {
+    seen.clear();
+    if (def.op == "icmp" && def.predicate != "eq" && def.predicate != "ne" && depends(name))
+      out.bounds.insert(name);
+  }
+  return out;
+}
+
 int
 main(int argc, char **argv) {
   if (argc != 2) {
@@ -567,6 +849,88 @@ main(int argc, char **argv) {
                   before.loads, before.clamped, after.loads, after.clamped);
       check(after.loads && after.clamped == after.loads && !before.clamped, what);
     }
+  }
+  // the checks count where they fail (SM50_CHECK_KIND: 0 a static range's, 1 a root view's, 2 a descriptor index's).
+  // root views: the CBV, the two SRVs and the UAV, fields 0 to 3, the lock table 4, their lengths 5 to 8. tables: the
+  // table 0, the lock table 1, its count 2
+  constexpr uint32_t range_static = 0, range_view = 1, range_index = 2;
+  write("counted.dxbc", container({{"ISGN", {0, 8}}, {"OSGN", {0, 8}}, {"SHEX", counted_program()}}));
+  write("views.rs", container({{"RTS0", root_signature({{cbv, {}, 0}, {srv, {}, 0}, {srv, {}, 1}, {uav, {}, 0}})}}));
+  write("static.rs", container({{"RTS0", root_signature({{table, {range_cbv, range_srv, range_srv, range_uav}, 0,
+                                                            {0, 0, 1, 0}, true}})}}));
+  write("volatile.rs", container({{"RTS0", root_signature({{table, {range_cbv, range_srv, range_srv, range_uav}, 0,
+                                                              {0, 0, 1, 0}}})}}));
+  auto convert_counted = [&](const std::string &name, const std::string &flags) {
+    std::string out = name + (flags.empty() ? ".plain.ll" : ".counted.ll");
+    std::string command = "\"" + std::string(argv[1]) + "\" -S " + flags + " -root-signature \"" +
+                          (dir / (name + ".rs")).string() + "\" -o \"" + (dir / out).string() + "\" \"" +
+                          (dir / "counted.dxbc").string() + "\"";
+    if (std::system(command.c_str()) != 0) {
+      std::printf("FAILED: %s\n", command.c_str());
+      failures++;
+      return std::string();
+    }
+    return read(dir / out);
+  };
+  auto show = [](const char *name, const Counted &c, int kind) {
+    std::printf("%s: kind %d, %u atomics, %zu checks guard them, %u unguarded; %zu bounds compares of its fields\n",
+                name, kind, c.atomics.count(kind) ? c.atomics.at(kind) : 0,
+                c.leaves.count(kind) ? c.leaves.at(kind).size() : 0, c.unguarded.count(kind) ? c.unguarded.at(kind) : 0,
+                c.bounds.size());
+  };
+  // one atomic per kind that counts, nothing that passes reaches it, and every check of the kind guards it
+  auto counts_alone = [](const Counted &c, int kind) {
+    return c.atomics.size() == 1 && c.atomics.count(kind) && c.atomics.at(kind) == 1 && !c.unguarded.at(kind);
+  };
+  std::set<std::string> view_checks;
+  if (auto plain = convert_counted("views", ""), checked = convert_counted("views", "-check-root-ranges");
+      !plain.empty() && !checked.empty()) {
+    auto before = counted(plain, 4), after = counted(checked, 4, {5, 6, 7, 8});
+    show("views", after, range_view);
+    check(before.atomics.empty(), "without the flag no check of a root view counts");
+    check(counts_alone(after, range_view), "a root view's checks count in one atomic, which no check that passes reaches");
+    // the constant buffer's row, the raw load, the structured loads at a constant and a computed offset, the store
+    check(after.bounds.size() >= 5 && after.leaves[range_view] == after.bounds,
+          "every check of a root view counts where it fails");
+    view_checks = after.leaves[range_view];
+  }
+  if (auto plain = convert_counted("static", ""), guarded = convert_counted("static", "-guard-static-ranges");
+      !plain.empty() && !guarded.empty()) {
+    auto before = counted(plain, 1), after = counted(guarded, 1);
+    show("static", after, range_static);
+    check(before.atomics.empty(), "without the flag no check of a static range counts");
+    check(counts_alone(after, range_static),
+          "a static range's checks count in one atomic, which no check that passes reaches");
+    check(!view_checks.empty() && after.leaves[range_static].size() == view_checks.size(),
+          "every check of a static range counts where it fails, as a root view's do");
+  }
+  if (auto plain = convert_counted("volatile", ""), guarded = convert_counted("volatile", "-guard-static-ranges");
+      !plain.empty() && !guarded.empty())
+    check(plain == guarded && counted(plain, 1).atomics.empty(), "a volatile range's checks count nothing");
+  if (auto plain = convert_counted("volatile", ""), clamped = convert_counted("volatile", "-check-descriptor-indices");
+      !plain.empty() && !clamped.empty()) {
+    auto after = counted(clamped, 1, {2});
+    show("indices", after, range_index);
+    check(counts_alone(after, range_index),
+          "a descriptor index's clamps count in one atomic, which no index below the count reaches");
+    // a constant index's clamp may fold into a larger one's against the same count: each that remains guards it
+    check(!after.leaves[range_index].empty() &&
+              std::includes(after.bounds.begin(), after.bounds.end(), after.leaves[range_index].begin(),
+                            after.leaves[range_index].end()),
+          "a descriptor index's clamps count where they clamp");
+  }
+  // both, in one function: each kind's atomic is guarded by its own checks
+  if (auto both = convert_counted("static", "-guard-static-ranges -check-descriptor-indices"); !both.empty()) {
+    auto after = counted(both, 1, {2});
+    show("static and indices", after, range_static);
+    show("static and indices", after, range_index);
+    bool apart = after.atomics.size() == 2 && after.atomics[range_static] == 1 && after.atomics[range_index] == 1 &&
+                 !after.unguarded[range_static] && !after.unguarded[range_index] &&
+                 !after.leaves[range_index].empty() &&
+                 std::includes(after.bounds.begin(), after.bounds.end(), after.leaves[range_index].begin(),
+                               after.leaves[range_index].end()) &&
+                 after.leaves[range_static].size() == view_checks.size();
+    check(apart, "a static range's checks and a descriptor index's count apart in one function");
   }
   // MULLION_KEEP_OUTPUT: the outputs stay, for a pull request to attach
   if (std::getenv("MULLION_KEEP_OUTPUT"))
