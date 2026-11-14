@@ -36,7 +36,6 @@ main() {
   bool apple10 = source->GetMTLDevice().supportsFamily(WMTGPUFamilyApple10);
   printf("apple10 %d: multisampled textures and resolve targets %s\n", apple10, apple10 ? "compressed" : "uncompressed");
 
-  int failures = 0;
   // the field the device set for `resource`, -1 when it has no Metal texture
   auto uncompressed = [&](ID3D12Resource *resource) {
     MullionMetalResource info;
@@ -45,24 +44,24 @@ main() {
     NSObject_release(info.texture);
     return int(info.texture_info.uncompressed);
   };
-  auto expect = [&](const char *what, ID3D12Resource *resource, bool want) {
+  // each wrong field is a wrong result, and the test ends with the suite's verdict line (tests/trace.hpp), which
+  // run.py reads as its result
+  auto check = [&](const char *what, ID3D12Resource *resource, bool want) {
+    step("%s", what);
     int got = uncompressed(resource);
-    if (got != int(want)) {
-      printf("failed: %s: uncompressed %d, want %d\n", what, got, want);
-      failures++;
-    }
+    expect(got == int(want), "uncompressed %d, want %d", got, int(want));
   };
 
   auto before = Target(device.Get(), DXGI_FORMAT_R8G8B8A8_UNORM, 64, 64, 1);
-  expect("a target made before any multisampled texture", before.Get(), false);
+  check("a target made before any multisampled texture", before.Get(), false);
   auto msaa = Target(device.Get(), DXGI_FORMAT_R8G8B8A8_TYPELESS, 64, 64, 4);
-  expect("a 4x texture", msaa.Get(), !apple10);
+  check("a 4x texture", msaa.Get(), !apple10);
   auto resolve = Target(device.Get(), DXGI_FORMAT_R8G8B8A8_UNORM_SRGB, 64, 64, 1);
-  expect("a target of its group and size", resolve.Get(), !apple10);
+  check("a target of its group and size", resolve.Get(), !apple10);
   auto other_size = Target(device.Get(), DXGI_FORMAT_R8G8B8A8_UNORM, 64, 32, 1);
-  expect("a target of another size", other_size.Get(), false);
+  check("a target of another size", other_size.Get(), false);
   auto other_group = Target(device.Get(), DXGI_FORMAT_R16G16B16A16_FLOAT, 64, 64, 1);
-  expect("a target of another group", other_group.Get(), false);
+  check("a target of another group", other_group.Get(), false);
 
-  return failures ? 1 : 0;
+  return verdict();
 }
