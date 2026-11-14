@@ -84,6 +84,16 @@ PassLabel(const char *kind, const EncoderData *pass) {
 static gpu_error::Limiter gpu_error_limiter;
 static std::atomic_uint64_t presents{0};
 
+// MULLION_STATS: the presents MULLION_PRESENT_GATE kept from a drawable, and the GATE section after STATS
+// (docs/swtor/README.md § The present gate), for a second with any
+static std::atomic_uint64_t gated_presents{0};
+static stats::SectionRegistrar kGateSection{"GATE", [](double, uint64_t) {
+  static uint64_t last = 0;
+  uint64_t now = gated_presents.load(std::memory_order_relaxed);
+  uint64_t window = now - std::exchange(last, now);
+  return window ? "gated=" + std::to_string(window) : std::string();
+}};
+
 uint64_t
 PresentsSoFar() {
   return presents.load(std::memory_order_relaxed);
@@ -2970,6 +2980,7 @@ public:
 
     unsigned present_encoders = 0;
     uint64_t drawable_ns = 0;
+    bool gated = false;
     auto drawable = presenter->encodeCommands(
         MetalCommandBuffer(cmdbuf), source, state,
         [&](auto encoder) {
@@ -2978,17 +2989,21 @@ public:
             encoder.waitForFence(scaler->fence(), WMTRenderStageFragment);
         },
         [&](auto encoder) { encoder.updateFence(fence_, WMTRenderStageFragment); }, inflight_cmdbuf_seq_.load(),
-        diag::trace_encoders ? &present_encoders : nullptr, &drawable_ns
+        diag::trace_encoders ? &present_encoders : nullptr, &drawable_ns, &gated
     );
-    // MULLION_STATS: the bridge's time in nextDrawable (HITCH's drawableMs)
-    if (stats::on)
+    // MULLION_STATS: the bridge's time in nextDrawable (HITCH's drawableMs), and the presents the gate skipped (GATE)
+    if (stats::on) {
       hitch::counters.drawable_ns.fetch_add(drawable_ns, std::memory_order_relaxed);
+      if (gated)
+        gated_presents.fetch_add(1, std::memory_order_relaxed);
+    }
     if (diag::trace_encoders) {
       scope.inflight->physical[WMTMetal4Render]++;
       scope.inflight->physical[WMTMetal4Blit] += present_encoders - 1;
     }
 
-    if (!drawable)
+    // a frame the gate skipped has no GDI frame either: its window has a layer
+    if (!drawable && !gated)
       scope.inflight->completed = [presenter = Rc(presenter), after] { presenter->drawToWindow(after); };
     else if (after > 0)
       cmdbuf.presentDrawableAfterMinimumDuration(drawable, after);

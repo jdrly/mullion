@@ -2405,7 +2405,10 @@ _MetalDrawable_texture(void *obj) {
 static NTSTATUS
 _MetalLayer_nextDrawable(void *obj) {
   struct unixcall_metal_layer_next_drawable *params = obj;
-  params->ret = (obj_handle_t)window_next_drawable((CAMetalLayer *)params->layer, &params->waited_ns);
+  bool gated = false;
+  params->ret = (obj_handle_t)window_next_drawable((CAMetalLayer *)params->layer, params->gate, params->skipped,
+                                                   &params->waited_ns, &gated);
+  params->gated = gated;
   return STATUS_SUCCESS;
 }
 

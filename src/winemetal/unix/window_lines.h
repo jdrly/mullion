@@ -128,3 +128,31 @@ drawable_line(struct window_limit *limit, uint64_t waited_ns, bool got, uint32_t
                         (unsigned long long)(waited_ns / 1000000), got, shown, at, tail);
   return length > 0 && (size_t)length < size ? length : 0;
 }
+
+// The present gate (docs/swtor/README.md § The present gate): a window it lets present is shown, which is d9mt's
+// shown: some of it can be seen, it is on the active Space and it isn't in the Dock. A partly covered window is shown
+static inline bool
+window_shown(uint32_t visibility) {
+  return (visibility & (WINDOW_VISIBLE | WINDOW_ON_ACTIVE_SPACE | WINDOW_MINIATURIZED)) ==
+         (WINDOW_VISIBLE | WINDOW_ON_ACTIVE_SPACE);
+}
+
+// the gate's line, when it closes (`closed`) or opens again, on the presenting thread:
+//     mullion: present gate closed|open visibility=0x<flags>|unknown skipped=<n> at=<HH:MM:SS.mmm>
+// `skipped` 0 as it closes, the presents it skipped as it opens. under `limit`, which it shares with the nextDrawable
+// line; returns the line's length as drawable_line does
+static inline int
+gate_line(struct window_limit *limit, bool closed, uint32_t visibility, uint64_t skipped, uint64_t now_ns,
+          const char *at, char *buf, size_t size) {
+  if (!window_limit_take(limit, now_ns))
+    return 0;
+  char tail[48] = "", shown[16] = "unknown";
+  if (limit->dropped)
+    snprintf(tail, sizeof tail, " [%u earlier lines suppressed]", limit->dropped);
+  limit->dropped = 0;
+  if (visibility != DRAWABLE_VISIBILITY_UNKNOWN)
+    snprintf(shown, sizeof shown, "0x%x", (unsigned)visibility);
+  int length = snprintf(buf, size, "mullion: present gate %s visibility=%s skipped=%llu at=%s%s\n",
+                        closed ? "closed" : "open", shown, (unsigned long long)skipped, at, tail);
+  return length > 0 && (size_t)length < size ? length : 0;
+}

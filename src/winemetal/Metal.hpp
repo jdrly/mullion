@@ -736,8 +736,8 @@ public:
 class MetalLayer : public Object {
 public:
   MetalDrawable
-  nextDrawable(uint64_t *waited_ns = nullptr) {
-    return MetalDrawable{MetalLayer_nextDrawable(handle, waited_ns)};
+  nextDrawable(uint64_t *waited_ns = nullptr, bool gate = false, uint64_t skipped = 0, bool *gated = nullptr) {
+    return MetalDrawable{MetalLayer_nextDrawable(handle, gate, skipped, waited_ns, gated)};
   };
 
   void

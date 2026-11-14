@@ -97,7 +97,8 @@ public:
   }
 
   // on a Metal 3 or a Metal 4 command buffer. `drawable_ns`, unless null: the time the bridge's nextDrawable took, 0
-  // without a call (HITCH's drawableMs)
+  // without a call (HITCH's drawableMs). `gated`, unless null: MULLION_PRESENT_GATE kept the frame from a drawable, as
+  // the window was hidden; it is drawn to the fallback target, and neither presented nor queued for GDI
   template <
       typename CommandBuffer,
       typename Encoder =
@@ -106,7 +107,7 @@ public:
       CommandBuffer cmdbuf, WMT::Texture backbuffer, const PresentState &state,
       std::type_identity_t<std::function<void(Encoder)>> &&wait_fences,
       std::type_identity_t<std::function<void(Encoder)>> &&update_fences, uint64_t seq_id = 0,
-      unsigned *encoder_count = nullptr, uint64_t *drawable_ns = nullptr
+      unsigned *encoder_count = nullptr, uint64_t *drawable_ns = nullptr, bool *gated = nullptr
   );
 
   // draws the oldest frame encoded without a layer, at least `after` seconds after the previous one (as
@@ -126,6 +127,10 @@ private:
   WMTLayerProps layer_props_;
   // MULLION_LAYER_WAIT, read once: whether a present waits for the main thread to set a changed layer
   bool layer_wait_;
+  // MULLION_PRESENT_GATE, read once: whether a present takes no drawable while the window is hidden
+  bool present_gate_;
+  // presents the gate kept from a drawable in a row, up to the last one, for the gate's lines
+  uint64_t gated_run_ = 0;
   double native_contents_scale_ = 1.0;
   uint32_t sample_count_;
   WMTColorSpace colorspace_ = WMTColorSpaceSRGB;

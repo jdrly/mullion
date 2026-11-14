@@ -5,9 +5,10 @@
 #include "window.h"
 #include "window_lines.h"
 
-// the main thread's alone: the view watched (retained, so a view its owner releases first is never read after), and
-// what the lines said last
+// the main thread's alone: the view watched (retained, so a view its owner releases first is never read after), its
+// layer, and what the lines said last
 static NSView *watched;
+static CAMetalLayer *watched_metal;
 static struct window_watch watch;
 
 // for the bridge's other threads: the watched view's layer (0 for none) and the visibility the main thread saw last,
@@ -15,6 +16,9 @@ static struct window_watch watch;
 // before the view changes
 static _Atomic(uintptr_t) watched_layer;
 static _Atomic(uint32_t) watched_visibility;
+// the present gate's (MULLION_PRESENT_GATE): the watched view's layer while the main thread last saw its window hidden,
+// else 0. one load decides a present
+static _Atomic(uintptr_t) hidden_layer;
 
 // the local time, HH:MM:SS.mmm
 static void
@@ -43,7 +47,14 @@ look(const char *why) {
     if (window.isMiniaturized)
       now.visibility |= WINDOW_MINIATURIZED;
   }
+  window_lines_seen(now, why);
+}
+
+void
+window_lines_seen(struct window_state now, const char *why) {
   atomic_store_explicit(&watched_visibility, now.visibility, memory_order_relaxed);
+  atomic_store_explicit(&hidden_layer, window_shown(now.visibility) ? 0 : (uintptr_t)watched_metal,
+                        memory_order_release);
   char at[16], line[160];
   local_time(at);
   int length = window_look(&watch, now, clock_gettime_nsec_np(CLOCK_UPTIME_RAW), at, why, line, sizeof line);
@@ -81,8 +92,10 @@ window_lines_watch(NSView *view, CAMetalLayer *layer) {
     observe(NSWorkspace.sharedWorkspace.notificationCenter, NSWorkspaceActiveSpaceDidChangeNotification, "space");
   }
   atomic_store_explicit(&watched_layer, 0, memory_order_release);
+  atomic_store_explicit(&hidden_layer, 0, memory_order_release);
   [watched release];
   watched = [view retain];
+  watched_metal = layer;
   look("view");
   atomic_store_explicit(&watched_layer, (uintptr_t)layer, memory_order_release);
 }
@@ -92,8 +105,10 @@ window_lines_unwatch(NSView *view) {
   if (view != watched)
     return;
   atomic_store_explicit(&watched_layer, 0, memory_order_release);
+  atomic_store_explicit(&hidden_layer, 0, memory_order_release);
   [watched release];
   watched = nil;
+  watched_metal = nil;
 }
 
 bool
@@ -104,7 +119,8 @@ window_lines_visibility(CAMetalLayer *layer, uint32_t *visibility) {
   return true;
 }
 
-// the presenting threads' lines: a call this slow is rare, and the lock is taken only then
+// the presenting threads' lines: a call this slow, or the gate closing or opening, is rare, and the lock is taken only
+// then
 static pthread_mutex_t drawable_mutex = PTHREAD_MUTEX_INITIALIZER;
 static struct window_limit drawable_limit;
 
@@ -122,8 +138,33 @@ drawable_said(CAMetalLayer *layer, uint64_t waited_ns, bool got) {
     write(STDERR_FILENO, line, length);
 }
 
+static void
+gate_said(CAMetalLayer *layer, bool closed, uint64_t skipped) {
+  uint32_t visibility = DRAWABLE_VISIBILITY_UNKNOWN;
+  window_lines_visibility(layer, &visibility);
+  char at[16], line[160];
+  local_time(at);
+  pthread_mutex_lock(&drawable_mutex);
+  int length = gate_line(&drawable_limit, closed, visibility, skipped, clock_gettime_nsec_np(CLOCK_UPTIME_RAW), at,
+                         line, sizeof line);
+  pthread_mutex_unlock(&drawable_mutex);
+  if (length)
+    write(STDERR_FILENO, line, length);
+}
+
 id<CAMetalDrawable>
-window_next_drawable(CAMetalLayer *layer, uint64_t *waited_ns) {
+window_next_drawable(CAMetalLayer *layer, bool gate, uint64_t skipped, uint64_t *waited_ns, bool *gated) {
+  // the gate: what AppKit last said, not a fresh look, which this thread mustn't take. at a switch away from the
+  // window's Space the notification comes before the call that would block
+  *gated = gate && layer && atomic_load_explicit(&hidden_layer, memory_order_acquire) == (uintptr_t)layer;
+  if (*gated) {
+    *waited_ns = 0;
+    if (!skipped)
+      gate_said(layer, true, 0);
+    return nil;
+  }
+  if (skipped)
+    gate_said(layer, false, skipped);
   // the Mac's call alone, so that a Space switch's block is its own
   uint64_t start = clock_gettime_nsec_np(CLOCK_UPTIME_RAW);
   id<CAMetalDrawable> drawable = [layer nextDrawable];

@@ -14,18 +14,27 @@ namespace mullion {
 // 1: a present that changes its layer waits for the main thread to set it, as upstream does. 0: it goes on, and the
 // main thread sets it later, in the order asked (src/winemetal/unix/layer.c)
 static sw::Switch<bool> kLayerWait{"MULLION_LAYER_WAIT", true, sw::notZero};
+// 1: a present takes no drawable while AppKit last said the window is hidden, off the active Space or in the Dock, and
+// draws to its fallback target instead (src/winemetal/unix/window.c). 0: it takes one as before, and at a switch away
+// from the window's Space the Mac holds that call, and the queue's fences behind it, for about a second
+static sw::Switch<bool> kPresentGate{"MULLION_PRESENT_GATE", true, sw::notZero};
 
 Presenter::Presenter(WMT::Device device, WMT::MetalLayer layer, InternalCommandLibrary &lib, float scale_factor, uint8_t sample_count, HWND window) :
     device_(device),
     layer_(layer),
     lib_(lib),
     layer_wait_(kLayerWait()),
+    present_gate_(kPresentGate()),
     sample_count_(sample_count),
     window_(window) {
   // MULLION_LAYER_WAIT=0 is new behaviour: the log says so, once per process
   static std::atomic_bool said;
   if (!layer_wait_ && !said.exchange(true))
     Logger::info("Mullion: layer wait=0");
+  // MULLION_PRESENT_GATE=0 brings back the stall: the log says so, once per process
+  static std::atomic_bool said_gate;
+  if (!present_gate_ && !said_gate.exchange(true))
+    Logger::info("Mullion: present gate=0");
   layer_.getProps(layer_props_);
   native_contents_scale_ = layer_props_.contents_scale;
   layer_props_.device = device;
@@ -184,7 +193,7 @@ Presenter::encodeCommands(
     CommandBuffer cmdbuf, WMT::Texture backbuffer, const PresentState &state,
     std::type_identity_t<std::function<void(Encoder)>> &&wait_fences,
     std::type_identity_t<std::function<void(Encoder)>> &&update_fences, uint64_t seq_id, unsigned *encoder_count,
-    uint64_t *drawable_ns
+    uint64_t *drawable_ns, bool *gated
 ) {
   const auto &metadata = state.metadata;
   double width = state.layer_props.drawable_width;
@@ -194,7 +203,12 @@ Presenter::encodeCommands(
 
   if (drawable_ns)
     *drawable_ns = 0;
-  auto drawable = layer_ ? layer_.nextDrawable(drawable_ns) : WMT::MetalDrawable{};
+  bool closed = false;
+  auto drawable =
+      layer_ ? layer_.nextDrawable(drawable_ns, present_gate_, gated_run_, &closed) : WMT::MetalDrawable{};
+  gated_run_ = closed ? gated_run_ + 1 : 0;
+  if (gated)
+    *gated = closed;
   auto number = ++frames_;
   if (drawable)
     drawable.countPresent(statistics_, number);
@@ -254,7 +268,8 @@ Presenter::encodeCommands(
   update_fences(encoder);
   encoder.endEncoding();
 
-  // a layer whose drawable timed out drops this frame; only a window without a layer takes frames through GDI
+  // a layer whose drawable timed out, or that the gate kept from one, drops this frame; only a window without a layer
+  // takes frames through GDI
   if (!layer_) {
     WindowFrame frame{.width = (uint32_t)width, .height = (uint32_t)height, .number = number};
     WMTBufferInfo buffer_info{
@@ -283,12 +298,12 @@ Presenter::encodeCommands(
 
 template WMT::MetalDrawable Presenter::encodeCommands(
     WMT::CommandBuffer, WMT::Texture, const PresentState &, std::function<void(WMT::RenderCommandEncoder)> &&,
-    std::function<void(WMT::RenderCommandEncoder)> &&, uint64_t, unsigned *, uint64_t *
+    std::function<void(WMT::RenderCommandEncoder)> &&, uint64_t, unsigned *, uint64_t *, bool *
 );
 template WMT::MetalDrawable Presenter::encodeCommands(
     WMT::Metal4CommandBuffer, WMT::Texture, const PresentState &,
     std::function<void(WMT::Metal4RenderCommandEncoder)> &&, std::function<void(WMT::Metal4RenderCommandEncoder)> &&,
-    uint64_t, unsigned *, uint64_t *
+    uint64_t, unsigned *, uint64_t *, bool *
 );
 
 void

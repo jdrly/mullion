@@ -1967,8 +1967,11 @@ WINEMETAL_API void DeveloperHUDProperties_remove(obj_handle_t obj, obj_handle_t 
 
 WINEMETAL_API obj_handle_t MetalDrawable_texture(obj_handle_t drawable);
 
-// `waited_ns`, unless null: how long the Mac's call took (docs/swtor/README.md § The nextDrawable line)
-WINEMETAL_API obj_handle_t MetalLayer_nextDrawable(obj_handle_t layer, uint64_t *waited_ns);
+// `waited_ns`, unless null: how long the Mac's call took (docs/swtor/README.md § The nextDrawable line). `gate`
+// (MULLION_PRESENT_GATE): no call, and no drawable, while the layer's window is hidden; `skipped` the caller's presents
+// gated in a row before this one, for the gate's lines; `gated`, unless null: this one was (§ The present gate)
+WINEMETAL_API obj_handle_t
+MetalLayer_nextDrawable(obj_handle_t layer, bool gate, uint64_t skipped, uint64_t *waited_ns, bool *gated);
 
 WINEMETAL_API bool MTLDevice_supportsFXSpatialScaler(obj_handle_t device);
 

@@ -55,6 +55,16 @@ test('host_layer_apply', executable('host_layer_apply', ['layer_apply.c', '../..
                                                  '-framework', 'CoreGraphics', '-framework', 'Metal']
                                                 + (mullion_crossbuild ? ['-arch', native_compiler_arch] : []),
                                     native : true), suite : 'host')
+# jdrly/mullion: the present gate (MULLION_PRESENT_GATE) in the bridge's window watch, with a layer whose nextDrawable
+# counts its calls: no window, no GPU
+test('host_present_gate', executable('host_present_gate', ['present_gate.c', '../../src/winemetal/unix/window.c'],
+                                     include_directories : include_directories('../../src/winemetal/unix'),
+                                     c_args : ['-ObjC'],
+                                     # a C program: a cross build gives native links -arch for C++ only
+                                     link_args : ['-framework', 'Foundation', '-framework', 'AppKit',
+                                                  '-framework', 'QuartzCore', '-framework', 'Metal']
+                                                 + (mullion_crossbuild ? ['-arch', native_compiler_arch] : []),
+                                     native : true), suite : 'host')
 # jdrly/mullion: the bridge's texture descriptor with and without Metal's lossless compression
 # (src/winemetal/unix/texture_compression.h), and a texture made each way where the machine has a Metal device
 test('host_texture_compression', executable('host_texture_compression', 'texture_compression.c',

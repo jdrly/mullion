@@ -23,6 +23,7 @@ are set.
 | Variable | Default | What it does | Off restores |
 |---|---|---|---|
 | `MULLION_LAYER_WAIT` | `1` | `1`: a present that changes its layer (size, pixel format, scale, colour space) waits for the main thread to set the change, as upstream does. `0`: it goes on, the main thread sets the change later in the order asked (`src/winemetal/unix/layer.c`), and the present draws to the size of the drawable it got. Read once per swap chain. | `1` is upstream's behaviour |
+| `MULLION_PRESENT_GATE` | `1` | `1`: while AppKit last said the game window can't be seen, is off the active Space or is in the Dock, a present takes no drawable: the bridge doesn't call `-nextDrawable`, the frame is drawn to the presenter's fallback target and nothing is presented ([§ The present gate](#the-present-gate)). A partly covered window is shown and presents. The frame's work and every fence go on; `Present` still returns `S_OK`. `0`: every present takes a drawable as before. Read once per swap chain. Default on, unlike other behaviour changes: its off value is the defect, a ~1.2 s stall of every fence at each switch away from the window's Space, which SWTOR's DX12 client turns into a crash | Every present takes a drawable, and the stall comes back (an A/B, or a way out if the gate hides a frame it shouldn't) |
 | `MULLION_SESSION_HEADER` | off (`1` turns it on) | Writes the session header (below) when the first Direct3D 12 device is created, with one read-only bridge call for what the Windows side can't read. Off until the Mac run shows the header right on an M1 and an M5 Max; SWTOR on Mac's DX12 dev build turns it on | No header and no bridge call for it |
 | `MULLION_STATS` | off (`1` turns it on) | Writes a `STATS` line (below) each second of presenting, and counts what it reports. Read once, when `d3d12core.dll` loads. SWTOR on Mac's DX12 dev build turns it on | No line, and nothing counted: each place that counts tests one flag (below). The bridge still keeps `mainWaitMaxMs`' longest wait, one compare-and-swap for each layer change the main thread applies, which nothing reads |
 | `MULLION_HITCH_MS` | `50` | With `MULLION_STATS=1`, a frame (Present to Present) this many ms long or longer gets a `HITCH` line, and its `COMPILE` line is at `warn`. Whole ms, 1 to 60000; anything else is 50. Read once, at the first Present counted | Nothing to restore: it only moves a threshold, and `MULLION_STATS` off writes no `HITCH` |
@@ -56,15 +57,18 @@ removed with `DXGI_ERROR_DEVICE_HUNG`. A release build doesn't have it.
 | `Mullion: texture uncompressed rule= samples= size= format=` | The first texture each rule makes uncompressed on a device: `rule` `msaa` or `resolve`, `samples` the count Metal makes it with (4 for the paired 8x before Apple10), `size` width x height, `format` its `DXGI_FORMAT` number | The same | Me: an `msaa` line without a `resolve` line means the game's resolve target wasn't found (the rule's limits, [gpu-families.md](gpu-families.md)) |
 | `mullion: textures compression=off` | With `MULLION_TEX_NO_COMPRESSION=1`, once per process, as the bridge loads: Direct3D 11's processes too | The process's stderr (`wine.log` in the app): the bridge writes it | Me: no texture of the session was compressed |
 | `Mullion: layer wait=0` | The first swap chain made with `MULLION_LAYER_WAIT=0`, once per process | `d3d12.log` (Wine's output, `wine.log` in the app), at `info` | Me: the session's presents didn't wait for the main thread |
+| `Mullion: present gate=0` | The first swap chain made with `MULLION_PRESENT_GATE=0`, once per process | `d3d12.log` (Wine's output, `wine.log` in the app), at `info` | Me: the session's presents took drawables while the window was hidden |
 | `mullion: layer mainThreadWaitMs=<N> applied=no` | A change to a layer has waited 1 s, 5 s and 30 s without the main thread applying one: once at each, with either value of `MULLION_LAYER_WAIT`. `<N>`: ms since the main thread last applied a change, or was sent one with none waiting | The process's stderr (`wine.log` in the app), not `MULLION_LOG_PATH`: the bridge's watch thread writes it | Me, on a freeze: the main thread stopped answering |
 | `mullion: layer mainThreadWaitMs=<N> applied=yes` | The main thread applies a change after an `applied=no` line | The same, from the main thread | The same |
 | `MtlPresenter: <HH:MM:SS.mmm> visibility 0x<before> -> 0x<now> visible= activeSpace= miniaturized= active= why= [[n earlier lines suppressed]]` | Always, each time the game window's visibility changes: hidden, shown, another Space, the Dock ([§ The window lines](#the-window-lines)). At most 30 lines in 10 s with the line below | The process's stderr (`wine.log` in the app): the bridge writes it from the main thread, as the change happens | The app's session report, which reads d9mt's line of that name for its hidden seconds and its `--mark`; me, on a freeze after Cmd-Tab or a Space switch |
 | `mullion: window at= active= visibility=0x<now> why= [[n earlier lines suppressed]]` | Always, each time the app becomes active or stops being active while the window's visibility stays as it was | The same | Me: the last activation change before a freeze |
 | `mullion: nextDrawable blocked <ms> ms got=<0\|1> visibility=0x<flags>\|unknown at=<HH:MM:SS.mmm> [[n earlier lines suppressed]]` | Always, each time the Mac's `-[CAMetalLayer nextDrawable]` takes 50 ms or more, Direct3D 11's and 12's presents alike ([§ The nextDrawable line](#the-nextdrawable-line)). At most 30 lines in 10 s, a limit of its own | The process's stderr (`wine.log` in the app): the bridge writes it from the thread that took the drawable, as the call returns | Me: a frame or a fence late because the Mac held the drawable, as at a switch to another Space |
+| `mullion: present gate closed\|open visibility=0x<flags>\|unknown skipped=<n> at=<HH:MM:SS.mmm> [[n earlier lines suppressed]]` | With `MULLION_PRESENT_GATE=1`, once when the gate first keeps a present from a drawable (`closed`, `skipped=0`), and once when a present takes one again (`open`, with the presents it skipped) ([§ The present gate](#the-present-gate)). Under the nextDrawable line's limit | The process's stderr (`wine.log` in the app), from the thread that presents | Me: which hidden stretches the gate skipped, and how many frames; on a Mac whose hidden window blocks every frame, the count against the frame rate |
 | `STATS t= fps= ms=avg/p99/max slow33= slow50= \| cb= rp= cp= draws= \| sh= pso= wait=n/ms cache=hits/misses \| allocMiB= \| mainWaitMaxMs= \| at=` | With `MULLION_STATS=1`, at the Present that ends each second of presenting; none for a second without a Present | `d3d12.log` (`wine.log`), at `warn` | The app's session report, which reads d9mt's line of that name; me |
 | `<NAME> k=v …` | Right after `STATS`, one line for each registered section that has something to say | The same | The tickets that register one |
 | `CACHE rejected=` | The `STATS` section of a window in which Metal refused stored shaders, each then deleted from the cache and converted again | The same | Me: a damaged cache, or one a macOS update made stale |
 | `RESETWAIT waits= ms= longestMs=` | The `STATS` section of a window in which a command allocator's `Reset` waited for its lists (`MULLION_D3D12_RESET_WAITS=1`): the waits, their total ms and the longest | The same | Me: how often the game resets an allocator in flight, and what the waits cost |
+| `GATE gated=` | The `STATS` section of a window in which `MULLION_PRESENT_GATE` kept presents from a drawable: how many | The same | Me: the gate acted in that second |
 | `HITCH frame= dtMs= inDriverMs= (pct%) \| <category>=n/ms … or none \| queue: gpuMs= encodeMs= drawableMs= behind= \| at=` | With `MULLION_STATS=1`, at the Present that ends a frame of `MULLION_HITCH_MS` or longer, before that second's `STATS` line | `d3d12.log` (`wine.log`), at `warn` | The app's session report (its ticket 13 reads `inDriverMs` and `pipelineWait`); me, after a stutter |
 | `COMPILE frame= dtMs= shaders=n/ms psos=n/ms renderWait=n/ms cache=hits/misses queued=` | With `MULLION_STATS=1`, at the Present that ends a frame in which a shader was converted, a Metal pipeline compiled or a draw waited, or that took 33.4 ms or more; right after its `HITCH` line | The same, at `warn` with a `HITCH` line, else `info` | The app's session report, which reads d9mt's line of that name |
 | `MULLION-PIPELINE at= kind= ms= late= variant= name= [[n earlier lines suppressed]]` | Always, for each pipeline made that took 20 ms or more, or was made after the first Present, at most 30 lines in 10 s. Replaces `D3D12 pipeline made: <kind>; <name>; <ms> ms`, which only `MULLION_D3D12_GPU_ERRORS` wrote, and only for late pipelines | `d3d12.log` (`wine.log`), at `info` | Me, after a stutter: which pipeline, and which variant |
@@ -505,6 +509,50 @@ atomics, reads the local time, takes a mutex that only slow calls take, and writ
 Needs the Mac: that the line comes once per switch away, with the window off the active Space, and none without a
 switch, is a check on a Mac.
 
+### The present gate
+
+`MULLION_PRESENT_GATE=1` (the default) keeps a present from a drawable while the game window is hidden. At a switch
+away from the window's Space, macOS holds the layer's drawables for about 1.15 s ([§ The nextDrawable
+line](#the-nextdrawable-line)), and a present that asks for one then blocks the queue thread that commits the frame.
+Every fence after it comes ~1.2 s late, and SWTOR's DX12 client takes that for a hung GPU. AppKit's notification that
+the window can't be seen came 22–44 ms before the call that would block, in eight timed switches of a native program
+(M1, macOS 27.0). d9mt gates on visibility for the same reason.
+
+What it does. The window watch ([§ The window lines](#the-window-lines)) stores, on the main thread, the watched view's
+layer in an atomic whenever the window is hidden: not `0x1` (none of it can be seen), not `0x2` (off the active
+Space), or `0x4` (in the Dock); and 0 when it is shown. The bridge's `nextDrawable` with the switch on loads it once and
+compares it with its own layer:
+
+- the same layer: no `-nextDrawable` call, no drawable. The presenter draws the frame to its fallback target, as it
+  does when a drawable times out, and presents nothing. The frame's command buffer, and every `Signal` after the
+  `Present`, commit as usual. No GDI frame is queued. `Present` returns `S_OK`;
+- another layer, or none watched (a second swap chain's window, one not watched yet, one released): the call as
+  before. The gate fails open.
+
+The first present after the window is shown again takes a drawable. A gated frame isn't retried.
+
+`GetFrameStatistics` while the gate is closed returns what it returned at the last frame shown: a gated frame counts
+no present (as a timed-out drawable didn't), so `PresentCount` and the refresh stay at that frame's, and it returns
+`DXGI_ERROR_FRAME_STATISTICS_DISJOINT` only when no frame was ever shown, as before.
+
+Lines. `mullion: present gate closed visibility=0x2 skipped=0 at=20:00:34.700` at the first present it keeps from a
+drawable, and `mullion: present gate open visibility=0x3 skipped=312 at=20:00:39.810` at the first that takes one
+again, with the presents it skipped. `visibility` is the watched view's last state, or `unknown` once the view isn't
+watched. Both come from the presenting thread, under the nextDrawable line's limit (30 lines in 10 s for the two). With
+`MULLION_STATS=1`, the `GATE gated=<n>` section after `STATS` counts the presents it kept from a drawable in that second
+(Direct3D 12; Direct3D 11 has no `STATS`); a second without any has no `GATE` line.
+
+Both Direct3D 11 and 12 are gated: it is the same bridge call, read once per swap chain. Cost for a shown window: one
+atomic load and a compare per present, no lock and no AppKit call. Off (`0`): no load.
+
+`host_present_gate` builds [`window.c`](../../src/winemetal/unix/window.c) natively with a `CAMetalLayer` whose
+`nextDrawable` counts its calls and takes 200 ms, and feeds the watch states through the entry AppKit's notifications
+use (`window_lines_seen`).
+
+Needs the Mac: that AppKit's notification comes before the call that would block, under Wine and Mullion, at each
+switch away; that the fences then stay on time; and what a hidden window does on newer Macs (d9mt says ~1 s per frame,
+which the M1 didn't show). See private ticket 36's checks.
+
 ### Ranges
 
 With `MULLION_D3D12_CHECK_RANGES=1` a call whose numbers run past the resource they point into is dropped: Metal never
@@ -776,7 +824,15 @@ past a buffer and 4 texels past a texture. Both run on the rented M1 under Metal
   line after the limit starts from the wrong state, and `host_window_lines.3.patch` lets an activation line clear the
   count of lines left out, so the visibility line after it doesn't carry it. It also checks the nextDrawable line: 49
   ms writes nothing, 50 ms writes it, its limit and its count of lines left out, and `unknown` for a layer that isn't
-  the watched view's. `host_window_lines.4.patch` moves its threshold to 5000 ms.
+  the watched view's. `host_window_lines.4.patch` moves its threshold to 5000 ms. It also checks the present gate's
+  line and what the gate counts as shown.
+
+  The present gate: `host_present_gate` builds [`window.c`](../../src/winemetal/unix/window.c) natively and presents
+  to a `CAMetalLayer` whose `nextDrawable` counts its calls and takes 200 ms, with the watch fed shown, hidden, in the
+  Dock and shown again (`window_lines_seen`): with `MULLION_PRESENT_GATE` on, no call while hidden and each present
+  back at once; a call again once shown; with it off, a call every time; another layer's call while the watched window
+  is hidden, and a call once the view is unwatched (the gate fails open); and the closed and open lines with the count
+  skipped. Its break, `tests/breaks/host_present_gate.patch`, makes the gate ignore the window's state.
 
   The root views' checks in the converter: `host_check_root_ranges` has the native `airconv`
   convert `host_guard_static_ranges`' compute shader for root signatures that bind its constant buffer, its SRV or its

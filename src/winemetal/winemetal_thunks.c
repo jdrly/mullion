@@ -1058,14 +1058,19 @@ MetalDrawable_texture(obj_handle_t drawable) {
 }
 
 WINEMETAL_API obj_handle_t
-MetalLayer_nextDrawable(obj_handle_t layer, uint64_t *waited_ns) {
+MetalLayer_nextDrawable(obj_handle_t layer, bool gate, uint64_t skipped, uint64_t *waited_ns, bool *gated) {
   struct unixcall_metal_layer_next_drawable params;
   params.layer = layer;
   params.ret = NULL_OBJECT_HANDLE;
   params.waited_ns = 0;
+  params.gate = gate;
+  params.skipped = skipped;
+  params.gated = 0;
   UNIX_CALL(67, &params);
   if (waited_ns)
     *waited_ns = params.waited_ns;
+  if (gated)
+    *gated = params.gated;
   return params.ret;
 }
 

@@ -157,6 +157,25 @@ main(int argc, char **argv) {
     equal(line(80 * ms, true, 0, 10 * s), "mullion: nextDrawable blocked 80 ms got=1 visibility=0x0 at=20:00:34.700");
   }
 
+  // the present gate: shown is visible, on the active Space and not in the Dock; its lines as it closes and opens
+  {
+    check(window_shown(kShown), "0x3 is shown");
+    check(!window_shown(WINDOW_VISIBLE) && !window_shown(WINDOW_ON_ACTIVE_SPACE) && !window_shown(0) &&
+              !window_shown(kShown | WINDOW_MINIATURIZED),
+          "off the active Space, covered, hidden or in the Dock isn't shown");
+    window_limit limit{};
+    auto line = [&](bool closed, uint32_t visibility, uint64_t skipped) {
+      char buf[160];
+      int length = gate_line(&limit, closed, visibility, skipped, 0, "20:00:34.700", buf, sizeof buf);
+      check(length > 0 && buf[length - 1] == '\n', "a whole gate line");
+      return length ? std::string(buf, length - 1) : std::string();
+    };
+    equal(line(true, WINDOW_ON_ACTIVE_SPACE, 0), "mullion: present gate closed visibility=0x2 skipped=0 at=20:00:34.700");
+    equal(line(false, kShown, 312), "mullion: present gate open visibility=0x3 skipped=312 at=20:00:34.700");
+    equal(line(false, DRAWABLE_VISIBILITY_UNKNOWN, 1),
+          "mullion: present gate open visibility=unknown skipped=1 at=20:00:34.700");
+  }
+
   // the fixture: its window lines are a Cmd-Tab to an app on another Space and back, between STATS t=30 and t=31,
   // and t=33 and t=34
   {
