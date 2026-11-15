@@ -1,5 +1,6 @@
 
 #include <algorithm>
+#include <cstdio>
 #include "Metal.hpp"
 #include "mullion_format.hpp"
 #include "mullion_presenter.hpp"
@@ -216,9 +217,9 @@ Presenter::encodeCommands(
   if (drawable_ns)
     *drawable_ns = 0;
   // MULLION_PRESENT_THREAD: no drawable here; the presenter's thread takes it (presentLoop)
-  const bool threaded = deferred && threaded();
+  const bool deferring = deferred && threaded();
   WMT::MetalDrawable drawable{};
-  if (threaded) {
+  if (deferring) {
     if (drawable_ns)
       *drawable_ns = drawable_wait_ns_.exchange(0, std::memory_order_relaxed);
   } else if (layer_)
@@ -226,7 +227,7 @@ Presenter::encodeCommands(
   auto number = ++frames_;
   if (drawable)
     drawable.countPresent(statistics_, number);
-  if (threaded) {
+  if (deferring) {
     std::lock_guard lock(present_mutex_);
     bool grew;
     unsigned index = book_.Draw(number, grew);
@@ -271,7 +272,7 @@ Presenter::encodeCommands(
     texture_info.array_length = 1;
     window_target_ = device_.newTexture(texture_info);
   }
-  WMT::Texture target = drawable ? drawable.texture() : threaded ? deferred->texture : window_target_;
+  WMT::Texture target = drawable ? drawable.texture() : deferring ? deferred->texture : window_target_;
   // a size the main thread hasn't set yet isn't the drawable's: draw to the size it has
   if (!layer_wait_ && drawable) {
     width = target.width();
@@ -398,8 +399,7 @@ Presenter::presentLoop() {
         wmtcmd_blit_copy_from_texture_to_texture copy{.type = WMTBlitCommandCopyFromTextureToTexture};
         copy.next.set(nullptr);
         copy.src = texture.handle;
-        copy.src_size = {uint32_t(std::min(texture.width(), target.width())),
-                         uint32_t(std::min(texture.height(), target.height())), 1};
+        copy.src_size = {std::min(texture.width(), target.width()), std::min(texture.height(), target.height()), 1};
         copy.dst = target.handle;
         auto blit = cmdbuf.blitCommandEncoder();
         blit.encodeCommands((const wmtcmd_blit_nop *)&copy);
