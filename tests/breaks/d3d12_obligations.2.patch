@@ -1,0 +1,17 @@
+# every triangle geometry the bridge describes is row-major, a transform or none, as before ticket 40: Metal's validation
+# ends the process on a GPU before Apple9 (run with --validate on an M1 or M2)
+--- a/src/winemetal/unix/winemetal_unix.c
++++ b/src/winemetal/unix/winemetal_unix.c
+@@ -4899,10 +4899,10 @@ NTSTATUS _WMTSetMetalShaderCachePath(void *obj);
+ // that skipped the build's transposition (d3d12_command_list.cpp): the process ends, naming it
+ static MTLMatrixLayout
+ transform_layout(id<MTLDevice> device, const struct WMTAccelerationStructureGeometry *g) {
+-  if (!g->transform_buffer || g->transform_column_major)
++  if (g->transform_column_major)
+     return MTLMatrixLayoutColumnMajor;
+   family_needs(9, "acceleration structures containing row-major matrices");
+-  if (![device supportsFamily:MTLGPUFamilyApple9]) {
++  if (!device) {
+     fprintf(stderr, "mullion: a row-major transform on a GPU without them (Apple9), not transposed\n");
+     abort();
+   }
