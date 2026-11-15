@@ -58,7 +58,8 @@ removed with `DXGI_ERROR_DEVICE_HUNG`. A release build doesn't have it.
 | `mullion: textures compression=off` | With `MULLION_TEX_NO_COMPRESSION=1`, once per process, as the bridge loads: Direct3D 11's processes too | The process's stderr (`wine.log` in the app): the bridge writes it | Me: no texture of the session was compressed |
 | `Mullion: layer wait=0` | The first swap chain made with `MULLION_LAYER_WAIT=0`, once per process | `d3d12.log` (Wine's output, `wine.log` in the app), at `info` | Me: the session's presents didn't wait for the main thread |
 | `Mullion: present thread=0` | The first swap chain made with `MULLION_PRESENT_THREAD=0`, once per process | `d3d12.log` (Wine's output, `wine.log` in the app), at `info` | Me: the session's presents took their drawables on the commit thread |
-| `Mullion: present dropped=<n> drawableMs=<ms> at=<HH:MM:SS.mmm>` | With `MULLION_PRESENT_THREAD=1`, when frames were dropped: those the presenter's thread didn't show because a newer one completed first, or that had no drawable. At most once a second, with the frames since the line before and the longest wait for a drawable among them, in whole ms ([§ The presenter's thread](#the-presenters-thread)) | `d3d12.log` (`wine.log`), at `info` | Me: what a Space switch cost in frames |
+| `Mullion: present thread=1` | The first Direct3D 12 present that takes its drawable on a presenter's thread, once per process | The same | Me: the session presented through the presenter's thread |
+| `Mullion: present dropped=<n> since=<ms> drawableMs=<ms> at=<HH:MM:SS.mmm>` | With `MULLION_PRESENT_THREAD=1`, when frames were dropped: those the presenter's thread didn't show because a newer one completed first, or that had no drawable. At most once a second: the frames dropped since `since` ms before the line (from the start of the wait the first of them was lost in), and the longest wait for a drawable among them, in whole ms ([§ The presenter's thread](#the-presenters-thread)) | `d3d12.log` (`wine.log`), at `info` | Me: what a Space switch cost in frames |
 | `mullion: layer mainThreadWaitMs=<N> applied=no` | A change to a layer has waited 1 s, 5 s and 30 s without the main thread applying one: once at each, with either value of `MULLION_LAYER_WAIT`. `<N>`: ms since the main thread last applied a change, or was sent one with none waiting | The process's stderr (`wine.log` in the app), not `MULLION_LOG_PATH`: the bridge's watch thread writes it | Me, on a freeze: the main thread stopped answering |
 | `mullion: layer mainThreadWaitMs=<N> applied=yes` | The main thread applies a change after an `applied=no` line | The same, from the main thread | The same |
 | `MtlPresenter: <HH:MM:SS.mmm> visibility 0x<before> -> 0x<now> visible= activeSpace= miniaturized= active= why= [[n earlier lines suppressed]]` | Always, each time the game window's visibility changes: hidden, shown, another Space, the Dock ([§ The window lines](#the-window-lines)). At most 30 lines in 10 s with the line below | The process's stderr (`wine.log` in the app): the bridge writes it from the main thread, as the change happens | The app's session report, which reads d9mt's line of that name for its hidden seconds and its `--mark`; me, on a freeze after Cmd-Tab or a Space switch |
@@ -532,6 +533,10 @@ What it does:
   textures, and only the newest completed frame waits for the thread; the ones before it are dropped. A texture the
   thread holds is never drawn into. A frame without a drawable (the 1 s timeout) is dropped too. The
   `Mullion: present dropped=` line counts them, at most once a second.
+- The presenter and its thread share the frame textures' book, the layer (retained: the bridge releases a view's
+  layer on the main thread as the swap chain goes) and the frame statistics. The thread is detached and keeps them
+  until it ends. A presenter's release only asks it to stop, at its next frame, and never waits for it: that release
+  can come on the queue's completion thread, ahead of the fences it retires, while the thread waits for a drawable.
 - Frame textures are made as needed, at most 16 (`DXGI_MAX_SWAP_CHAIN_BUFFERS`); past that, a new frame overwrites the
   oldest one not shown yet. A texture is made again when the drawable's size or format changes; a command buffer
   still drawing into the old one keeps it until it completes (ADR 0002). Should the layer's size change between the
@@ -828,8 +833,10 @@ past a buffer and 4 texels past a texture. Both run on the rented M1 under Metal
   [`mullion_present_frames.hpp`](../../src/mullion/mullion_present_frames.hpp) natively and checks the frame
   textures' bookkeeping: frames in order, three textures while the thread waits for a drawable and 140 frames go by
   (139 dropped, the newest shown), the cap of 16 overwriting the oldest frame not shown and never a held texture, an
-  overwritten frame's completion showing nothing, and a frame without a drawable counted as dropped. Its break,
-  `tests/breaks/host_present_frames.patch`, lets the cap overwrite a texture the thread holds.
+  overwritten frame's completion showing nothing, a frame without a drawable counted as dropped, a presenter's stop
+  returning at once while its thread waits 500 ms for a drawable, and the dropped line. Its breaks:
+  `tests/breaks/host_present_frames.patch` lets the cap overwrite a texture the thread holds, and
+  `host_present_frames.2.patch` makes the stop wait for the thread to give its frame back, as a join would.
 
   The root views' checks in the converter: `host_check_root_ranges` has the native `airconv`
   convert `host_guard_static_ranges`' compute shader for root signatures that bind its constant buffer, its SRV or its
