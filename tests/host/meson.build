@@ -57,7 +57,8 @@ test('host_layer_apply', executable('host_layer_apply', ['layer_apply.c', '../..
                                     native : true), suite : 'host')
 # jdrly/mullion: the presenter's frame textures (MULLION_PRESENT_THREAD, src/mullion/mullion_present_frames.hpp)
 test('host_present_frames', executable('host_present_frames', 'present_frames.cpp', override_options : ['cpp_std=c++20'],
-                                       native : true), suite : 'host')
+                                       dependencies : dependency('threads', native : true), native : true),
+     suite : 'host')
 # jdrly/mullion: the bridge's texture descriptor with and without Metal's lossless compression
 # (src/winemetal/unix/texture_compression.h), and a texture made each way where the machine has a Metal device
 test('host_texture_compression', executable('host_texture_compression', 'texture_compression.c',

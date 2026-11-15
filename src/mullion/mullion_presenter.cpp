@@ -47,14 +47,9 @@ Presenter::Presenter(WMT::Device device, WMT::MetalLayer layer, InternalCommandL
 }
 
 Presenter::~Presenter() {
-  if (!thread_.joinable())
-    return;
-  {
-    std::lock_guard lock(present_mutex_);
-    stopping_ = true;
-  }
-  present_changed_.notify_all();
-  thread_.join();
+  // no join: the last release can come on the queue's completion thread, and the thread may be waiting for a drawable
+  if (shared_)
+    shared_->mailbox.Stop();
 }
 
 bool
@@ -220,44 +215,49 @@ Presenter::encodeCommands(
   const bool deferring = deferred && threaded();
   WMT::MetalDrawable drawable{};
   if (deferring) {
+    if (!shared_) {
+      shared_ = std::make_shared<Shared>();
+      shared_->layer = layer_;
+      shared_->statistics = statistics_;
+      shared_->queue = device_.newCommandQueue(4);
+      // the thread keeps `shared_` until it ends; it is never joined
+      mullion::thread([shared = shared_] { presentLoop(shared); }).detach();
+      // the new path acting: the log says so, once per process
+      static std::atomic_bool said_on;
+      if (!said_on.exchange(true))
+        Logger::info("Mullion: present thread=1");
+    }
     if (drawable_ns)
-      *drawable_ns = drawable_wait_ns_.exchange(0, std::memory_order_relaxed);
+      *drawable_ns = shared_->drawable_wait_ns.exchange(0, std::memory_order_relaxed);
   } else if (layer_)
     drawable = layer_.nextDrawable(drawable_ns);
   auto number = ++frames_;
   if (drawable)
     drawable.countPresent(statistics_, number);
   if (deferring) {
-    std::lock_guard lock(present_mutex_);
-    bool grew;
-    unsigned index = book_.Draw(number, grew);
-    if (grew) {
-      frame_textures_.emplace_back();
-      shown_.emplace_back();
-    }
-    auto &texture = frame_textures_[index];
-    // a texture of another size or format is made again; a command buffer still drawing into the one before keeps it
-    // (Deferred::texture)
-    if (!texture || texture.width() != width || texture.height() != height ||
-        texture.pixelFormat() != state.layer_props.pixel_format) {
-      WMTTextureInfo texture_info{};
-      texture_info.type = WMTTextureType2D;
-      texture_info.pixel_format = state.layer_props.pixel_format;
-      texture_info.usage = WMTTextureUsageRenderTarget;
-      texture_info.options = WMTResourceStorageModePrivate;
-      texture_info.width = width;
-      texture_info.height = height;
-      texture_info.depth = 1;
-      texture_info.mipmap_level_count = 1;
-      texture_info.sample_count = 1;
-      texture_info.array_length = 1;
-      texture = device_.newTexture(texture_info);
-    }
-    *deferred = {index, number, texture};
-    if (!thread_.joinable()) {
-      present_queue_ = device_.newCommandQueue(4);
-      thread_ = mullion::thread([this] { presentLoop(); });
-    }
+    WMT::Reference<WMT::Texture> drawn;
+    unsigned index = shared_->mailbox.Draw(number, [&](Shared::Payload &payload) {
+      auto &texture = payload.texture;
+      // a texture of another size or format is made again; a command buffer still drawing into the one before keeps
+      // it (Deferred::texture)
+      if (!texture || texture.width() != width || texture.height() != height ||
+          texture.pixelFormat() != state.layer_props.pixel_format) {
+        WMTTextureInfo texture_info{};
+        texture_info.type = WMTTextureType2D;
+        texture_info.pixel_format = state.layer_props.pixel_format;
+        texture_info.usage = WMTTextureUsageRenderTarget;
+        texture_info.options = WMTResourceStorageModePrivate;
+        texture_info.width = width;
+        texture_info.height = height;
+        texture_info.depth = 1;
+        texture_info.mipmap_level_count = 1;
+        texture_info.sample_count = 1;
+        texture_info.array_length = 1;
+        texture = device_.newTexture(texture_info);
+      }
+      drawn = texture;
+    });
+    *deferred = {index, number, drawn};
   } else if (!drawable && (!window_target_ || window_target_.width() != width || window_target_.height() != height)) {
     WMTTextureInfo texture_info{};
     texture_info.type = WMTTextureType2D;
@@ -353,49 +353,33 @@ template WMT::MetalDrawable Presenter::encodeCommands(
 
 void
 Presenter::show(const Deferred &deferred, double after) {
-  std::lock_guard lock(present_mutex_);
-  if (!book_.Done(deferred.index, deferred.frame))
-    return;
-  shown_[deferred.index] = {after};
-  present_changed_.notify_all();
+  shared_->mailbox.Done(deferred.index, deferred.frame, [&](Shared::Payload &payload) { payload.after = after; });
 }
 
 void
-Presenter::presentLoop() {
+Presenter::presentLoop(std::shared_ptr<Shared> shared) {
   env::setThreadName("mullion-present");
-  // the frames dropped since the last line, and the longest wait for a drawable among them
+  // the frames dropped since the last line, since when, and the longest wait for a drawable among them
   uint64_t dropped = 0, longest_ns = 0;
-  auto said = std::chrono::steady_clock::now() - std::chrono::seconds(1);
-  for (;;) {
-    unsigned index;
-    uint64_t number;
-    double after;
-    WMT::Reference<WMT::Texture> texture;
-    {
-      std::unique_lock lock(present_mutex_);
-      present_changed_.wait(lock, [&] { return stopping_ || book_.HasReady(); });
-      if (stopping_)
-        return;
-      auto taken = book_.Take();
-      index = taken->first;
-      number = taken->second;
-      after = shown_[index].after;
-      texture = frame_textures_[index];
-    }
+  auto first_drop = std::chrono::steady_clock::now();
+  auto said = first_drop - std::chrono::seconds(1);
+  while (auto taken = shared->mailbox.Wait()) {
+    auto &texture = taken->payload.texture;
+    // the frames this present drops were lost while it waited: since its start
+    auto began = std::chrono::steady_clock::now();
     auto pool = WMT::MakeAutoreleasePool();
     uint64_t waited = 0;
     // the call that blocks at a Space switch: here it holds up only this thread
-    auto drawable = layer_.nextDrawable(&waited);
-    drawable_wait_ns_.fetch_add(waited, std::memory_order_relaxed);
-    longest_ns = std::max(longest_ns, waited);
+    auto drawable = shared->layer.nextDrawable(&waited);
+    shared->drawable_wait_ns.fetch_add(waited, std::memory_order_relaxed);
     bool shown = false;
     if (drawable) {
       auto target = drawable.texture();
       // a layer the main thread resized or reformatted since the frame was drawn: the part both have, or nothing for
       // another format, which a copy can't take
       if (target.pixelFormat() == texture.pixelFormat()) {
-        drawable.countPresent(statistics_, number);
-        auto cmdbuf = present_queue_.commandBuffer();
+        drawable.countPresent(shared->statistics, taken->frame);
+        auto cmdbuf = shared->queue.commandBuffer();
         wmtcmd_blit_copy_from_texture_to_texture copy{.type = WMTBlitCommandCopyFromTextureToTexture};
         copy.next.set(nullptr);
         copy.src = texture.handle;
@@ -404,8 +388,8 @@ Presenter::presentLoop() {
         auto blit = cmdbuf.blitCommandEncoder();
         blit.encodeCommands((const wmtcmd_blit_nop *)&copy);
         blit.endEncoding();
-        if (after > 0)
-          cmdbuf.presentDrawableAfterMinimumDuration(drawable, after);
+        if (taken->payload.after > 0)
+          cmdbuf.presentDrawableAfterMinimumDuration(drawable, taken->payload.after);
         else
           cmdbuf.presentDrawable(drawable);
         cmdbuf.commit();
@@ -414,22 +398,25 @@ Presenter::presentLoop() {
         shown = true;
       }
     }
-    std::lock_guard lock(present_mutex_);
-    book_.Release(index, shown);
-    dropped += book_.TakeDropped();
-    // the frames lost while this thread waited for a drawable or fell behind: at most a line a second
     auto now = std::chrono::steady_clock::now();
+    if (uint64_t lost = shared->mailbox.Release(taken->index, shown)) {
+      if (!dropped)
+        first_drop = began;
+      dropped += lost;
+      longest_ns = std::max(longest_ns, waited);
+    }
+    // the frames lost while this thread waited for a drawable or fell behind: at most a line a second
     if (dropped && now - said >= std::chrono::seconds(1)) {
       SYSTEMTIME local;
       GetLocalTime(&local);
       char at[16];
       std::snprintf(at, sizeof(at), "%02u:%02u:%02u.%03u", local.wHour, local.wMinute, local.wSecond,
                     local.wMilliseconds);
-      Logger::info(str::format("Mullion: present dropped=", dropped, " drawableMs=", longest_ns / 1000000, " at=", at));
+      auto since = std::chrono::duration_cast<std::chrono::milliseconds>(now - first_drop).count();
+      Logger::info(present_frames::DroppedLine(dropped, since, longest_ns / 1000000, at));
       dropped = longest_ns = 0;
       said = now;
-    } else if (!dropped)
-      longest_ns = 0;
+    }
   }
 }
 

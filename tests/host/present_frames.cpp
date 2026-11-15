@@ -2,10 +2,17 @@
 // are drawn, made ready and shown in order; while the presenter's thread holds a texture (it waits for a drawable),
 // the queue keeps drawing into others and only the newest completed frame waits for the thread, the rest dropped and
 // counted; a texture the thread holds is never drawn into, at the cap either; a frame overwritten before its buffer
-// completed is never shown; and a frame without a drawable counts as dropped
+// completed is never shown; a frame without a drawable counts as dropped; the presenter stops its thread without
+// waiting for it while the thread waits for a drawable (its last release can come on the queue's completion thread),
+// and the thread ends after that wait; and the dropped line's format
 #include "../../src/mullion/mullion_present_frames.hpp"
+#include <atomic>
+#include <chrono>
+#include <condition_variable>
 #include <cstdio>
+#include <memory>
 #include <string>
+#include <thread>
 
 using namespace mullion::present_frames;
 
@@ -102,6 +109,40 @@ main() {
     check(book.TakeDropped() == 1, "a frame without a drawable counts as dropped");
     check(book.Draw(2, grew) == index && !grew, "and its texture is drawn into again");
   }
+
+  // the presenter goes while its thread waits 500 ms for a drawable: Stop returns at once, the thread keeps the mailbox
+  // and ends after its wait, at its next Wait
+  {
+    using Box = Mailbox<std::mutex, std::condition_variable, int>;
+    auto box = std::make_shared<Box>();
+    std::atomic<bool> waiting{false}, ended{false};
+    std::thread thread([box, &waiting, &ended] {
+      while (auto taken = box->Wait()) {
+        waiting = true;
+        std::this_thread::sleep_for(std::chrono::milliseconds(500));
+        box->Release(taken->index, true);
+      }
+      ended = true;
+    });
+    unsigned index = box->Draw(1, [](int &payload) { payload = 7; });
+    box->Done(index, 1, [](int &) {});
+    while (!waiting)
+      std::this_thread::sleep_for(std::chrono::milliseconds(1));
+    auto began = std::chrono::steady_clock::now();
+    box->Stop();
+    box.reset();
+    auto took = std::chrono::steady_clock::now() - began;
+    check(took < std::chrono::milliseconds(100),
+          "stopping doesn't wait for a thread that waits for a drawable (took " +
+              std::to_string(std::chrono::duration_cast<std::chrono::milliseconds>(took).count()) + " ms)");
+    check(!ended, "the thread is still in its wait as the presenter goes");
+    thread.join();
+    check(ended, "the thread ends after its wait");
+  }
+
+  check(DroppedLine(139, 1201, 1193, "02:42:05.905") ==
+            "Mullion: present dropped=139 since=1201 drawableMs=1193 at=02:42:05.905",
+        "the dropped line");
 
   if (failures)
     std::printf("%u failed\n", failures);

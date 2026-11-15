@@ -65,7 +65,8 @@ public:
       HWND window
   );
 
-  // joins the presenter's thread (MULLION_PRESENT_THREAD), which may be waiting up to the drawable timeout (1 s)
+  // asks the presenter's thread (MULLION_PRESENT_THREAD) to stop, and doesn't wait for it: the thread keeps what it
+  // shares with the presenter until it ends
   ~Presenter();
 
   bool changeLayerProperties(
@@ -186,21 +187,27 @@ private:
   std::chrono::steady_clock::time_point window_last_draw_;
   mullion::mutex window_mutex_;
 
-  // MULLION_PRESENT_THREAD: the frame textures and their book, what each ready frame is to be shown with, the thread
-  // and its own Metal 3 queue, all under present_mutex_ but the queue, which only the thread uses
-  void presentLoop();
-  struct Shown {
-    double after = 0;
+  // MULLION_PRESENT_THREAD: what the presenter and its thread share, made at the first present that defers. The thread
+  // keeps it after the presenter is gone (a detached thread, which ends at its next Mailbox::Wait), so that nothing
+  // the thread uses, the layer included, goes before it does
+  struct Shared {
+    // a frame texture, and the minimum duration the frame drawn into it last is to be presented after
+    struct Payload {
+      WMT::Reference<WMT::Texture> texture;
+      double after = 0;
+    };
+    present_frames::Mailbox<mullion::mutex, mullion::condition_variable, Payload> mailbox;
+    // retained: the bridge releases a view's layer on the main thread as the swap chain goes, maybe while the thread
+    // waits for a drawable of it
+    WMT::Reference<WMT::MetalLayer> layer;
+    // the presenter's own, which GetFrameStatistics reads
+    WMT::Reference<WMT::PresentStatistics> statistics;
+    // the thread's own Metal 3 queue
+    WMT::Reference<WMT::CommandQueue> queue;
+    // the thread's time in nextDrawable since the last present encoded, for HITCH's drawableMs
+    std::atomic<uint64_t> drawable_wait_ns{0};
   };
-  mullion::mutex present_mutex_;
-  mullion::condition_variable present_changed_;
-  present_frames::Book book_;
-  std::vector<WMT::Reference<WMT::Texture>> frame_textures_;
-  std::vector<Shown> shown_;
-  bool stopping_ = false;
-  mullion::thread thread_;
-  WMT::Reference<WMT::CommandQueue> present_queue_;
-  // the thread's time in nextDrawable since the last present encoded, for HITCH's drawableMs
-  std::atomic<uint64_t> drawable_wait_ns_{0};
+  static void presentLoop(std::shared_ptr<Shared> shared);
+  std::shared_ptr<Shared> shared_;
 };
 } // namespace mullion

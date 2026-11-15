@@ -5,11 +5,14 @@
 // into a texture on its own command buffer (Draw); the buffer's completion makes it ready (Done); the thread takes the
 // newest ready frame (Take), takes a drawable, copies the texture into it and gives the texture back once that copy has
 // completed (Release). A texture the thread holds is never drawn into; frames are shown in order, an older one never
-// after a newer one. The caller keeps all of it to one thread at a time (a mutex). Pure C++: tests/host/present_frames.cpp
-// builds it natively.
+// after a newer one. Book is for one thread at a time; Mailbox puts it under a lock and is what the presenter and its
+// thread share. Pure C++: tests/host/present_frames.cpp builds it natively.
 
 #include <cstdint>
+#include <cstdio>
+#include <mutex>
 #include <optional>
+#include <string>
 #include <utility>
 #include <vector>
 
@@ -118,5 +121,89 @@ private:
   std::vector<Texture> textures_;
   uint64_t dropped_ = 0;
 };
+
+// The book under a lock, with what each texture carries (`Payload`), the presenter's thread's wait, and its stop. The
+// presenter and its thread share it (std::shared_ptr), and the thread keeps it after the presenter is gone: a
+// presenter's release only asks the thread to stop, and never waits for it, which may be waiting up to the drawable
+// timeout (a presenter's last release can come on the queue's completion thread, ahead of the fences it retires)
+template <typename Mutex, typename CondVar, typename Payload> class Mailbox {
+public:
+  struct Taken {
+    unsigned index;
+    uint64_t frame;
+    Payload payload;
+  };
+
+  // the queue's thread: Book::Draw, then `prepare` with the texture's payload, under the lock
+  template <typename Prepare>
+  unsigned
+  Draw(uint64_t frame, Prepare &&prepare) {
+    std::lock_guard<Mutex> lock(mutex_);
+    bool grew;
+    unsigned index = book_.Draw(frame, grew);
+    if (grew)
+      payloads_.emplace_back();
+    prepare(payloads_[index]);
+    return index;
+  }
+
+  // the completion thread: Book::Done, and `ready` with the frame's payload when it is ready for the thread
+  template <typename Ready>
+  void
+  Done(unsigned index, uint64_t frame, Ready &&ready) {
+    {
+      std::lock_guard<Mutex> lock(mutex_);
+      if (!book_.Done(index, frame))
+        return;
+      ready(payloads_[index]);
+    }
+    changed_.notify_all();
+  }
+
+  // the presenter's thread: the frame to show next, now held, or none once stopped
+  std::optional<Taken>
+  Wait() {
+    std::unique_lock<Mutex> lock(mutex_);
+    changed_.wait(lock, [&] { return stopping_ || book_.HasReady(); });
+    if (stopping_)
+      return std::nullopt;
+    auto taken = book_.Take();
+    return Taken{taken->first, taken->second, payloads_[taken->first]};
+  }
+
+  // the presenter's thread: Book::Release, and the frames dropped since the last call
+  uint64_t
+  Release(unsigned index, bool shown) {
+    std::lock_guard<Mutex> lock(mutex_);
+    book_.Release(index, shown);
+    return book_.TakeDropped();
+  }
+
+  // the presenter, as it goes: the thread ends at its next Wait. Returns at once
+  void
+  Stop() {
+    {
+      std::lock_guard<Mutex> lock(mutex_);
+      stopping_ = true;
+    }
+    changed_.notify_all();
+  }
+
+private:
+  Mutex mutex_;
+  CondVar changed_;
+  Book book_;
+  std::vector<Payload> payloads_;
+  bool stopping_ = false;
+};
+
+// the dropped line: `dropped` frames since `since_ms` before it, the longest wait for a drawable among them
+inline std::string
+DroppedLine(uint64_t dropped, uint64_t since_ms, uint64_t drawable_ms, const char *at) {
+  char text[160];
+  std::snprintf(text, sizeof(text), "Mullion: present dropped=%llu since=%llu drawableMs=%llu at=%s",
+                (unsigned long long)dropped, (unsigned long long)since_ms, (unsigned long long)drawable_ms, at);
+  return text;
+}
 
 } // namespace mullion::present_frames
