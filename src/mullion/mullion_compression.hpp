@@ -6,8 +6,9 @@
 // on GPUs before Apple10 (d9mt 3145b30, driver/mtl/mtl_pfv.h). MULLION_TEX_MSAA_COMPRESSION is that rule here:
 //
 //   0      multisampled textures and resolve targets are made uncompressed, on every GPU
-//   1      Metal's default for them (compressed); the default until the GPU gate turns `auto` on
-//   auto   0 on a GPU before Apple10 (the family the bridge answers as, under MULLION_GPU_FAMILY too), else 1
+//   1      Metal's default for them (compressed)
+//   auto   0 on a GPU before Apple10 (the family the bridge answers as, under MULLION_GPU_FAMILY too), else 1; the
+//          default since the GPU gate (private ticket 15) ran d3d12_texture_compression on the rented M1
 //
 // Direct3D 12 doesn't say at creation which texture a resolve will write. A resolve target here is a single-sampled
 // 2D texture of the type group (D3D11.3 19.1.4), width and height of a multisampled texture the device has made
@@ -32,8 +33,9 @@
 
 namespace mullion::compression {
 
-// MULLION_TEX_MSAA_COMPRESSION unset (d3d12_device.cpp declares it with this): Metal's default on every GPU
-constexpr const char *kMsaaDefault = "1";
+// MULLION_TEX_MSAA_COMPRESSION unset (d3d12_device.cpp declares it with this): off before Apple10, Metal's default on
+// Apple10
+constexpr const char *kMsaaDefault = "auto";
 
 // MULLION_TEX_MSAA_COMPRESSION's grammar: "0", "1" or "auto"; anything else is the fallback
 inline std::string

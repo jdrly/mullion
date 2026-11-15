@@ -73,8 +73,8 @@ GuardStaticRangesFlag() {
 // jdrly/mullion: Metal's lossless texture compression (mullion_compression.hpp). MULLION_TEX_NO_COMPRESSION=1 turns
 // it off for every texture; the bridge reads it (texture_compression.h), so it reaches Direct3D 11 too, and it is
 // declared here for the session header and the line below. MULLION_TEX_MSAA_COMPRESSION turns it off for
-// multisampled textures and resolve targets: 1, Metal's default, until the GPU gate turns `auto` on. Both read as
-// each device is made
+// multisampled textures and resolve targets: `auto` (off before Apple10) since the GPU gate's run on the M1. Both
+// read as each device is made
 static sw::Switch<bool> kTexNoCompression{"MULLION_TEX_NO_COMPRESSION", false, sw::exactlyOne};
 static sw::Switch<std::string> kTexMsaaCompression{"MULLION_TEX_MSAA_COMPRESSION", compression::kMsaaDefault,
                                                    compression::MsaaSwitch};
