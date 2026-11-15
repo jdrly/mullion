@@ -3353,6 +3353,13 @@ convert_dxil(
               continue;
             }
             Value *piece = dxbc.LoadBufferValue(b, unit, ptr, inside);
+            // a coherent unit's load is atomic (CreateDeviceCoherentLoad), and the compilers of Apple7 and Apple8 GPUs
+            // fold an atomic load widened to 64 bits into one they can't legalize ("unable to legalize instruction:
+            // (s64) = G_LOAD ... volatile load monotonic (s32)", the M1, private ticket 39). a freeze of the loaded
+            // value is that value and keeps the fold off; a widening written as a bitcast of <half, 0> is folded back
+            // by Apple's own compiler
+            if (b.GlobalCoherent && parts > 1)
+              piece = ir.CreateFreeze(piece);
             loaded = ir.CreateOr(loaded, ir.CreateShl(ir.CreateZExt(piece, element), shift));
           }
           if (!store)
