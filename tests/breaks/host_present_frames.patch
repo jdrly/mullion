@@ -1,0 +1,14 @@
+# at the cap, a texture the presenter's thread holds is overwritten: the GPU draws into what the thread copies
+diff --git a/src/mullion/mullion_present_frames.hpp b/src/mullion/mullion_present_frames.hpp
+index dbfa921..e9b0c7b 100644
+--- a/src/mullion/mullion_present_frames.hpp
++++ b/src/mullion/mullion_present_frames.hpp
+@@ -50,7 +50,7 @@ public:
+         grew = true;
+       } else {
+         for (unsigned i = 0; i < textures_.size(); i++)
+-          if (textures_[i].state != State::Held && (index == textures_.size() || textures_[i].frame < textures_[index].frame))
++          if (index == textures_.size() || textures_[i].frame < textures_[index].frame)
+             index = i;
+         dropped_++;
+       }

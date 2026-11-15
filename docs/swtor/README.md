@@ -23,6 +23,7 @@ are set.
 | Variable | Default | What it does | Off restores |
 |---|---|---|---|
 | `MULLION_LAYER_WAIT` | `1` | `1`: a present that changes its layer (size, pixel format, scale, colour space) waits for the main thread to set the change, as upstream does. `0`: it goes on, the main thread sets the change later in the order asked (`src/winemetal/unix/layer.c`), and the present draws to the size of the drawable it got. Read once per swap chain. | `1` is upstream's behaviour |
+| `MULLION_PRESENT_THREAD` | `1` | `1`: a Direct3D 12 present draws its frame into a texture of the presenter's own on the queue's command buffer, which commits without a drawable; once it completes, the presenter's thread takes the drawable, copies the frame into it and presents it ([§ The presenter's thread](#the-presenters-thread)). A `nextDrawable` that blocks then holds up no command buffer and no fence; frames the thread can't show in time are dropped, newest kept. `0`: the queue's commit thread takes the drawable and presents in the frame's own command buffer, as before. Read once per swap chain; Direct3D 11 isn't affected. Default on, unlike other behaviour changes: its off value is the defect, a ~1.2 s stall of every fence at each switch away from the window's Space, which SWTOR's DX12 client turns into a crash | The drawable on the commit thread, and the stall at a Space switch (an A/B, or a way out) |
 | `MULLION_SESSION_HEADER` | off (`1` turns it on) | Writes the session header (below) when the first Direct3D 12 device is created, with one read-only bridge call for what the Windows side can't read. Off until the Mac run shows the header right on an M1 and an M5 Max; SWTOR on Mac's DX12 dev build turns it on | No header and no bridge call for it |
 | `MULLION_STATS` | off (`1` turns it on) | Writes a `STATS` line (below) each second of presenting, and counts what it reports. Read once, when `d3d12core.dll` loads. SWTOR on Mac's DX12 dev build turns it on | No line, and nothing counted: each place that counts tests one flag (below). The bridge still keeps `mainWaitMaxMs`' longest wait, one compare-and-swap for each layer change the main thread applies, which nothing reads |
 | `MULLION_HITCH_MS` | `50` | With `MULLION_STATS=1`, a frame (Present to Present) this many ms long or longer gets a `HITCH` line, and its `COMPILE` line is at `warn`. Whole ms, 1 to 60000; anything else is 50. Read once, at the first Present counted | Nothing to restore: it only moves a threshold, and `MULLION_STATS` off writes no `HITCH` |
@@ -56,6 +57,8 @@ removed with `DXGI_ERROR_DEVICE_HUNG`. A release build doesn't have it.
 | `Mullion: texture uncompressed rule= samples= size= format=` | The first texture each rule makes uncompressed on a device: `rule` `msaa` or `resolve`, `samples` the count Metal makes it with (4 for the paired 8x before Apple10), `size` width x height, `format` its `DXGI_FORMAT` number | The same | Me: an `msaa` line without a `resolve` line means the game's resolve target wasn't found (the rule's limits, [gpu-families.md](gpu-families.md)) |
 | `mullion: textures compression=off` | With `MULLION_TEX_NO_COMPRESSION=1`, once per process, as the bridge loads: Direct3D 11's processes too | The process's stderr (`wine.log` in the app): the bridge writes it | Me: no texture of the session was compressed |
 | `Mullion: layer wait=0` | The first swap chain made with `MULLION_LAYER_WAIT=0`, once per process | `d3d12.log` (Wine's output, `wine.log` in the app), at `info` | Me: the session's presents didn't wait for the main thread |
+| `Mullion: present thread=0` | The first swap chain made with `MULLION_PRESENT_THREAD=0`, once per process | `d3d12.log` (Wine's output, `wine.log` in the app), at `info` | Me: the session's presents took their drawables on the commit thread |
+| `Mullion: present dropped=<n> drawableMs=<ms> at=<HH:MM:SS.mmm>` | With `MULLION_PRESENT_THREAD=1`, when frames were dropped: those the presenter's thread didn't show because a newer one completed first, or that had no drawable. At most once a second, with the frames since the line before and the longest wait for a drawable among them, in whole ms ([§ The presenter's thread](#the-presenters-thread)) | `d3d12.log` (`wine.log`), at `info` | Me: what a Space switch cost in frames |
 | `mullion: layer mainThreadWaitMs=<N> applied=no` | A change to a layer has waited 1 s, 5 s and 30 s without the main thread applying one: once at each, with either value of `MULLION_LAYER_WAIT`. `<N>`: ms since the main thread last applied a change, or was sent one with none waiting | The process's stderr (`wine.log` in the app), not `MULLION_LOG_PATH`: the bridge's watch thread writes it | Me, on a freeze: the main thread stopped answering |
 | `mullion: layer mainThreadWaitMs=<N> applied=yes` | The main thread applies a change after an `applied=no` line | The same, from the main thread | The same |
 | `MtlPresenter: <HH:MM:SS.mmm> visibility 0x<before> -> 0x<now> visible= activeSpace= miniaturized= active= why= [[n earlier lines suppressed]]` | Always, each time the game window's visibility changes: hidden, shown, another Space, the Dock ([§ The window lines](#the-window-lines)). At most 30 lines in 10 s with the line below | The process's stderr (`wine.log` in the app): the bridge writes it from the main thread, as the change happens | The app's session report, which reads d9mt's line of that name for its hidden seconds and its `--mark`; me, on a freeze after Cmd-Tab or a Space switch |
@@ -241,7 +244,7 @@ present whose `nextDrawable` blocked 1149.3 ms of its 1199.8 ms `encodeMs`; `tes
 | categories | `name=n/ms`, in this order, each with the calls and their ms: `pipelineWait`, a draw or dispatch waiting for its Metal pipeline (compiled on a compile thread, or made now); `shaderConvert`, `CreateGraphicsPipelineState`, `CreateComputePipelineState` and `CreatePipelineState`, and a shader converted for a variant at draw time; `present`, the Present call up to the end of its frame; `fenceWait`, `SetEventOnCompletion` and `SetEventOnMultipleFenceCompletion` without an event; `allocReset`, a command allocator's `Reset` waiting for its lists (`MULLION_D3D12_RESET_WAITS=1`). One with nothing in it is left out; `none` when all are. A call inside another counts in the outer one only, so the categories add up to `inDriverMs` |
 | `gpuMs` | GPU time of the command buffers the queues saw complete during the frame, as far as Metal had given it by then: a Metal 3 buffer whose completion was read from its event before Metal completed it counts nothing |
 | `encodeMs` | Time the queues spent on command buffers ended during the frame, from taking a buffer's slot to committing it. A buffer encoded on the parallel encode threads counts from the slot on |
-| `drawableMs` | Time the queues' presents spent in the Mac's `nextDrawable` during the frame, as the bridge timed the call ([§ The nextDrawable line](#the-nextdrawable-line)). Part of `encodeMs`: a present takes its drawable while its command buffer is encoded, on the thread that commits it. `0.0` when no present took a drawable. The report doesn't split the `queue:` group into categories, so it reads the line as before |
+| `drawableMs` | Time spent in the Mac's `nextDrawable` during the frame, as the bridge timed the call ([§ The nextDrawable line](#the-nextdrawable-line)). With `MULLION_PRESENT_THREAD=1`, the presenter's threads' time, which no queue waits for, taken at the next present. With `0`, the queues' presents' time, part of `encodeMs`: a present takes its drawable while its command buffer is encoded, on the thread that commits it. `0.0` when no drawable was taken. The report doesn't split the `queue:` group into categories, so it reads the line as before |
 | `behind` | Command buffers committed and not yet complete at the line, of all queues |
 | `at` | The local time of the line, `HH:MM:SS.mmm` |
 
@@ -504,6 +507,48 @@ atomics, reads the local time, takes a mutex that only slow calls take, and writ
 
 Needs the Mac: that the line comes once per switch away, with the window off the active Space, and none without a
 switch, is a check on a Mac.
+
+### The presenter's thread
+
+`MULLION_PRESENT_THREAD=1` (the default) takes a Direct3D 12 present's drawable off the queue's commit thread. At a
+switch away from the game window's Space, macOS holds the layer's drawables for about 1.2 s ([§ The nextDrawable
+line](#the-nextdrawable-line)). A present that asks for one on the commit thread holds up every command buffer and
+fence behind it, and SWTOR's DX12 client takes the late fence for a hung GPU. Nothing decided before the call avoids
+it: under Wine the call that blocks starts 9–10 ms before AppKit says the window was hidden (M1, macOS 27.0, six
+switches), which is why a visibility gate (private ticket 36) didn't help.
+
+What it does:
+
+- The queue's command buffer for the `Present` draws the frame with the presenter's shader (scale, HDR, gamma) into a
+  frame texture of the presenter's own, of the drawable's size and format, instead of the drawable, and commits as
+  before. It asks Metal for no present. Every command buffer and `Signal` after it commits without waiting for a
+  drawable.
+- When that buffer completes, the queue's completion thread hands the frame to the presenter's thread
+  (`mullion-present`, one per swap chain, started at its first present). The thread calls `nextDrawable` (where the
+  block now lands), copies the frame texture into the drawable in a command buffer of its own Metal 3 queue, presents
+  it, at once or after its minimum duration, and waits for that buffer before giving the texture back. Frame
+  statistics count the present there.
+- Frames are shown in order. While the thread waits for a drawable, the queue goes on drawing into other frame
+  textures, and only the newest completed frame waits for the thread; the ones before it are dropped. A texture the
+  thread holds is never drawn into. A frame without a drawable (the 1 s timeout) is dropped too. The
+  `Mullion: present dropped=` line counts them, at most once a second.
+- Frame textures are made as needed, at most 16 (`DXGI_MAX_SWAP_CHAIN_BUFFERS`); past that, a new frame overwrites the
+  oldest one not shown yet. A texture is made again when the drawable's size or format changes; a command buffer
+  still drawing into the old one keeps it until it completes (ADR 0002). Should the layer's size change between the
+  frame and its drawable, the copy takes the part both have; another format, which a copy can't take, drops the
+  frame.
+- `Present` returns as before, and the frame-latency semaphore is released when the queue's buffer completes, as
+  before: the drawable doesn't hold it.
+
+The bookkeeping of the frame textures (which one a frame gets, which frame the thread takes, what is dropped) is in
+[`mullion_present_frames.hpp`](../../src/mullion/mullion_present_frames.hpp), which `host_present_frames` tests.
+
+Cost, measured on the M1 (§ CI's Mac run): one full-frame copy per present on the GPU, a command buffer of the
+presenter's own, and the handoff from the queue's completion to the thread. With `0`, none of it: the code at
+`0b26fda`. Direct3D 11 presents as before, whatever the switch.
+
+Needs the Mac: that the fences stay on time at a Space switch, that frames come back after it, and what the handoff
+costs, are checks on a Mac.
 
 ### Ranges
 
@@ -777,6 +822,13 @@ past a buffer and 4 texels past a texture. Both run on the rented M1 under Metal
   count of lines left out, so the visibility line after it doesn't carry it. It also checks the nextDrawable line: 49
   ms writes nothing, 50 ms writes it, its limit and its count of lines left out, and `unknown` for a layer that isn't
   the watched view's. `host_window_lines.4.patch` moves its threshold to 5000 ms.
+
+  The presenter's thread: `host_present_frames` builds
+  [`mullion_present_frames.hpp`](../../src/mullion/mullion_present_frames.hpp) natively and checks the frame
+  textures' bookkeeping: frames in order, three textures while the thread waits for a drawable and 140 frames go by
+  (139 dropped, the newest shown), the cap of 16 overwriting the oldest frame not shown and never a held texture, an
+  overwritten frame's completion showing nothing, and a frame without a drawable counted as dropped. Its break,
+  `tests/breaks/host_present_frames.patch`, lets the cap overwrite a texture the thread holds.
 
   The root views' checks in the converter: `host_check_root_ranges` has the native `airconv`
   convert `host_guard_static_ranges`' compute shader for root signatures that bind its constant buffer, its SRV or its
