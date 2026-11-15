@@ -1,0 +1,19 @@
+# before private ticket 39: a coherent 64-bit load's atomic halves are zero-extended straight from their loads, which
+# the compilers of Apple7 and Apple8 GPUs fold into one load they stop on
+diff --git a/src/airconv/dxil_converter.cpp b/src/airconv/dxil_converter.cpp
+index 0000000..0000000 100644
+--- a/src/airconv/dxil_converter.cpp
++++ b/src/airconv/dxil_converter.cpp
+@@ -3353,12 +3353,6 @@ convert_dxil(
+               continue;
+             }
+             Value *piece = dxbc.LoadBufferValue(b, unit, ptr, inside);
+-            // a coherent unit's load is atomic (CreateDeviceCoherentLoad), and the compilers of Apple7 and Apple8 GPUs
+-            // fold an atomic load widened to 64 bits into one they can't legalize ("unable to legalize instruction:
+-            // (s64) = G_LOAD ... volatile load monotonic (s32)", the M1, private ticket 39). a freeze of the loaded
+-            // value is that value and keeps the fold off, where any other form is optimized back to the widened load
+-            if (b.GlobalCoherent && parts > 1)
+-              piece = ir.CreateFreeze(piece);
+             loaded = ir.CreateOr(loaded, ir.CreateShl(ir.CreateZExt(piece, element), shift));
+           }
+           if (!store)

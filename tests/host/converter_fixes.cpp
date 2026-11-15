@@ -6,7 +6,11 @@
 // - the same shader with v1 a front face, which the converter handles: one argument, so the check above can see one;
 // - a DXIL compute shader with a typed SRV of doubles (Buffer<double>, component type F64), which is refused with
 //   "unsupported: a typed resource of doubles". before #7 it was bound with a scalar type never set. the same shader
-//   with floats converts, so the refusal is the doubles', not the fixture's.
+//   with floats converts, so the refusal is the doubles', not the fixture's;
+// - a DXIL compute shader that loads 64-bit values from a globallycoherent raw and structured buffer (SM 6.3's native
+//   64-bit loads). their 32-bit halves are read by atomic loads, and no atomic load is widened to 64 bits as it is:
+//   the compilers of Apple7 and Apple8 GPUs fold that into one load they stop on (private ticket 39). before the fix
+//   the structured value's halves were zero-extended straight from their loads.
 //
 //   host_converter_fixes <airconv>
 //
@@ -100,13 +104,73 @@ define void @main() {
 !8 = !{i32 1, i32 1, i32 1}
 )";
 
+// cs_6_3, as DXC writes it for
+//   globallycoherent RWByteAddressBuffer coherent_raw : register(u0);
+//   globallycoherent RWStructuredBuffer<uint64_t> coherent_structured : register(u1);
+//   RWStructuredBuffer<uint64_t> results : register(u2);
+//   [numthreads(1, 1, 1)] void main(uint id : SV_GroupIndex) {
+//     results[id] = coherent_raw.Load<uint64_t>(id * 4) + coherent_structured[id];
+//   }
+// the add keeps each 64-bit value whole, so the converter's output can't read its halves apart
+static const char *coherent_ir = R"(
+target datalayout = "e-m:e-p:32:32-i1:32-i8:32-i16:32-i32:32-i64:64-f16:32-f32:32-f64:64-n8:16:32:64"
+target triple = "dxil-ms-dx"
+
+%dx.types.Handle = type { i8* }
+%dx.types.ResRet.i64 = type { i64, i64, i64, i64, i32 }
+%struct.RWByteAddressBuffer = type { i32 }
+%"class.RWStructuredBuffer<unsigned long long>" = type { i64 }
+
+define void @main() {
+  %1 = call %dx.types.Handle @dx.op.createHandle(i32 57, i8 1, i32 2, i32 2, i1 false)
+  %2 = call %dx.types.Handle @dx.op.createHandle(i32 57, i8 1, i32 1, i32 1, i1 false)
+  %3 = call %dx.types.Handle @dx.op.createHandle(i32 57, i8 1, i32 0, i32 0, i1 false)
+  %4 = call i32 @dx.op.flattenedThreadIdInGroup.i32(i32 96)
+  %5 = shl i32 %4, 2
+  %6 = call %dx.types.ResRet.i64 @dx.op.rawBufferLoad.i64(i32 139, %dx.types.Handle %3, i32 %5, i32 undef, i8 1, i32 4)
+  %7 = extractvalue %dx.types.ResRet.i64 %6, 0
+  %8 = call %dx.types.ResRet.i64 @dx.op.rawBufferLoad.i64(i32 139, %dx.types.Handle %2, i32 %4, i32 0, i8 1, i32 8)
+  %9 = extractvalue %dx.types.ResRet.i64 %8, 0
+  %10 = add i64 %9, %7
+  call void @dx.op.rawBufferStore.i64(i32 140, %dx.types.Handle %1, i32 %4, i32 0, i64 %10, i64 undef, i64 undef, i64 undef, i8 1, i32 8)
+  ret void
+}
+
+declare i32 @dx.op.flattenedThreadIdInGroup.i32(i32) #0
+declare %dx.types.ResRet.i64 @dx.op.rawBufferLoad.i64(i32, %dx.types.Handle, i32, i32, i8, i32) #1
+declare void @dx.op.rawBufferStore.i64(i32, %dx.types.Handle, i32, i32, i64, i64, i64, i64, i8, i32) #2
+declare %dx.types.Handle @dx.op.createHandle(i32, i8, i32, i32, i1) #1
+
+attributes #0 = { nounwind readnone }
+attributes #1 = { nounwind readonly }
+attributes #2 = { nounwind }
+
+!dx.version = !{!1}
+!dx.shaderModel = !{!3}
+!dx.resources = !{!4}
+!dx.entryPoints = !{!10}
+
+!1 = !{i32 1, i32 3}
+!3 = !{!"cs", i32 6, i32 3}
+!4 = !{null, !5, null, null}
+!5 = !{!6, !7, !9}
+!6 = !{i32 0, %struct.RWByteAddressBuffer* undef, !"", i32 0, i32 0, i32 1, i32 11, i1 true, i1 false, i1 false, null}
+!7 = !{i32 1, %"class.RWStructuredBuffer<unsigned long long>"* undef, !"", i32 0, i32 1, i32 1, i32 12, i1 true, i1 false, i1 false, !8}
+!8 = !{i32 1, i32 8}
+!9 = !{i32 2, %"class.RWStructuredBuffer<unsigned long long>"* undef, !"", i32 0, i32 2, i32 1, i32 12, i1 false, i1 false, i1 false, !8}
+!10 = !{void ()* @main, !"main", null, !4, !11}
+!11 = !{i32 0, i64 1048592, i32 4, !12}
+!12 = !{i32 1, i32 1, i32 1}
+)";
+
 // the DXIL part of `ir`: a DxilProgramHeader (the shader's kind and model, its size in words), then a
 // DxilBitcodeHeader ("DXIL", DXIL 1.0, where its bitcode starts from it, its size), then the bitcode
 static Words
-dxil(std::string ir, const char *element, uint32_t component) {
+dxil(std::string ir, const char *element = "", uint32_t component = 0) {
   for (auto [from, to] :
        {std::pair<std::string, std::string>{"ELEMENT", element}, {"COMPONENT", std::to_string(component)}})
-    ir.replace(ir.find(from), from.size(), to);
+    if (auto at = ir.find(from); at != std::string::npos)
+      ir.replace(at, from.size(), to);
   llvm::LLVMContext context;
   context.setOpaquePointers(false); // DXIL's pointers are typed, as the converter reads them
   llvm::SMDiagnostic error;
@@ -187,6 +251,25 @@ main(int argc, char **argv) {
   std::printf("double: %s", doubles.converted ? "converted\n" : doubles.text.c_str());
   check(!doubles.converted && doubles.text == "unsupported: a typed resource of doubles\n",
         "a DXIL typed SRV of doubles is refused as unsupported");
+
+  // the names the atomic loads give their halves, and each use of one that widens it
+  write("coherent.dxbc", container({{"ISGN", {0, 8}}, {"OSGN", {0, 8}}, {"DXIL", dxil(coherent_ir)}}));
+  auto coherent = convert("coherent");
+  unsigned atomic = 0, widened = 0;
+  for (size_t at = 0; (at = coherent.text.find(" = call i32 @air.atomic.global.load.i32(", at)) != std::string::npos;) {
+    auto line = coherent.text.rfind('\n', at) + 1;
+    auto name = coherent.text.substr(line, at - line);
+    name.erase(0, name.find_first_not_of(' '));
+    atomic++;
+    if (coherent.text.find("zext i32 " + name + " to i64") != std::string::npos) {
+      std::printf("coherent: %s is widened\n", name.c_str());
+      widened++;
+    }
+    at += 1;
+  }
+  std::printf("coherent: %u atomic loads, %u widened\n", atomic, widened);
+  check(coherent.converted && atomic == 4, "two coherent 64-bit loads read their halves by four atomic loads");
+  check(atomic && !widened, "no atomic load of a coherent 64-bit value is widened to 64 bits");
 
   // MULLION_KEEP_OUTPUT: the outputs stay, for a pull request to attach
   if (std::getenv("MULLION_KEEP_OUTPUT"))
