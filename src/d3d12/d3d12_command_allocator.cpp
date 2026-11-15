@@ -400,8 +400,9 @@ MTLD3D12CommandAllocatorImpl::QueryInterface(REFIID riid, void **ppvObject) {
 }
 
 // jdrly/mullion: a Reset with lists still pending waits for them (docs/swtor/README.md). Read once, at the first such
-// Reset of the process
-static sw::Switch<bool> kResetWaits{"MULLION_D3D12_RESET_WAITS", false, sw::exactlyOne};
+// Reset of the process. On since the GPU gate ran d3d12_allocator_reset_in_flight and its break on the rented M1
+// (private ticket 15); `0` is upstream's reset at once
+static sw::Switch<bool> kResetWaits{"MULLION_D3D12_RESET_WAITS", true, sw::notZero};
 
 static bool
 ResetWaits() {

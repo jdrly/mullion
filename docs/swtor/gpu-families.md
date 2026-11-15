@@ -16,7 +16,7 @@ the fork's rules come from d9mt's evidence.
 | Bug | What answers it here |
 |---|---|
 | A compressed texture read before anything wrote it shows magenta (d9mt #101, #105) | `MULLION_TEX_NO_COMPRESSION=1`, for every texture. No default fix: Direct3D 12 calls a new texture's contents undefined, and clearing each one costs bandwidth on every Mac. Mullion doesn't clear new textures, and `DiscardResource` does nothing |
-| 4x MSAA with compression draws flickering lines (d9mt #140; SWTOR's "Very High" anti-aliasing) | `MULLION_TEX_MSAA_COMPRESSION=auto` (or `0`): multisampled textures and their resolve targets without compression before Apple10, d9mt's fix, which the M4 player confirmed. `MULLION_TEX_NO_COMPRESSION=1` answers it too |
+| 4x MSAA with compression draws flickering lines (d9mt #140; SWTOR's "Very High" anti-aliasing) | `MULLION_TEX_MSAA_COMPRESSION=auto`, the default since the GPU gate's M1 run (or `0`): multisampled textures and their resolve targets without compression before Apple10, d9mt's fix, which the M4 player confirmed. `MULLION_TEX_NO_COMPRESSION=1` answers it too |
 
 "8x" MSAA before Apple10 is made as paired 4x textures (`src/mullion/mullion_format.cpp`), so it meets the second
 bug as 4x does.
