@@ -70,7 +70,7 @@ cause):
 | Metal API or shader validation reports (INF/NaN interpolants, encoder assertions) | 30 | 26 |
 | hang under validation on Metal 4 that passes on Metal 3 (#165, [TESTING.md 6.1](../TESTING.md#6-running-tests-and-reading-results)) | 14 | 0 |
 | Metal validation: invalid load in a shader, no fork switch | 14 | 14 |
-| Metal asserts `Device does not support MTLMatrixLayoutRowMajor` (Apple7) | 8 | 10 |
+| Metal asserts `Device does not support MTLMatrixLayoutRowMajor` (Apple7; fixed by #45) | 8 | 10 |
 | no verdict: memory pressure (8 GB) | 8 | 3 |
 | hang, also on Metal 3 or not run there | 8 | 2 |
 | the range checks' invalid loads (fixed by #39, 1bd0bb9) | 6 | 6 |
@@ -95,7 +95,10 @@ cause):
   invalid read can page-fault and restart WindowServer, so each of these is a stability finding, not noise.
 - **`MTLMatrixLayoutRowMajor`.** `d3d12_obligations`, `d3d12_recording_failure` and others build an acceleration
   structure descriptor with a matrix layout the M1 doesn't support; Metal's validation ends the process. Mullion sets
-  it without a family check.
+  it without a family check. Fixed by #45: the bridge had set it on every triangle geometry, one without a
+  transform too, and a size query has none. On the M1 the ray tests' builds on Metal 4 then stop at Metal 4's own
+  refusal, `Metal 4 does not support raytracing with software emulation`, a separate defect. On Metal 3 all ten tests
+  pass without validation, and under it all but one step of `d3d12_rayquery` (an invalid load, validation's view).
 
 ## 2a. The same tests without validation
 
