@@ -1,9 +1,8 @@
 # an out-of-bounds scalar reads the view's first bytes
 --- a/src/airconv/dxil_converter.cpp
 +++ b/src/airconv/dxil_converter.cpp
-@@ -3114,8 +3114,8 @@ convert_dxil(
-         auto zero =
-             ir.CreatePointerCast(buffer.Zero ? buffer.Zero : dxbc.ZeroRow(), ir.getInt8Ty()->getPointerTo(space));
+@@ -3114,7 +3114,7 @@ convert_dxil(
+         auto zero = ir.CreatePointerCast(dxbc.ZeroRow(), ir.getInt8Ty()->getPointerTo(space));
          auto within = ir.CreateICmpULE(end, buffer.Metadata);
          dxbc.CountMiss(buffer.Counted, within);
 -        pointer = ir.CreateSelect(within, pointer, zero);

@@ -9,7 +9,11 @@ Wars: The Old Republic on Apple Silicon through Wine. AI agents write its change
   (`gh repo sync jdrly/mullion --branch main`).
 - **Nothing goes to `dttdrv/mullion`, `3Shain/dxmt` or athei's repositories.** No issue, no pull request, no comment,
   no discussion, not even a finding offered as research. A finding upstream should hear about goes to me, and I
-  decide. No checkout has a remote that can push there: `gh repo clone` adds `upstream`, so remove it.
+  decide.
+- **The fork fixes obvious defects in upstream's code itself** (my decision of 2026-11-15), editing upstream's files
+  as narrowly as it can, through the fork's own pull request. Such a fix goes nowhere upstream either. Obvious means
+  the code is plainly wrong: a read Metal's validation calls invalid, undefined behaviour, code that contradicts its
+  own comment and callers ([ADR 0001](docs/swtor/adr/0001-switches.md)'s no-switch case). No checkout has a remote that can push there: `gh repo clone` adds `upstream`, so remove it.
 - Every `gh` command names the fork: `--repo jdrly/mullion`, and `--base swtor-on-mac` for `gh pr create`. Without
   them `gh` in a fork picks the upstream repository.
 - Mark every AI-written commit as such in its body.
@@ -18,8 +22,10 @@ Wars: The Old Republic on Apple Silicon through Wine. AI agents write its change
 
 Upstream's [`CONTRIBUTING.md`](CONTRIBUTING.md) governs contributions to upstream, not to this fork; ignore where it
 says to report or where a change starts. Its [`docs/CODE.md`](docs/CODE.md), [`docs/TESTING.md`](docs/TESTING.md)
-and [`docs/DEBUGGING.md`](docs/DEBUGGING.md) still describe how the code and its tests are written. I leave all of
-upstream's files as they are, so that upstream's changes merge without conflicts. The fork's own files are new. One
+and [`docs/DEBUGGING.md`](docs/DEBUGGING.md) still describe how the code and its tests are written. I leave
+upstream's files as they are wherever I can, so that upstream's changes merge without conflicts: the fork's own
+files are new, and a change to upstream's code (a fix, a switch) touches as few of its lines as it can. Upstream's
+README, CONTRIBUTING and `docs/` stay as upstream has them. One
 exception: upstream's workflows `ci.yml` and `game-reports.yml` are deleted here, so they can never run in the fork
 ([docs/swtor/README.md](docs/swtor/README.md) § CI).
 

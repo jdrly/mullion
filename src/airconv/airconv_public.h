@@ -914,9 +914,9 @@ AIRCONV_API int SM50GetRayShader(
 );
 
 /* jdrly/mullion: a row of 16 zero bytes the device keeps before the header of
-   SM50_NULL_ACCELERATION_STRUCTURE_HEADER_SIZE, this far before the lock table: what a checked root CBV's row past its
-   length reads (SM50_SHADER_FLAG_CHECK_ROOT_RANGES). The command buffer holds it resident; the shader's own row of
-   zeros is memory Metal's validation sees no resource at (private ticket 37) */
+   SM50_NULL_ACCELERATION_STRUCTURE_HEADER_SIZE, this far before the lock table: what a constant buffer's row past its
+   view or length reads, in every shader whose binding has the lock table. The command buffer holds it resident; the
+   shader's own row of zeros is memory Metal's validation sees no resource at (private tickets 37 and 43) */
 #define SM50_ZERO_ROW_BEFORE_LOCKS (SM50_NULL_ACCELERATION_STRUCTURE_HEADER_SIZE + 16)
 
 #ifdef __cplusplus
