@@ -4893,9 +4893,25 @@ NTSTATUS _CacheWriter_alloc_init(void *obj);
 NTSTATUS _CacheWriter_set(void *obj);
 NTSTATUS _WMTSetMetalShaderCachePath(void *obj);
 
+// jdrly/mullion: the matrix layout of a geometry's transform. Metal's validation rejects MTLMatrixLayoutRowMajor in
+// any descriptor on a GPU before Apple9 ("Acceleration structures containing row-major matrices"), with or without a
+// transform, so a geometry without one keeps Metal's column-major default. a row-major transform there is a caller
+// that skipped the build's transposition (d3d12_command_list.cpp): the process ends, naming it
+static MTLMatrixLayout
+transform_layout(id<MTLDevice> device, const struct WMTAccelerationStructureGeometry *g) {
+  if (!g->transform_buffer || g->transform_column_major)
+    return MTLMatrixLayoutColumnMajor;
+  family_needs(9, "acceleration structures containing row-major matrices");
+  if (![device supportsFamily:MTLGPUFamilyApple9]) {
+    fprintf(stderr, "mullion: a row-major transform on a GPU without them (Apple9), not transposed\n");
+    abort();
+  }
+  return MTLMatrixLayoutRowMajor;
+}
+
 // the Metal descriptor of a WMTAccelerationStructureInfo, autoreleased
 static MTLAccelerationStructureDescriptor *
-acceleration_structure_descriptor(const struct WMTAccelerationStructureInfo *info) {
+acceleration_structure_descriptor(id<MTLDevice> device, const struct WMTAccelerationStructureInfo *info) {
   if (info->instances) {
     MTLIndirectInstanceAccelerationStructureDescriptor *desc =
         [MTLIndirectInstanceAccelerationStructureDescriptor descriptor];
@@ -4935,9 +4951,7 @@ acceleration_structure_descriptor(const struct WMTAccelerationStructureInfo *inf
       triangles.triangleCount = g->count;
       triangles.transformationMatrixBuffer = (id<MTLBuffer>)g->transform_buffer;
       triangles.transformationMatrixBufferOffset = g->transform_offset;
-      if (g->transform_buffer && !g->transform_column_major)
-        family_needs(9, "acceleration structures containing row-major matrices");
-      triangles.transformationMatrixLayout = g->transform_column_major ? MTLMatrixLayoutColumnMajor : MTLMatrixLayoutRowMajor;
+      triangles.transformationMatrixLayout = transform_layout(device, g);
       geometry = triangles;
     }
     geometry.opaque = g->opaque;
@@ -4956,7 +4970,7 @@ _MTLDevice_accelerationStructureSizes(void *obj) {
   struct WMTAccelerationStructureInfo *info = params->info.ptr;
   @autoreleasepool {
     MTLAccelerationStructureSizes sizes = [(id<MTLDevice>)params->device
-        accelerationStructureSizesWithDescriptor:acceleration_structure_descriptor(info)];
+        accelerationStructureSizesWithDescriptor:acceleration_structure_descriptor((id<MTLDevice>)params->device, info)];
     info->size = sizes.accelerationStructureSize;
     info->build_scratch_size = sizes.buildScratchBufferSize;
     info->refit_scratch_size = sizes.refitScratchBufferSize;
@@ -4994,7 +5008,7 @@ _MTLAccelerationStructureCommandEncoder_encodeCommands(void *obj) {
         break;
       case WMTAccelerationStructureCommandBuild: {
         struct wmtcmd_accelerationstructure_build *body = (struct wmtcmd_accelerationstructure_build *)next;
-        MTLAccelerationStructureDescriptor *desc = acceleration_structure_descriptor(&body->info);
+        MTLAccelerationStructureDescriptor *desc = acceleration_structure_descriptor(encoder.device, &body->info);
         if (body->src)
           [encoder refitAccelerationStructure:(id<MTLAccelerationStructure>)body->src
                                    descriptor:desc
@@ -7243,9 +7257,7 @@ API_AVAILABLE(macos(26.0)) metal4_structure_descriptor(
       triangles.indexType = (MTLIndexType)g->index_type;
       triangles.triangleCount = g->count;
       triangles.transformationMatrixBuffer = metal4_range(state, g->transform_buffer, g->transform_offset);
-      if (g->transform_buffer && !g->transform_column_major)
-        family_needs(9, "acceleration structures containing row-major matrices");
-      triangles.transformationMatrixLayout = g->transform_column_major ? MTLMatrixLayoutColumnMajor : MTLMatrixLayoutRowMajor;
+      triangles.transformationMatrixLayout = transform_layout(state->device, g);
       geometry = triangles;
     }
     geometry.opaque = g->opaque;
