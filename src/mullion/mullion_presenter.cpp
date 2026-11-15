@@ -6,6 +6,7 @@
 #include "mullion_diag.hpp"
 #include "util_likely.hpp"
 #include "util_math.hpp"
+#include "util_env.hpp"
 #include "util_switch.hpp"
 
 
@@ -14,18 +15,27 @@ namespace mullion {
 // 1: a present that changes its layer waits for the main thread to set it, as upstream does. 0: it goes on, and the
 // main thread sets it later, in the order asked (src/winemetal/unix/layer.c)
 static sw::Switch<bool> kLayerWait{"MULLION_LAYER_WAIT", true, sw::notZero};
+// 1: a Direct3D 12 present takes its drawable on the presenter's own thread, after the frame was drawn into a texture
+// of the presenter's on the queue's command buffer, so a nextDrawable that blocks (about 1.2 s at a switch away from
+// the window's Space) holds up no command buffer and no fence. 0: on the queue's commit thread, as before
+static sw::Switch<bool> kPresentThread{"MULLION_PRESENT_THREAD", true, sw::notZero};
 
 Presenter::Presenter(WMT::Device device, WMT::MetalLayer layer, InternalCommandLibrary &lib, float scale_factor, uint8_t sample_count, HWND window) :
     device_(device),
     layer_(layer),
     lib_(lib),
     layer_wait_(kLayerWait()),
+    thread_on_(kPresentThread()),
     sample_count_(sample_count),
     window_(window) {
   // MULLION_LAYER_WAIT=0 is new behaviour: the log says so, once per process
   static std::atomic_bool said;
   if (!layer_wait_ && !said.exchange(true))
     Logger::info("Mullion: layer wait=0");
+  // MULLION_PRESENT_THREAD=0 brings back the stall at a Space switch: the log says so, once per process
+  static std::atomic_bool said_thread;
+  if (!thread_on_ && !said_thread.exchange(true))
+    Logger::info("Mullion: present thread=0");
   layer_.getProps(layer_props_);
   native_contents_scale_ = layer_props_.contents_scale;
   layer_props_.device = device;
@@ -33,6 +43,17 @@ Presenter::Presenter(WMT::Device device, WMT::MetalLayer layer, InternalCommandL
   layer_props_.display_sync_enabled = false;
   layer_props_.framebuffer_only = false; // how strangely setting it true results in worse performance
   layer_props_.contents_scale = layer_props_.contents_scale * scale_factor;
+}
+
+Presenter::~Presenter() {
+  if (!thread_.joinable())
+    return;
+  {
+    std::lock_guard lock(present_mutex_);
+    stopping_ = true;
+  }
+  present_changed_.notify_all();
+  thread_.join();
 }
 
 bool
@@ -184,7 +205,7 @@ Presenter::encodeCommands(
     CommandBuffer cmdbuf, WMT::Texture backbuffer, const PresentState &state,
     std::type_identity_t<std::function<void(Encoder)>> &&wait_fences,
     std::type_identity_t<std::function<void(Encoder)>> &&update_fences, uint64_t seq_id, unsigned *encoder_count,
-    uint64_t *drawable_ns
+    uint64_t *drawable_ns, Deferred *deferred
 ) {
   const auto &metadata = state.metadata;
   double width = state.layer_props.drawable_width;
@@ -194,11 +215,49 @@ Presenter::encodeCommands(
 
   if (drawable_ns)
     *drawable_ns = 0;
-  auto drawable = layer_ ? layer_.nextDrawable(drawable_ns) : WMT::MetalDrawable{};
+  // MULLION_PRESENT_THREAD: no drawable here; the presenter's thread takes it (presentLoop)
+  const bool threaded = deferred && threaded();
+  WMT::MetalDrawable drawable{};
+  if (threaded) {
+    if (drawable_ns)
+      *drawable_ns = drawable_wait_ns_.exchange(0, std::memory_order_relaxed);
+  } else if (layer_)
+    drawable = layer_.nextDrawable(drawable_ns);
   auto number = ++frames_;
   if (drawable)
     drawable.countPresent(statistics_, number);
-  if (!drawable && (!window_target_ || window_target_.width() != width || window_target_.height() != height)) {
+  if (threaded) {
+    std::lock_guard lock(present_mutex_);
+    bool grew;
+    unsigned index = book_.Draw(number, grew);
+    if (grew) {
+      frame_textures_.emplace_back();
+      shown_.emplace_back();
+    }
+    auto &texture = frame_textures_[index];
+    // a texture of another size or format is made again; a command buffer still drawing into the one before keeps it
+    // (Deferred::texture)
+    if (!texture || texture.width() != width || texture.height() != height ||
+        texture.pixelFormat() != state.layer_props.pixel_format) {
+      WMTTextureInfo texture_info{};
+      texture_info.type = WMTTextureType2D;
+      texture_info.pixel_format = state.layer_props.pixel_format;
+      texture_info.usage = WMTTextureUsageRenderTarget;
+      texture_info.options = WMTResourceStorageModePrivate;
+      texture_info.width = width;
+      texture_info.height = height;
+      texture_info.depth = 1;
+      texture_info.mipmap_level_count = 1;
+      texture_info.sample_count = 1;
+      texture_info.array_length = 1;
+      texture = device_.newTexture(texture_info);
+    }
+    *deferred = {index, number, texture};
+    if (!thread_.joinable()) {
+      present_queue_ = device_.newCommandQueue(4);
+      thread_ = mullion::thread([this] { presentLoop(); });
+    }
+  } else if (!drawable && (!window_target_ || window_target_.width() != width || window_target_.height() != height)) {
     WMTTextureInfo texture_info{};
     texture_info.type = WMTTextureType2D;
     texture_info.pixel_format = state.layer_props.pixel_format;
@@ -212,7 +271,7 @@ Presenter::encodeCommands(
     texture_info.array_length = 1;
     window_target_ = device_.newTexture(texture_info);
   }
-  WMT::Texture target = drawable ? drawable.texture() : window_target_;
+  WMT::Texture target = drawable ? drawable.texture() : threaded ? deferred->texture : window_target_;
   // a size the main thread hasn't set yet isn't the drawable's: draw to the size it has
   if (!layer_wait_ && drawable) {
     width = target.width();
@@ -283,13 +342,96 @@ Presenter::encodeCommands(
 
 template WMT::MetalDrawable Presenter::encodeCommands(
     WMT::CommandBuffer, WMT::Texture, const PresentState &, std::function<void(WMT::RenderCommandEncoder)> &&,
-    std::function<void(WMT::RenderCommandEncoder)> &&, uint64_t, unsigned *, uint64_t *
+    std::function<void(WMT::RenderCommandEncoder)> &&, uint64_t, unsigned *, uint64_t *, Deferred *
 );
 template WMT::MetalDrawable Presenter::encodeCommands(
     WMT::Metal4CommandBuffer, WMT::Texture, const PresentState &,
     std::function<void(WMT::Metal4RenderCommandEncoder)> &&, std::function<void(WMT::Metal4RenderCommandEncoder)> &&,
-    uint64_t, unsigned *, uint64_t *
+    uint64_t, unsigned *, uint64_t *, Deferred *
 );
+
+void
+Presenter::show(const Deferred &deferred, double after) {
+  std::lock_guard lock(present_mutex_);
+  if (!book_.Done(deferred.index, deferred.frame))
+    return;
+  shown_[deferred.index] = {after};
+  present_changed_.notify_all();
+}
+
+void
+Presenter::presentLoop() {
+  env::setThreadName("mullion-present");
+  // the frames dropped since the last line, and the longest wait for a drawable among them
+  uint64_t dropped = 0, longest_ns = 0;
+  auto said = std::chrono::steady_clock::now() - std::chrono::seconds(1);
+  for (;;) {
+    unsigned index;
+    uint64_t number;
+    double after;
+    WMT::Reference<WMT::Texture> texture;
+    {
+      std::unique_lock lock(present_mutex_);
+      present_changed_.wait(lock, [&] { return stopping_ || book_.HasReady(); });
+      if (stopping_)
+        return;
+      auto taken = book_.Take();
+      index = taken->first;
+      number = taken->second;
+      after = shown_[index].after;
+      texture = frame_textures_[index];
+    }
+    auto pool = WMT::MakeAutoreleasePool();
+    uint64_t waited = 0;
+    // the call that blocks at a Space switch: here it holds up only this thread
+    auto drawable = layer_.nextDrawable(&waited);
+    drawable_wait_ns_.fetch_add(waited, std::memory_order_relaxed);
+    longest_ns = std::max(longest_ns, waited);
+    bool shown = false;
+    if (drawable) {
+      auto target = drawable.texture();
+      // a layer the main thread resized or reformatted since the frame was drawn: the part both have, or nothing for
+      // another format, which a copy can't take
+      if (target.pixelFormat() == texture.pixelFormat()) {
+        drawable.countPresent(statistics_, number);
+        auto cmdbuf = present_queue_.commandBuffer();
+        wmtcmd_blit_copy_from_texture_to_texture copy{.type = WMTBlitCommandCopyFromTextureToTexture};
+        copy.next.set(nullptr);
+        copy.src = texture.handle;
+        copy.src_size = {uint32_t(std::min(texture.width(), target.width())),
+                         uint32_t(std::min(texture.height(), target.height())), 1};
+        copy.dst = target.handle;
+        auto blit = cmdbuf.blitCommandEncoder();
+        blit.encodeCommands((const wmtcmd_blit_nop *)&copy);
+        blit.endEncoding();
+        if (after > 0)
+          cmdbuf.presentDrawableAfterMinimumDuration(drawable, after);
+        else
+          cmdbuf.presentDrawable(drawable);
+        cmdbuf.commit();
+        // the texture is free once the copy has read it
+        cmdbuf.waitUntilCompleted();
+        shown = true;
+      }
+    }
+    std::lock_guard lock(present_mutex_);
+    book_.Release(index, shown);
+    dropped += book_.TakeDropped();
+    // the frames lost while this thread waited for a drawable or fell behind: at most a line a second
+    auto now = std::chrono::steady_clock::now();
+    if (dropped && now - said >= std::chrono::seconds(1)) {
+      SYSTEMTIME local;
+      GetLocalTime(&local);
+      char at[16];
+      std::snprintf(at, sizeof(at), "%02u:%02u:%02u.%03u", local.wHour, local.wMinute, local.wSecond,
+                    local.wMilliseconds);
+      Logger::info(str::format("Mullion: present dropped=", dropped, " drawableMs=", longest_ns / 1000000, " at=", at));
+      dropped = longest_ns = 0;
+      said = now;
+    } else if (!dropped)
+      longest_ns = 0;
+  }
+}
 
 void
 Presenter::drawToWindow(double after) {
