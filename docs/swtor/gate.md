@@ -112,7 +112,7 @@ M1 gets, and `tests/swtor/known-m1.txt` (the list run.py reads without `--valida
 | upstream's M5 Pro causes: `d3d12_depth_stencil` (144) and `d3d12_raster_bias` (1740) give the M5 Pro's very answers, hash included; `d3d12_block_values` (132 against 108), `d3d12_raster` (1014 against 990) and `d3d12_raster_samples` (56112 against 26544) other counts | 10 |
 | ray tracing on Apple7 (`d3d12_raytracing`, `d3d12_ray_generation`, `d3d12_ray_shader_kinds`, `d3d12_rayquery`) | 4 |
 | a window from SSH (`d3d12_device_removal`, `d3d12_startup`, `d3d12_trace_log`) | 5 |
-| **Apple's M1 compiler backend aborts** on a pipeline of `d3d12_buffer_loads_dxil` (below) | 1 |
+| **Apple's M1 compiler backend aborts** on a pipeline of `d3d12_buffer_loads_dxil` (below; fixed by #46) | 1 |
 | by design (`d3d12_corpus`) | 2 |
 | `d3d12_texture_compression`'s missing verdict | 1 |
 | unexplained: `d3d12_clear_values` (R11G11B10_FLOAT clears), `d3d12_frames`, `d3d12_pipeline_times`, `d3d12_profile`, `d3d12_ps_writes`, `d3d12_sample_residency`, `d3d12_adapters`, `d3d12_swapchain_creation`, `d3d12_swapchain_refs`, `d3d12_queued_present`, `d3d12_sampler_slots`, `d3d12_resource_interfaces`, `d3d12_atomic64_fallback_dxil`, `d3d12_mesh_groups_dxil` | 26 |
@@ -123,6 +123,10 @@ M1 gets, and `tests/swtor/known-m1.txt` (the list run.py reads without `--valida
   pipeline failed and its dispatches were skipped (8232 wrong results). Under validation a mesh pipeline crashed the
   same backend once (SIGSEGV, `AGCModule<MeshProgramKey>`). A shader Mullion makes can kill Apple's compiler on an M1:
   a game's draw with it would be skipped. Not seen on the M5 Max; the shader isn't dumped yet (`dumped=no`).
+  Fixed by #46: the pipelines were all 16 of the test's 64-bit shaders (`cs_6_3` and `cs_6_6`), whose
+  `globallycoherent` loads zero-extended an atomic 32-bit load, which the backend of Apple7 and Apple8 GPUs can't
+  legalize. With the fix the test passes on the M1 and its line is out of `known-m1.txt`. The mesh tests gave this
+  baseline's answers again; the mesh crash didn't recur.
 - `d3d12_statistics_heap` has no verdict: its slice pushed swap 280 MiB and the queue stopped it. Without validation
   `d3d12_format_blend` passes, and `d3d12_raster` and `d3d12_raster_samples` give the counts above.
 - The six range-check tests pass without validation (their invalid loads were validation's view of the shader's own
