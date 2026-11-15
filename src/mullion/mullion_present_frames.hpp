@@ -8,6 +8,7 @@
 // after a newer one. Book is for one thread at a time; Mailbox puts it under a lock and is what the presenter and its
 // thread share. Pure C++: tests/host/present_frames.cpp builds it natively.
 
+#include <chrono>
 #include <cstdint>
 #include <cstdio>
 #include <mutex>
@@ -63,19 +64,29 @@ public:
   }
 
   // the completion thread: the command buffer that drew `frame` into `index` completed, in the queue's order. true when
-  // the frame is still that texture's, now ready; a ready frame before it, which the thread didn't take, is dropped
+  // the frame is still that texture's, now ready; a ready frame before it, which the thread didn't take, is dropped,
+  // and so is one still drawing before it, whose buffer will never complete (a cancelled one)
   bool
   Done(unsigned index, uint64_t frame) {
     auto &texture = textures_[index];
     if (texture.state != State::Drawing || texture.frame != frame)
       return false;
     for (auto &other : textures_)
-      if (other.state == State::Ready) {
+      if (other.state == State::Ready || (other.state == State::Drawing && other.frame < frame)) {
         other.state = State::Free;
         dropped_++;
       }
     texture.state = State::Ready;
     return true;
+  }
+
+  // the frames drawn and neither shown nor dropped yet
+  unsigned
+  Outstanding() const {
+    unsigned outstanding = 0;
+    for (auto &texture : textures_)
+      outstanding += texture.state != State::Free;
+    return outstanding;
   }
 
   bool
@@ -174,9 +185,32 @@ public:
   // the presenter's thread: Book::Release, and the frames dropped since the last call
   uint64_t
   Release(unsigned index, bool shown) {
-    std::lock_guard<Mutex> lock(mutex_);
-    book_.Release(index, shown);
-    return book_.TakeDropped();
+    uint64_t dropped;
+    {
+      std::lock_guard<Mutex> lock(mutex_);
+      book_.Release(index, shown);
+      dropped = book_.TakeDropped();
+    }
+    changed_.notify_all();
+    return dropped;
+  }
+
+  // the game's thread, before a Present: waits while `limit` frames or more are drawn and neither shown nor dropped,
+  // at most `timeout`, so that the game goes no faster than the drawables come (the commit thread's nextDrawable paced
+  // it before) and no further ahead than `limit` frames. false when it gave up: the thread waits for a drawable that
+  // doesn't come (a Space switch), and the game goes on, its frames dropped
+  template <typename Rep, typename Period>
+  bool
+  Throttle(unsigned limit, std::chrono::duration<Rep, Period> timeout) {
+    auto until = std::chrono::steady_clock::now() + timeout;
+    std::unique_lock<Mutex> lock(mutex_);
+    while (!stopping_ && book_.Outstanding() >= limit) {
+      auto now = std::chrono::steady_clock::now();
+      if (now >= until)
+        return false;
+      changed_.wait_for(lock, until - now);
+    }
+    return true;
   }
 
   // the presenter, as it goes: the thread ends at its next Wait. Returns at once

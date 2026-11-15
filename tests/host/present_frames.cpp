@@ -140,6 +140,50 @@ main() {
     check(ended, "the thread ends after its wait");
   }
 
+  // the game's pace: a Present waits while the thread is two frames behind, until it shows one, and gives up after its
+  // timeout while the thread waits for a drawable that doesn't come
+  {
+    using Box = Mailbox<std::mutex, std::condition_variable, int>;
+    Box box;
+    auto ms = [](auto d) { return std::chrono::duration_cast<std::chrono::milliseconds>(d).count(); };
+    unsigned a = box.Draw(1, [](int &) {});
+    auto began = std::chrono::steady_clock::now();
+    check(box.Throttle(2, std::chrono::milliseconds(100)) && ms(std::chrono::steady_clock::now() - began) < 50,
+          "one frame ahead: a Present goes on at once");
+    box.Done(a, 1, [](int &) {});
+    auto held = box.Wait();
+    unsigned b = box.Draw(2, [](int &) {});
+    std::thread shows([&] {
+      std::this_thread::sleep_for(std::chrono::milliseconds(30));
+      box.Release(held->index, true);
+    });
+    began = std::chrono::steady_clock::now();
+    bool kept = box.Throttle(2, std::chrono::milliseconds(500));
+    auto waited = ms(std::chrono::steady_clock::now() - began);
+    shows.join();
+    check(kept && waited >= 20 && waited < 400,
+          "two frames ahead: a Present waits for the thread to show one (waited " + std::to_string(waited) + " ms)");
+    box.Done(b, 2, [](int &) {});
+    auto blocked = box.Wait();
+    box.Draw(3, [](int &) {});
+    began = std::chrono::steady_clock::now();
+    kept = box.Throttle(2, std::chrono::milliseconds(100));
+    waited = ms(std::chrono::steady_clock::now() - began);
+    check(!kept && waited >= 90 && waited < 400,
+          "a thread waiting for a drawable holds a Present up for 100 ms at most (waited " + std::to_string(waited) + " ms)");
+    box.Release(blocked->index, true);
+  }
+
+  // a frame whose buffer never completes (cancelled) is dropped once a later one completes: it holds no Present up
+  {
+    Book book;
+    bool grew = false;
+    unsigned lost = book.Draw(1, grew), next = book.Draw(2, grew);
+    check(book.Done(next, 2) && book.textures()[lost].state == State::Free && book.Outstanding() == 1,
+          "a frame drawing before one that completed is dropped");
+    check(book.TakeDropped() == 1, "and counted");
+  }
+
   check(DroppedLine(139, 1201, 1193, "02:42:05.905") ==
             "Mullion: present dropped=139 since=1201 drawableMs=1193 at=02:42:05.905",
         "the dropped line");

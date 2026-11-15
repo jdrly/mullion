@@ -529,8 +529,14 @@ What it does:
   block now lands), copies the frame texture into the drawable in a command buffer of its own Metal 3 queue, presents
   it, at once or after its minimum duration, and waits for that buffer before giving the texture back. Frame
   statistics count the present there.
+- The game's `Present` waits on the game's own thread while two frames are drawn and neither shown nor dropped, for
+  100 ms at most. The commit thread's `nextDrawable` paced a swap chain before (about 8 ms a frame at 120 Hz on the
+  M1), and nothing else paces one without a frame-latency waitable object: without this wait the repro ran at ~4,800
+  frames a second, nearly all dropped. At a Space switch the wait gives up after 100 ms each time, and the game goes
+  on at about 10 frames a second until the drawable comes, its fences on time.
 - Frames are shown in order. While the thread waits for a drawable, the queue goes on drawing into other frame
-  textures, and only the newest completed frame waits for the thread; the ones before it are dropped. A texture the
+  textures, and only the newest completed frame waits for the thread; the ones before it are dropped, as is a frame
+  still drawing once a later one completed (its buffer was cancelled). A texture the
   thread holds is never drawn into. A frame without a drawable (the 1 s timeout) is dropped too. The
   `Mullion: present dropped=` line counts them, at most once a second.
 - The presenter and its thread share the frame textures' book, the layer (retained: the bridge releases a view's
@@ -834,9 +840,12 @@ past a buffer and 4 texels past a texture. Both run on the rented M1 under Metal
   textures' bookkeeping: frames in order, three textures while the thread waits for a drawable and 140 frames go by
   (139 dropped, the newest shown), the cap of 16 overwriting the oldest frame not shown and never a held texture, an
   overwritten frame's completion showing nothing, a frame without a drawable counted as dropped, a presenter's stop
-  returning at once while its thread waits 500 ms for a drawable, and the dropped line. Its breaks:
+  returning at once while its thread waits 500 ms for a drawable, a `Present` going on at once one frame ahead,
+  waiting for the thread two frames ahead and giving up after 100 ms while the thread waits for a drawable, a frame
+  whose buffer never completes dropped once a later one does, and the dropped line. Its breaks:
   `tests/breaks/host_present_frames.patch` lets the cap overwrite a texture the thread holds, and
-  `host_present_frames.2.patch` makes the stop wait for the thread to give its frame back, as a join would.
+  `host_present_frames.2.patch` makes the stop wait for the thread to give its frame back, as a join would, and
+  `host_present_frames.3.patch` lets a `Present` go on whatever the thread has shown.
 
   The root views' checks in the converter: `host_check_root_ranges` has the native `airconv`
   convert `host_guard_static_ranges`' compute shader for root signatures that bind its constant buffer, its SRV or its

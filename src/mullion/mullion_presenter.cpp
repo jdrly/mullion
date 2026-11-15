@@ -44,6 +44,21 @@ Presenter::Presenter(WMT::Device device, WMT::MetalLayer layer, InternalCommandL
   layer_props_.display_sync_enabled = false;
   layer_props_.framebuffer_only = false; // how strangely setting it true results in worse performance
   layer_props_.contents_scale = layer_props_.contents_scale * scale_factor;
+  // MULLION_PRESENT_THREAD: what the presenter's thread will share, made here so that the game's thread (throttle)
+  // reads it unchanged; the thread starts at the first present
+  if (threaded()) {
+    shared_ = std::make_shared<Shared>();
+    shared_->layer = layer_;
+    shared_->statistics = statistics_;
+  }
+}
+
+void
+Presenter::throttle() {
+  // two frames ahead of the drawables at most, and 100 ms at most: longer than a drawable takes but at a Space switch,
+  // where the game then goes on at about 10 frames a second, dropped, and no fence waits
+  if (shared_ && thread_started_)
+    shared_->mailbox.Throttle(2, std::chrono::milliseconds(100));
 }
 
 Presenter::~Presenter() {
@@ -215,10 +230,7 @@ Presenter::encodeCommands(
   const bool deferring = deferred && threaded();
   WMT::MetalDrawable drawable{};
   if (deferring) {
-    if (!shared_) {
-      shared_ = std::make_shared<Shared>();
-      shared_->layer = layer_;
-      shared_->statistics = statistics_;
+    if (!thread_started_) {
       shared_->queue = device_.newCommandQueue(4);
       // the thread keeps `shared_` until it ends; it is never joined
       mullion::thread([shared = shared_] { presentLoop(shared); }).detach();
@@ -226,6 +238,7 @@ Presenter::encodeCommands(
       static std::atomic_bool said_on;
       if (!said_on.exchange(true))
         Logger::info("Mullion: present thread=1");
+      thread_started_ = true;
     }
     if (drawable_ns)
       *drawable_ns = shared_->drawable_wait_ns.exchange(0, std::memory_order_relaxed);

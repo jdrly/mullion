@@ -131,6 +131,11 @@ public:
       unsigned *encoder_count = nullptr, uint64_t *drawable_ns = nullptr, Deferred *deferred = nullptr
   );
 
+  // the game's thread, before a Direct3D 12 Present that defers: waits while the presenter's thread is two frames
+  // behind, for 100 ms at most. With the drawable off the commit thread nothing else paces a swap chain without a
+  // frame-latency waitable object
+  void throttle();
+
   // the completion thread, once the command buffer of a frame encoded with `deferred` completed: the presenter's
   // thread shows it, unless a newer frame completes first; `after` as presentDrawableAfterMinimumDuration's
   void show(const Deferred &deferred, double after);
@@ -208,6 +213,9 @@ private:
     std::atomic<uint64_t> drawable_wait_ns{0};
   };
   static void presentLoop(std::shared_ptr<Shared> shared);
+  // made with the presenter when threaded(), never changed after
   std::shared_ptr<Shared> shared_;
+  // the thread started: set on the queue's thread at the first present that defers, read by throttle
+  std::atomic<bool> thread_started_{false};
 };
 } // namespace mullion
