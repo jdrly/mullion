@@ -1,0 +1,14 @@
+# a Present never waits for the presenter's thread: nothing paces the game, which runs as fast as the queue takes frames
+diff --git a/src/mullion/mullion_present_frames.hpp b/src/mullion/mullion_present_frames.hpp
+index 0bb767c..323eb0d 100644
+--- a/src/mullion/mullion_present_frames.hpp
++++ b/src/mullion/mullion_present_frames.hpp
+@@ -204,7 +204,7 @@ public:
+   Throttle(unsigned limit, std::chrono::duration<Rep, Period> timeout) {
+     auto until = std::chrono::steady_clock::now() + timeout;
+     std::unique_lock<Mutex> lock(mutex_);
+-    while (!stopping_ && book_.Outstanding() >= limit) {
++    while (false) {
+       auto now = std::chrono::steady_clock::now();
+       if (now >= until)
+         return false;

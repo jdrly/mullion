@@ -417,10 +417,11 @@ jobs:
               # the nextDrawable line's threshold at 5000 ms, and HITCH's drawableMs given the encoding time
               host_window_lines.4) lines=('failed: a call of 50 ms has a nextDrawable line') ;;
               host_hitch.2) lines=("failed: drawableMs is the bridge's 1149.3 ms in nextDrawable, not the encoding's") ;;
-              # MULLION_PRESENT_THREAD's frame textures with a texture the presenter's thread holds drawn into at the cap, and
-              # a presenter's stop waiting for its thread
+              # MULLION_PRESENT_THREAD's frame textures with a texture the presenter's thread holds drawn into at the cap, a
+              # presenter's stop waiting for its thread, and a Present that never waits for the thread
               host_present_frames) lines=('failed: at the cap a texture the thread holds is never drawn into') ;;
               host_present_frames.2) lines=("failed: stopping doesn't wait for a thread that waits for a drawable") ;;
+              host_present_frames.3) lines=('failed: two frames ahead: a Present waits for the thread to show one') ;;
               # SM50_SHADER_FLAG_CHECK_ROOT_RANGES leaving a root CBV, SRV or UAV unchecked, at that view; and a failed
               # check's load reading a root SRV's start instead of the lock table, at the trace of the loads
               host_check_root_ranges) lines=('FAILED: a root CBV is checked with the flag') ;;
