@@ -101,7 +101,9 @@ Converter::LoadConstantBuffer(const ConstantBufferDescriptor &Buffer, llvm::Valu
   if (Buffer.Metadata && !skip) {
     auto InBounds = ir.CreateICmpULT(Row, ir.CreateTrunc(ir.CreateLShr(Buffer.Metadata, 4), air.getIntTy()));
     CountMiss(Buffer.Counted, InBounds);
-    RowPointer = ir.CreateSelect(InBounds, RowPointer, ZeroRow());
+    RowPointer = ir.CreateSelect(
+        InBounds, RowPointer, Buffer.Zero ? ir.CreatePointerCast(Buffer.Zero, RowPointer->getType()) : ZeroRow()
+    );
   }
   auto Load = [&](unsigned Dword) -> llvm::Value * {
     return ir.CreateLoad(air.getIntTy(), ir.CreateGEP(TyIntVec4, RowPointer, {ir.getInt32(0), ir.getInt32(Dword)}));

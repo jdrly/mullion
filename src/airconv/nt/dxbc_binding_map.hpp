@@ -11,6 +11,9 @@ struct ConstantBufferDescriptor {
   llvm::Value *Metadata; // may be null
   // jdrly/mullion: the SM50_CHECK_KIND a failed check of its bounds counts as, where a flag added the check
   std::optional<uint32_t> Counted = std::nullopt;
+  // jdrly/mullion: the row of zeros a row past its bound reads, null for the shader's own (Converter::ZeroRow): a
+  // checked root CBV's is the device's, before the lock table (SM50_ZERO_ROW_BEFORE_LOCKS)
+  llvm::Value *Zero = nullptr;
 };
 
 struct SamplerDescriptor {

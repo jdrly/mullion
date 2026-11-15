@@ -12,12 +12,12 @@
          markers_.push_back({param.Dest, param.Value});
 --- a/src/d3d12/d3d12_device.cpp
 +++ b/src/d3d12/d3d12_device.cpp
-@@ -1409,7 +1409,7 @@
-   TryCreateConstantBufferView(const D3D12_CONSTANT_BUFFER_VIEW_DESC *pDesc, D3D12_CPU_DESCRIPTOR_HANDLE Descriptor) final {
-     auto [Heap, Index] = GetShaderVisibleDescriptorHeap(this, Descriptor);
-     // a view past its buffer is a null view, which shaders read as zeros
--    if (ranges::on && pDesc && pDesc->BufferLocation && !ConstantBufferViewInRange(*pDesc))
-+    if (false && pDesc && pDesc->BufferLocation && !ConstantBufferViewInRange(*pDesc))
-       return Heap->AddConstantBufferView(Index, 0, 0);
+@@ -1446,7 +1446,7 @@
+     // a view past its buffer is a null view, which shaders read as zeros. with the checks on, a null view is the null
+     // buffer's every row: its rows read zeros the command buffer holds resident, not the shader's own row of zeros,
+     // where Metal's validation sees no resource (private ticket 37)
+-    if (ranges::on && (!pDesc || !pDesc->BufferLocation || !ConstantBufferViewInRange(*pDesc) || !pDesc->SizeInBytes))
++    if (false && (!pDesc || !pDesc->BufferLocation || !ConstantBufferViewInRange(*pDesc) || !pDesc->SizeInBytes))
+       return Heap->AddConstantBufferView(Index, GetNullBuffer(), kNullBufferBytes);
      return Heap->AddConstantBufferView(Index, pDesc ? pDesc->BufferLocation : 0, pDesc ? pDesc->SizeInBytes : 0);
    };
