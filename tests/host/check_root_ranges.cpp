@@ -384,9 +384,10 @@ trace(const std::string &ir, std::initializer_list<uint32_t> views, uint32_t loc
       fields.insert(b.begin(), b.end());
       return;
     }
-    // and the address a pointer is offset from as an integer: the row of zeros before the lock table
+    // and the address a pointer is offset from as an integer, its first operand: the row of zeros before the lock table,
+    // whose `sub` of 32 the optimizer writes as an `add` of -32
     if ((def.op == "getelementptr" || def.op == "bitcast" || def.op == "addrspacecast" || def.op == "inttoptr" ||
-         def.op == "ptrtoint" || def.op == "sub") &&
+         def.op == "ptrtoint" || def.op == "sub" || def.op == "add") &&
         !def.operands.empty())
       reach(def.operands[0], fields, guarded);
   };

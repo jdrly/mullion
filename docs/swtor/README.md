@@ -806,8 +806,8 @@ past a buffer and 4 texels past a texture. Both run on the rented M1 under Metal
   units, the load at a constant offset and the store uncounted, `.20` the clamps, `.21` the static range's checks,
   `.22` counts each check where it fails instead of once at the return, `.23` counts every check, failed or not,
   `.24` counts a check where it passes, and `.25` has a checked root CBV's row past its length read the shader's own
-  row of zeros instead of the one before the lock table, which the trace, now also through `inttoptr`, `ptrtoint` and
-  `sub`, has to find behind every load of the root CBV (private ticket 37).
+  row of zeros instead of the one before the lock table, which the trace, now also through `inttoptr`, `ptrtoint`,
+  `sub` and `add`, has to find behind every load of the root CBV (private ticket 37).
   Each fails at that view, at the trace or at that kind. DXIL's paths (`dxil_converter.cpp`) have no break here: the
   test makes DXBC only.
 
