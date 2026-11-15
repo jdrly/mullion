@@ -2970,6 +2970,10 @@ public:
 
     unsigned present_encoders = 0;
     uint64_t drawable_ns = 0;
+    // MULLION_PRESENT_THREAD: the frame goes to the presenter's thread, which takes its drawable, once this buffer
+    // completes; nothing here waits for a drawable
+    Presenter::Deferred deferred;
+    const bool threaded = presenter->threaded();
     auto drawable = presenter->encodeCommands(
         MetalCommandBuffer(cmdbuf), source, state,
         [&](auto encoder) {
@@ -2978,9 +2982,9 @@ public:
             encoder.waitForFence(scaler->fence(), WMTRenderStageFragment);
         },
         [&](auto encoder) { encoder.updateFence(fence_, WMTRenderStageFragment); }, inflight_cmdbuf_seq_.load(),
-        diag::trace_encoders ? &present_encoders : nullptr, &drawable_ns
+        diag::trace_encoders ? &present_encoders : nullptr, &drawable_ns, threaded ? &deferred : nullptr
     );
-    // MULLION_STATS: the bridge's time in nextDrawable (HITCH's drawableMs)
+    // MULLION_STATS: the bridge's time in nextDrawable (HITCH's drawableMs), here or on the presenter's thread
     if (stats::on)
       hitch::counters.drawable_ns.fetch_add(drawable_ns, std::memory_order_relaxed);
     if (diag::trace_encoders) {
@@ -2988,7 +2992,11 @@ public:
       scope.inflight->physical[WMTMetal4Blit] += present_encoders - 1;
     }
 
-    if (!drawable)
+    if (threaded)
+      scope.inflight->completed = [presenter = Rc(presenter), deferred = std::move(deferred), after] {
+        presenter->show(deferred, after);
+      };
+    else if (!drawable)
       scope.inflight->completed = [presenter = Rc(presenter), after] { presenter->drawToWindow(after); };
     else if (after > 0)
       cmdbuf.presentDrawableAfterMinimumDuration(drawable, after);

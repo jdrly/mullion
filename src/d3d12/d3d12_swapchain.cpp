@@ -1036,6 +1036,8 @@ public:
     // full screen, the output's gamma ramp
     if (target_)
       presenter->changeGammaRamp(static_cast<MTLDXGIOutput *>(target_.ptr())->GetGammaRamp());
+    // MULLION_PRESENT_THREAD: the game, not the queue, waits for the presenter's thread to keep up
+    presenter->throttle();
     if (present_queues_.empty()) {
       hr = queue_->Present(
           this, this->presenter.ptr(), backbuffer.ptr(), eye, present_semaphore_, vsync_duration, dump_id_,

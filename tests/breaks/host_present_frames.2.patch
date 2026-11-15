@@ -1,0 +1,26 @@
+# stopping waits for the presenter's thread to give its frame back, as a join would: a presenter's last release on the
+# queue's completion thread waits for a drawable again
+diff --git a/src/mullion/mullion_present_frames.hpp b/src/mullion/mullion_present_frames.hpp
+index 0bb767c..d42f57a 100644
+--- a/src/mullion/mullion_present_frames.hpp
++++ b/src/mullion/mullion_present_frames.hpp
+@@ -216,11 +216,15 @@ public:
+   // the presenter, as it goes: the thread ends at its next Wait. Returns at once
+   void
+   Stop() {
+-    {
+-      std::lock_guard<Mutex> lock(mutex_);
+-      stopping_ = true;
+-    }
++    std::unique_lock<Mutex> lock(mutex_);
++    stopping_ = true;
+     changed_.notify_all();
++    changed_.wait(lock, [&] {
++      for (auto &texture : book_.textures())
++        if (texture.state == State::Held)
++          return false;
++      return true;
++    });
+   }
+ 
+ private:

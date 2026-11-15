@@ -7,6 +7,7 @@
 #include "thread.hpp"
 #include "winemetal.h"
 #include "wsi_platform.hpp"
+#include "mullion_present_frames.hpp"
 #include <atomic>
 #include <deque>
 #include <memory>
@@ -64,6 +65,10 @@ public:
       HWND window
   );
 
+  // asks the presenter's thread (MULLION_PRESENT_THREAD) to stop, and doesn't wait for it: the thread keeps what it
+  // shares with the presenter until it ends
+  ~Presenter();
+
   bool changeLayerProperties(
       DXGI_FORMAT format, WMTColorSpace colorspace, double width, double height, uint8_t sample_count
   );
@@ -96,8 +101,25 @@ public:
     presentation_ = presentation;
   }
 
+  // MULLION_PRESENT_THREAD (docs/swtor/README.md § The presenter's thread): a frame encoded with `deferred` is drawn
+  // into a texture of the presenter's own, and its drawable is taken on the presenter's thread once Show hands it over
+  struct Deferred {
+    unsigned index = 0;
+    uint64_t frame = 0;
+    // kept until the command buffer that draws into it completes (ADR 0002)
+    WMT::Reference<WMT::Texture> texture;
+  };
+
+  // whether the queue should pass `deferred`: the switch is on and the window has a layer
+  bool
+  threaded() const {
+    return thread_on_ && layer_;
+  }
+
   // on a Metal 3 or a Metal 4 command buffer. `drawable_ns`, unless null: the time the bridge's nextDrawable took, 0
-  // without a call (HITCH's drawableMs)
+  // without a call (HITCH's drawableMs); with `deferred`, the presenter's thread's time in it since the last present.
+  // `deferred`, when threaded(): no drawable is taken here, nothing is to be presented on `cmdbuf`, and the frame is to
+  // go to Show once `cmdbuf` completes
   template <
       typename CommandBuffer,
       typename Encoder =
@@ -106,8 +128,17 @@ public:
       CommandBuffer cmdbuf, WMT::Texture backbuffer, const PresentState &state,
       std::type_identity_t<std::function<void(Encoder)>> &&wait_fences,
       std::type_identity_t<std::function<void(Encoder)>> &&update_fences, uint64_t seq_id = 0,
-      unsigned *encoder_count = nullptr, uint64_t *drawable_ns = nullptr
+      unsigned *encoder_count = nullptr, uint64_t *drawable_ns = nullptr, Deferred *deferred = nullptr
   );
+
+  // the game's thread, before a Direct3D 12 Present that defers: waits while the presenter's thread is two frames
+  // behind, for 100 ms at most. With the drawable off the commit thread nothing else paces a swap chain without a
+  // frame-latency waitable object
+  void throttle();
+
+  // the completion thread, once the command buffer of a frame encoded with `deferred` completed: the presenter's
+  // thread shows it, unless a newer frame completes first; `after` as presentDrawableAfterMinimumDuration's
+  void show(const Deferred &deferred, double after);
 
   // draws the oldest frame encoded without a layer, at least `after` seconds after the previous one (as
   // presentDrawableAfterMinimumDuration does); call it once that frame's command buffer has completed
@@ -126,6 +157,8 @@ private:
   WMTLayerProps layer_props_;
   // MULLION_LAYER_WAIT, read once: whether a present waits for the main thread to set a changed layer
   bool layer_wait_;
+  // MULLION_PRESENT_THREAD, read once: whether a present takes its drawable on the presenter's thread
+  bool thread_on_;
   double native_contents_scale_ = 1.0;
   uint32_t sample_count_;
   WMTColorSpace colorspace_ = WMTColorSpaceSRGB;
@@ -158,5 +191,31 @@ private:
   std::deque<WindowFrame> window_frames_;
   std::chrono::steady_clock::time_point window_last_draw_;
   mullion::mutex window_mutex_;
+
+  // MULLION_PRESENT_THREAD: what the presenter and its thread share, made at the first present that defers. The thread
+  // keeps it after the presenter is gone (a detached thread, which ends at its next Mailbox::Wait), so that nothing
+  // the thread uses, the layer included, goes before it does
+  struct Shared {
+    // a frame texture, and the minimum duration the frame drawn into it last is to be presented after
+    struct Payload {
+      WMT::Reference<WMT::Texture> texture;
+      double after = 0;
+    };
+    present_frames::Mailbox<mullion::mutex, mullion::condition_variable, Payload> mailbox;
+    // retained: the bridge releases a view's layer on the main thread as the swap chain goes, maybe while the thread
+    // waits for a drawable of it
+    WMT::Reference<WMT::MetalLayer> layer;
+    // the presenter's own, which GetFrameStatistics reads
+    WMT::Reference<WMT::PresentStatistics> statistics;
+    // the thread's own Metal 3 queue
+    WMT::Reference<WMT::CommandQueue> queue;
+    // the thread's time in nextDrawable since the last present encoded, for HITCH's drawableMs
+    std::atomic<uint64_t> drawable_wait_ns{0};
+  };
+  static void presentLoop(std::shared_ptr<Shared> shared);
+  // made with the presenter when threaded(), never changed after
+  std::shared_ptr<Shared> shared_;
+  // the thread started: set on the queue's thread at the first present that defers, read by throttle
+  std::atomic<bool> thread_started_{false};
 };
 } // namespace mullion
