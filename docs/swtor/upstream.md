@@ -175,7 +175,8 @@ build is made from ([README.md](README.md) § Releases), with the batch and ever
 follow-up commits and reverts (§ 4) included. The gate is the suite under Metal's validation on a rented Mac, the
 controls failing, and the differences from the fork's list of known failures on that Mac explained line by line. A
 new failure blocks the batch, or the commit that causes it is reverted inside the batch (§ 4). A revert or a fix
-after a gate run makes another candidate, and the gate runs again on it.
+after a gate run makes another candidate, and the gate runs again on it. How it runs, its first run and its lists:
+[gate.md](gate.md).
 
 ## How the fork keeps batches cheap
 
