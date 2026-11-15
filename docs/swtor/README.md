@@ -543,8 +543,9 @@ What it does:
 The bookkeeping of the frame textures (which one a frame gets, which frame the thread takes, what is dropped) is in
 [`mullion_present_frames.hpp`](../../src/mullion/mullion_present_frames.hpp), which `host_present_frames` tests.
 
-Cost, measured on the M1 (§ CI's Mac run): one full-frame copy per present on the GPU, a command buffer of the
-presenter's own, and the handoff from the queue's completion to the thread. With `0`, none of it: the code at
+Cost: one full-frame copy per present on the GPU, a command buffer of the presenter's own, and the handoff from the
+queue's completion to the thread, which shows a frame that much later. Not measured beyond the frame rate of the
+M1 run in its pull request. With `0`, none of it: the code at
 `0b26fda`. Direct3D 11 presents as before, whatever the switch.
 
 Needs the Mac: that the fences stay on time at a Space switch, that frames come back after it, and what the handoff
