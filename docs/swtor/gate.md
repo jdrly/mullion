@@ -1,0 +1,174 @@
+# The GPU gate
+
+The fork's tests on a real Apple GPU, under Metal's validation, with failing controls (private ticket 15). GitHub's
+hosted runners have no Metal 4 and no Apple GPU worth the name, so this runs on a rented Mac mini and, for the newest
+family, on the maintainer's M5 Max.
+
+**The rule.** A release for players needs this gate green on the commit it ships, on the M1 (this page) and on the M5
+Max (`--family native,9`, not run yet). Green means: every control fails its test, and the run differs from the
+family's known list ([`tests/swtor/known-m1.txt`](../../tests/swtor/known-m1.txt)) in nothing, or every difference is
+explained in the pull request that ships. Upstream's batches go through it as [upstream.md § 7](upstream.md#7-the-gate)
+says. A switch turns on by default only when its tests passed here with their control.
+
+## 1. How it runs
+
+On the rented Mac (Apple M1, 8 GB, macOS 27.0), by hand over SSH, with the scripts of the private `jdrly/gpu-ci`
+(`mullion/gate.zsh`, `mullion/chain.zsh`). Every step is its own ticket in the machine's queue (`ciq`), which it shares
+with another project; a chain runs the slices one ticket at a time, so the other side's tickets go in between.
+
+```sh
+gate.zsh setup <commit>      # the source, meson and ninja in a venv, llvm-mingw and Wine at swtor.yml's pins
+gate.zsh build               # -Denable_tests=true -Db_ndebug=false, -j 2, then tests/compilers.py
+gate.zsh run <slice> native --jobs 1 --validate <tests…>          # tests/run.py --exact, --record per slice
+gate.zsh run <slice> native-metal3 --jobs 1 --validate <tests…>
+gate.zsh prefault            # tests/faults.py's copy, built once at -j 2
+gate.zsh faults <slice> --validate <patch>                         # tests/faults.py
+gate.zsh control <slice> <patch> <tests…>                          # faults.py's steps by hand (§ 4)
+```
+
+- **From SSH, not from the GUI session.** Started inside the logged-in session, every test that creates a DXGI
+  adapter hung 600 s in `GetAdapterLuid` (`src/dxgi/dxgi_adapter.cpp`): with Wine's Mac display driver live it asks
+  Wine for the primary display's adapter (`D3DKMTOpenAdapterFromGdiDisplayName`), and that call blocks in the test
+  Wine (v8.16-3shain) on macOS 27.0. From SSH there is no display and it falls back to Metal's registry ID at once.
+  A test-harness and test-Wine problem: the game runs in the GUI session on the app's CrossOver engine and gets
+  through DXGI. So the window suite doesn't run here (§ 5).
+- **`--jobs 1`.** Under validation the kernel's footprint of `d3d12_raster`, `d3d12_raster_samples`,
+  `d3d12_format_blend` and `d3d12_statistics_heap` is 4-6 GB (GPU memory included); at `--jobs 2` a slice grew swap by
+  391 MiB and the queue stopped it. Those four get no verdict on 8 GB under validation: run.py's own memory guard
+  ends them at pressure level 2, and the later slices leave them out.
+- **Tests by name.** There is no `d3d12` suite (meson's are `mullion`, `window`, `host`, `timing`): the slices name the
+  `d3d12_` tests with `--exact`.
+- **Build differences from swtor.yml.** meson 1.11.2 (the Mac's Python is 3.9; swtor.yml pins 1.12.1, which wants
+  3.10), the machine's LLVM 15.0.7 with deployment target 26.0 (swtor.yml builds it for 15.0), Xcode 27.0 (27.2), tests
+  and assertions on, no strip. llvm-mingw and the Wine are swtor.yml's, SHA-256 checked. A Homebrew GCC MinGW on the
+  machine's `PATH` must not build the DLLs: `gate.zsh` puts llvm-mingw's prefixed tools first and checks it.
+
+## 2. The first run: efee691 on the M1, 2026-11-14/15
+
+`jdrly/mullion` efee691 (`swtor-on-mac` after upstream batch 2), Apple M1 (Apple7), macOS 27.0 (26A428), Xcode 27.0,
+Wine v8.16-3shain x86_64 under Rosetta. 552 `d3d12_` tests (the window suite's 19 and `d3d12_statistics_heap`'s two
+apart), each under `--validate`, as the GPU's own family on Metal 4 (`native`) and on Metal 3 (`native-metal3`), and a
+third pass with the three switches of § 4 set on in every test's environment, as their defaults would be.
+
+| pass | tests | passed | failed | skipped | time |
+|---|---|---|---|---|---|
+| `native` | 552 | 348 | 200 | 4 | 80 min (r1 at `--jobs 2`) |
+| `native-metal3` | 546 | 362 | 178 | 6 | 56 min |
+| `native`, switches on | 546 | 349 | 193 | 4 | 53 min |
+
+By slice: h1 (25 high-path tests: the fork's range, bounds, allocator, texture tests, `d3d12_release_in_flight`,
+`d3d12_fetch`) 97 s / 33 s / 33 s; r1-r4 (126-133 tests each) 239-2364 s. A skip is never counted as a pass.
+
+**Why 200 fail.** The baseline is wide on purpose: it is the M1 under validation, which nobody had run. By cause
+(`tests/swtor/known-m1.txt` has the line of each, with its cause):
+
+| cause | native | native-metal3 |
+|---|---|---|
+| Apple's shader validation crashed compiling a pipeline, the draw skipped (below) | 68 | 67 |
+| unexplained: wrong results no rule accounts for | 36 | 44 |
+| Metal API or shader validation reports (INF/NaN interpolants, encoder assertions) | 30 | 26 |
+| hang under validation on Metal 4 that passes on Metal 3 (#165, [TESTING.md 6.1](../TESTING.md#6-running-tests-and-reading-results)) | 14 | 0 |
+| Metal validation: invalid load in a shader, no fork switch | 14 | 14 |
+| Metal asserts `Device does not support MTLMatrixLayoutRowMajor` (Apple7) | 8 | 10 |
+| no verdict: memory pressure (8 GB) | 8 | 3 |
+| hang, also on Metal 3 or not run there | 8 | 2 |
+| the range checks' invalid loads (fixed by #39, 1bd0bb9) | 6 | 6 |
+| opens a window: none from SSH | 5 | 5 |
+| by design (`d3d12_corpus`) or the test's own skip under validation (`d3d12_shader_groups`) | 4 | 4 |
+| upstream's M5 Pro causes, other counts (`d3d12_raster_bias`) | 2 | 2 |
+| `d3d12_texture_compression` prints no verdict (its checks held) | 1 | 1 |
+
+- **The compiler crash.** In 135 failures Apple's `MTLCompilerService` died while building a pipeline
+  (`XPC_ERROR_CONNECTION_INTERRUPTED`, `MULLION-SHADER step=pipeline`); the draw that needed it was skipped, and the
+  test read wrong results. Its crash reports (`~/Library/Logs/DiagnosticReports/MTLCompilerService-*.ips`) stop in
+  shader validation's own instrumentation: `MTLCompilerObject::addDebugInstrumentationToModule` →
+  `TextureCheckPass::getCheckedTextureFunction` → SIGSEGV in `llvm::ConstantInt::get` (22 of the 23 reports of
+  the two days; the 23rd stopped in the backend's `MachineFunctionPass`). Without validation the same pipelines build:
+  `d3d12_msaa8`, `d3d12_view_types` and `d3d12_mipchain`, 88, 172 and 27 wrong results under validation, pass. A
+  validation failure, not one a player meets, and the reason for § 2a.
+- **Invalid loads.** The six range-check tests (`d3d12_cbv_ranges`, `d3d12_root_view_ranges{,_indirect}`) read memory
+  validation calls invalid on their checked path: a constant-buffer row past its bound read the shader's own zero row
+  (`@mullion.zero_row`, upstream `adb8298`), where validation sees no resource. Fixed by #39 (1bd0bb9).
+  `d3d12_cbuffer_layout` and `d3d12_compute` show the same kind of report with no fork switch involved: probably the
+  same zero row on upstream's path; not checked. On an Apple GPU an
+  invalid read can page-fault and restart WindowServer, so each of these is a stability finding, not noise.
+- **`MTLMatrixLayoutRowMajor`.** `d3d12_obligations`, `d3d12_recording_failure` and others build an acceleration
+  structure descriptor with a matrix layout the M1 doesn't support; Metal's validation ends the process. Mullion sets
+  it without a family check.
+
+## 2a. The same tests without validation
+
+Because validation's own instrumentation broke 135 answers, the 552 `d3d12_` tests ran once more as `native`, without
+`--validate` (`--jobs 1`, 35 min, 2026-11-15): **503 passed, 47 failed, 2 skipped**. That is the answer a player's
+M1 gets, and `tests/swtor/known-m1.txt` (the list run.py reads without `--validate`) records it;
+`tests/swtor/known-m1-validated.txt` holds § 2's.
+
+| cause | tests |
+|---|---|
+| upstream's M5 Pro causes: `d3d12_depth_stencil` (144) and `d3d12_raster_bias` (1740) give the M5 Pro's very answers, hash included; `d3d12_block_values` (132 against 108), `d3d12_raster` (1014 against 990) and `d3d12_raster_samples` (56112 against 26544) other counts | 10 |
+| ray tracing on Apple7 (`d3d12_raytracing`, `d3d12_ray_generation`, `d3d12_ray_shader_kinds`, `d3d12_rayquery`) | 4 |
+| a window from SSH (`d3d12_device_removal`, `d3d12_startup`, `d3d12_trace_log`) | 5 |
+| **Apple's M1 compiler backend aborts** on a pipeline of `d3d12_buffer_loads_dxil` (below) | 1 |
+| by design (`d3d12_corpus`) | 2 |
+| `d3d12_texture_compression`'s missing verdict | 1 |
+| unexplained: `d3d12_clear_values` (R11G11B10_FLOAT clears), `d3d12_frames`, `d3d12_pipeline_times`, `d3d12_profile`, `d3d12_ps_writes`, `d3d12_sample_residency`, `d3d12_adapters`, `d3d12_swapchain_creation`, `d3d12_swapchain_refs`, `d3d12_queued_present`, `d3d12_sampler_slots`, `d3d12_resource_interfaces`, `d3d12_atomic64_fallback_dxil`, `d3d12_mesh_groups_dxil` | 26 |
+
+- **The backend abort.** Without validation `MTLCompilerService` aborted (`llvm::report_fatal_error` in a
+  `MachineFunctionPass` of the AGX backend) on one compute pipeline of `d3d12_buffer_loads_dxil` (`cs_6_x` 64-bit
+  loads, `MULLION-SHADER … sha1=f6b2fae2518697b30198a235a69407cddfa5b472 step=pipeline`), eight times in a row; the
+  pipeline failed and its dispatches were skipped (8232 wrong results). Under validation a mesh pipeline crashed the
+  same backend once (SIGSEGV, `AGCModule<MeshProgramKey>`). A shader Mullion makes can kill Apple's compiler on an M1:
+  a game's draw with it would be skipped. Not seen on the M5 Max; the shader isn't dumped yet (`dumped=no`).
+- `d3d12_statistics_heap` has no verdict: its slice pushed swap 280 MiB and the queue stopped it. Without validation
+  `d3d12_format_blend` passes, and `d3d12_raster` and `d3d12_raster_samples` give the counts above.
+- The six range-check tests pass without validation (their invalid loads were validation's view of the shader's own
+  zero row, § 2).
+
+## 3. Upstream's baseline
+
+`tests/known.txt` (one M5 Pro, no validation, 23 lines) stays upstream's. The fork's lists are per chip:
+`tests/swtor/known-m1.txt` without validation and `tests/swtor/known-m1-validated.txt` with it, read with
+`--known`. The same tests that fail on the M5 Pro for Apple's rasterizer, depth
+bias, BC4/5 decoder and 24-bit depth fail on the M1 too, with other counts.
+
+## 4. Controls
+
+Each control is a fault its test must notice. Run last, one ticket each, with `gpuEvent-*.ips` collected after each:
+none faulted the GPU.
+
+| control | test | answer with the fault | switch |
+|---|---|---|---|
+| `tests/breaks/d3d12_allocator_reset_in_flight.patch` | `d3d12_allocator_reset_in_flight_dxil` | `failed: 8 wrong results [7c4c750f]` | `MULLION_D3D12_RESET_WAITS` |
+| `tests/breaks/d3d12_bounds_guarded.patch` | `d3d12_bounds_guarded_dxil` | `failed: 3 wrong results [7aadde1a]` | `MULLION_D3D12_GUARD_STATIC_RANGES` |
+| `tests/breaks/d3d12_bounds_guarded.2.patch` | the same | `failed: 6 wrong results [224f29b8]` | the same |
+| `tests/breaks/d3d12_bounds_guarded.3.patch` | the same | `failed: 9 wrong results [f356d968]` | the same |
+| `tests/breaks/d3d12_bounds.2.patch` | `d3d12_bounds_dxbc` | `failed: 90 wrong results [8a90497f]` | upstream's bounds |
+| a break of the gate's own (below) | `d3d12_texture_compression` | `failed: a target of its group and size: uncompressed 0, want 1` | `MULLION_TEX_MSAA_COMPRESSION=auto` |
+| `tests/breaks/d3d12_cbv_ranges.patch` | `d3d12_cbv_ranges_{dxil,dxbc}` | `wrong: a view of 512 bytes over 256: v[0] is 0x1, want 0` and a validation assertion | `MULLION_D3D12_CHECK_RANGES` |
+| `tests/breaks/d3d12_root_view_ranges.patch` | `d3d12_root_view_ranges_{dxil,dxbc}` | `failed: 4 wrong results` and `Invalid load … at offset 320` | the same |
+
+- The texture control is the gate's own, not a file of `tests/breaks`: the fork's breaks for
+  `MULLION_TEX_MSAA_COMPRESSION` are host tests, and the one that lets `auto` ignore the family gives the M1's own
+  answer on Apple7. It leaves the device's field at 0:
+  `src/d3d12/d3d12_texture.cpp`, `InfoOut.uncompressed = Device->TextureUncompressed(Desc, InfoOut);` →
+  `InfoOut.uncompressed = 0;`.
+- `tests/faults.py` can't take a test whose unfaulted answer `--known` can't hold: it records that answer with
+  `--record` and reads it back, and the reader takes only `failed: N wrong results [hash]` and `skipped:` lines. The
+  texture test (no verdict line at efee691) and the two range tests (passed, then a validation error) are such
+  tests, so their controls ran by hand (`gate.zsh control`): the same steps, outputs side by side.
+- Not run: `d3d12_bounds.patch` doesn't apply since the fork's #29/#35; 196 of the 1,356 `tests/breaks` patches don't
+  apply at efee691 (four of them upstream's batch 2 names: `d3d12_occlusion_far.3`, `d3d12_occlusion_many.4`,
+  `d3d12_occlusion_replay.4`, `d3d12_dsv_unknown_format.3`). A patch that doesn't apply is stale, neither caught nor
+  missed. The ticket's controls for `d3d12_release_in_flight` and `d3d12_fetch` don't exist: neither test has a break.
+  Both tests passed on both paths.
+
+## 5. What this run doesn't show
+
+- **The window suite** (19 tests) and three tests that open a window (`d3d12_device_removal`, `d3d12_startup`,
+  `d3d12_trace_log`): no window from SSH, and the GUI session hangs as in § 1.
+- **Other families**: the masked Apple9/8 runs, and anything on M3/M4's Apple9 driver: a driver bug can be one
+  generation's (the M4's compression bugs, d9mt #105 and #140, were seen on an M4 only). The M1 can't show them; an M4
+  tester can.
+- **Apple10** (the M5 Max part of the gate), **macOS 26** (the machine has 27.0; players are on 26 and 27.2), and the
+  D3D10, D3D11 and DXGI tests, conformance and benchmarks.
+- **Metal 3 without validation**, and the switches-on pass without validation: § 2a ran `native` only.

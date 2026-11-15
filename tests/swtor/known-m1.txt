@@ -1,0 +1,63 @@
+# tests/swtor/known-m1.txt: the fork's GPU baseline on the rented M1 (private ticket 15, docs/swtor/gate.md)
+# chip: Apple M1 (Apple7, 8 GB, Macmini9,1), macOS 27.0 (26A428), Xcode 27.0 (27A266a)
+# commit: jdrly/mullion efee691fcd12dfa372fa189af362d1e85a3309e5 (swtor-on-mac), meson 1.11.2, llvm-mingw 20260908,
+#   LLVM 15.0.7 (deployment target 26.0), Wine v8.16-3shain x86_64 under Rosetta; -Denable_tests=true -Db_ndebug=false
+# validation: none (tests/run.py without --validate), --jobs 1, from SSH
+# families: native (Metal 4, Apple7); the d3d12_ tests not in the window suite; d3d12_statistics_heap has no verdict
+#   (the queue's swap guard stopped its slice)
+# fork switches: efee691's defaults (GUARD_STATIC_RANGES and RESET_WAITS off, TEX_MSAA_COMPRESSION 1), each test's own
+#   meson env on top
+# use: tests/run.py --build <b> --wine <w> --family native --known tests/swtor/known-m1.txt
+# A line below is a failure --known can hold; the commented block after it lists the failures it can't (a crash, a
+# hang, a validation error, no verdict), which a run must still report as new.
+native(Apple M1) d3d12_atomic64_fallback_dxil failed: 1 wrong results [5ca9a503] -- unexplained
+native(Apple M1) d3d12_block_values_dxbc failed: 132 wrong results [bccf4663] -- Apple's BC4/BC5 SNORM decoder (tests/known.txt's M5 Pro line, 108 wrong there); another count on the M1
+native(Apple M1) d3d12_block_values_dxil failed: 132 wrong results [bccf4663] -- Apple's BC4/BC5 SNORM decoder (tests/known.txt's M5 Pro line, 108 wrong there); another count on the M1
+native(Apple M1) d3d12_buffer_loads_dxil failed: 8232 wrong results [6cedf369] -- MTLCompilerService aborted in the M1's backend (llvm::report_fatal_error in a MachineFunctionPass) building this compute pipeline, without validation; the draw was skipped (gate.md § 2a). Finding
+native(Apple M1) d3d12_clear_values_dxbc failed: 44 wrong results [1ff1a6a8] -- unexplained
+native(Apple M1) d3d12_clear_values_dxil failed: 44 wrong results [1ff1a6a8] -- unexplained
+native(Apple M1) d3d12_corpus_dxbc skipped: no directory of DXIL shaders named -- by design: no shader directory is named in a plain run (as tests/known.txt)
+native(Apple M1) d3d12_corpus_dxil skipped: no directory of DXIL shaders named -- by design: no shader directory is named in a plain run (as tests/known.txt)
+native(Apple M1) d3d12_depth_stencil_dxbc failed: 144 wrong results [92ecb69c] -- no 24-bit depth on Apple GPUs, D24 is Depth32Float (tests/known.txt's M5 Pro line, 144 wrong there); the same count on the M1
+native(Apple M1) d3d12_depth_stencil_dxil failed: 144 wrong results [92ecb69c] -- no 24-bit depth on Apple GPUs, D24 is Depth32Float (tests/known.txt's M5 Pro line, 144 wrong there); the same count on the M1
+native(Apple M1) d3d12_device_removal_dxbc failed: 1 wrong results [94930c62] -- opens a window: from SSH there is none, and the GUI session hangs in GetAdapterLuid with this Wine (gate.md)
+native(Apple M1) d3d12_device_removal_dxil failed: 1 wrong results [94930c62] -- opens a window: from SSH there is none, and the GUI session hangs in GetAdapterLuid with this Wine (gate.md)
+native(Apple M1) d3d12_frames_dxbc failed: 34 wrong results [0359ddb6] -- unexplained
+native(Apple M1) d3d12_frames_dxil failed: 34 wrong results [0359ddb6] -- unexplained
+native(Apple M1) d3d12_mesh_groups_dxil failed: 1 wrong results [707d7a21] -- unexplained
+native(Apple M1) d3d12_pipeline_times_dxbc failed: 24 wrong results [f3af52e4] -- unexplained
+native(Apple M1) d3d12_pipeline_times_dxil failed: 24 wrong results [f3af52e4] -- unexplained
+native(Apple M1) d3d12_profile_dxbc failed: 67 wrong results [92673c4e] -- unexplained
+native(Apple M1) d3d12_profile_dxil failed: 67 wrong results [92673c4e] -- unexplained
+native(Apple M1) d3d12_ps_writes_dxbc failed: 10 wrong results [4d39a77b] -- unexplained
+native(Apple M1) d3d12_ps_writes_dxil failed: 10 wrong results [4d39a77b] -- unexplained
+native(Apple M1) d3d12_queued_present_dxbc failed: 1 wrong results [81f03ce7] -- unexplained
+native(Apple M1) d3d12_queued_present_dxil failed: 1 wrong results [81f03ce7] -- unexplained
+native(Apple M1) d3d12_raster_bias_dxbc failed: 1740 wrong results [4cda25b6] -- Metal's depth bias (tests/known.txt's M5 Pro line, 1740 wrong there); the same count on the M1
+native(Apple M1) d3d12_raster_bias_dxil failed: 1740 wrong results [4cda25b6] -- Metal's depth bias (tests/known.txt's M5 Pro line, 1740 wrong there); the same count on the M1
+native(Apple M1) d3d12_ray_generation_dxil failed: 54 wrong results [3757f2b9] -- unexplained
+native(Apple M1) d3d12_ray_shader_kinds_dxil failed: 13 wrong results [5b5f3ef7] -- unexplained
+native(Apple M1) d3d12_resource_interfaces_dxbc failed: 1 wrong results [81f03ce7] -- unexplained
+native(Apple M1) d3d12_resource_interfaces_dxil failed: 1 wrong results [81f03ce7] -- unexplained
+native(Apple M1) d3d12_sample_residency_dxbc failed: 40 wrong results [7c25925c] -- unexplained
+native(Apple M1) d3d12_sample_residency_dxil failed: 40 wrong results [7c25925c] -- unexplained
+native(Apple M1) d3d12_sampler_slots_dxbc failed: 1 wrong results [761a7f1e] -- unexplained
+native(Apple M1) d3d12_sampler_slots_dxil failed: 1 wrong results [761a7f1e] -- unexplained
+native(Apple M1) d3d12_startup_dxbc failed: 1 wrong results [3f318677] -- opens a window: from SSH there is none, and the GUI session hangs in GetAdapterLuid with this Wine (gate.md)
+native(Apple M1) d3d12_startup_dxil failed: 1 wrong results [3f318677] -- opens a window: from SSH there is none, and the GUI session hangs in GetAdapterLuid with this Wine (gate.md)
+native(Apple M1) d3d12_swapchain_creation_dxbc failed: 1 wrong results [1e5e3051] -- unexplained
+native(Apple M1) d3d12_swapchain_creation_dxil failed: 1 wrong results [1e5e3051] -- unexplained
+native(Apple M1) d3d12_swapchain_refs_dxbc failed: 1 wrong results [81f03ce7] -- unexplained
+native(Apple M1) d3d12_swapchain_refs_dxil failed: 1 wrong results [81f03ce7] -- unexplained
+native(Apple M1) d3d12_trace_log failed: 6 wrong results [eea4300b] -- opens a window: from SSH there is none, and the GUI session hangs in GetAdapterLuid with this Wine (gate.md)
+
+# not knowable (run.py reports these as new every run):
+# native(Apple M1) d3d12_adapters_dxbc failed: create(IID_PPV_ARGS(&core_factory)) (line 142) -- unexplained
+# native(Apple M1) d3d12_adapters_dxil failed: create(IID_PPV_ARGS(&core_factory)) (line 142) -- unexplained
+# native(Apple M1) d3d12_raster_dxbc failed: 1014 wrong results -- Apple's rasterizer rules (tests/known.txt's M5 Pro line, 990 wrong there); another count on the M1
+# native(Apple M1) d3d12_raster_dxil failed: 1014 wrong results -- Apple's rasterizer rules (tests/known.txt's M5 Pro line, 990 wrong there); another count on the M1
+# native(Apple M1) d3d12_raster_samples_dxbc failed: 56112 wrong results -- forced sample counts rasterize at one sample (tests/known.txt's M5 Pro line, 26544 wrong there); another count on the M1
+# native(Apple M1) d3d12_raster_samples_dxil failed: 56112 wrong results -- forced sample counts rasterize at one sample (tests/known.txt's M5 Pro line, 26544 wrong there); another count on the M1
+# native(Apple M1) d3d12_rayquery_dxil failed: compacted size 0, current size 2048, prebuild size 2048 -- unexplained
+# native(Apple M1) d3d12_raytracing_dxil failed: 45048 wrong rays -- unexplained
+# native(Apple M1) d3d12_texture_compression exit status 0 after: info:  MULLION-SHADER-TOTALS failed=0 byStep=none skippedDraws=0 dumped=0 -- its checks held, but it prints no verdict line, so run.py can't count it (fixed on swtor/gate15-switch-defaults)
