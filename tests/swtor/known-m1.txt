@@ -13,7 +13,6 @@
 native(Apple M1) d3d12_atomic64_fallback_dxil failed: 1 wrong results [5ca9a503] -- unexplained
 native(Apple M1) d3d12_block_values_dxbc failed: 132 wrong results [bccf4663] -- Apple's BC4/BC5 SNORM decoder (tests/known.txt's M5 Pro line, 108 wrong there); another count on the M1
 native(Apple M1) d3d12_block_values_dxil failed: 132 wrong results [bccf4663] -- Apple's BC4/BC5 SNORM decoder (tests/known.txt's M5 Pro line, 108 wrong there); another count on the M1
-native(Apple M1) d3d12_buffer_loads_dxil failed: 8232 wrong results [6cedf369] -- MTLCompilerService aborted in the M1's backend (llvm::report_fatal_error in a MachineFunctionPass) building this compute pipeline, without validation; the draw was skipped (gate.md § 2a). Finding
 native(Apple M1) d3d12_clear_values_dxbc failed: 44 wrong results [1ff1a6a8] -- unexplained
 native(Apple M1) d3d12_clear_values_dxil failed: 44 wrong results [1ff1a6a8] -- unexplained
 native(Apple M1) d3d12_corpus_dxbc skipped: no directory of DXIL shaders named -- by design: no shader directory is named in a plain run (as tests/known.txt)
