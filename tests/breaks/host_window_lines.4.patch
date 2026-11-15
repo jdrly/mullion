@@ -1,0 +1,14 @@
+# the nextDrawable line's threshold moved from 50 ms to 5000: a 1.15 s block at a Space switch writes nothing
+diff --git a/src/winemetal/unix/window_lines.h b/src/winemetal/unix/window_lines.h
+index 53de64b..e3ba51f 100644
+--- a/src/winemetal/unix/window_lines.h
++++ b/src/winemetal/unix/window_lines.h
+@@ -101,7 +101,7 @@ window_look(struct window_watch *watch, struct window_state now, uint64_t now_ns
+ // ending with " [<n> earlier lines suppressed]" after its own limit left lines out
+ 
+ // a call this long or longer has a line, as d9mt's
+-#define DRAWABLE_BLOCKED_NS 50000000ull
++#define DRAWABLE_BLOCKED_NS 5000000000ull
+ // the visibility of a layer that isn't the watched view's
+ #define DRAWABLE_VISIBILITY_UNKNOWN UINT32_MAX
+ 

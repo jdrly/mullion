@@ -96,7 +96,8 @@ public:
     presentation_ = presentation;
   }
 
-  // on a Metal 3 or a Metal 4 command buffer
+  // on a Metal 3 or a Metal 4 command buffer. `drawable_ns`, unless null: the time the bridge's nextDrawable took, 0
+  // without a call (HITCH's drawableMs)
   template <
       typename CommandBuffer,
       typename Encoder =
@@ -105,7 +106,7 @@ public:
       CommandBuffer cmdbuf, WMT::Texture backbuffer, const PresentState &state,
       std::type_identity_t<std::function<void(Encoder)>> &&wait_fences,
       std::type_identity_t<std::function<void(Encoder)>> &&update_fences, uint64_t seq_id = 0,
-      unsigned *encoder_count = nullptr
+      unsigned *encoder_count = nullptr, uint64_t *drawable_ns = nullptr
   );
 
   // draws the oldest frame encoded without a layer, at least `after` seconds after the previous one (as

@@ -1,0 +1,14 @@
+# drawableMs given the encoding time: a long encode would read as a blocked drawable
+diff --git a/src/mullion/mullion_hitch.hpp b/src/mullion/mullion_hitch.hpp
+index f61c385..c794c2b 100644
+--- a/src/mullion/mullion_hitch.hpp
++++ b/src/mullion/mullion_hitch.hpp
+@@ -174,7 +174,7 @@ public:
+     misses_ = in(&stats::Totals::cache_misses);
+     shaders_ = of(&Totals::shaders), shader_ns_ = of(&Totals::shader_ns), psos_ = of(&Totals::pipelines);
+     pipeline_ns_ = of(&Totals::pipeline_ns), gpu_ns_ = of(&Totals::gpu_ns), encode_ns_ = of(&Totals::encode_ns);
+-    drawable_ns_ = of(&Totals::drawable_ns);
++    drawable_ns_ = of(&Totals::encode_ns);
+     behind_ = stats.command_buffers > totals.completed ? stats.command_buffers - totals.completed : 0;
+     compiling_ = totals.compiling > 0 ? uint64_t(totals.compiling) : 0;
+     last_stats_ = stats;

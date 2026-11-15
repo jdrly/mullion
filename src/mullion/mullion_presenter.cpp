@@ -183,7 +183,8 @@ WMT::MetalDrawable
 Presenter::encodeCommands(
     CommandBuffer cmdbuf, WMT::Texture backbuffer, const PresentState &state,
     std::type_identity_t<std::function<void(Encoder)>> &&wait_fences,
-    std::type_identity_t<std::function<void(Encoder)>> &&update_fences, uint64_t seq_id, unsigned *encoder_count
+    std::type_identity_t<std::function<void(Encoder)>> &&update_fences, uint64_t seq_id, unsigned *encoder_count,
+    uint64_t *drawable_ns
 ) {
   const auto &metadata = state.metadata;
   double width = state.layer_props.drawable_width;
@@ -191,7 +192,9 @@ Presenter::encodeCommands(
   layer_.setProps(state.layer_props, layer_wait_);
   layer_.setColorSpace(state.colorspace, layer_wait_);
 
-  auto drawable = layer_ ? layer_.nextDrawable() : WMT::MetalDrawable{};
+  if (drawable_ns)
+    *drawable_ns = 0;
+  auto drawable = layer_ ? layer_.nextDrawable(drawable_ns) : WMT::MetalDrawable{};
   auto number = ++frames_;
   if (drawable)
     drawable.countPresent(statistics_, number);
@@ -280,12 +283,12 @@ Presenter::encodeCommands(
 
 template WMT::MetalDrawable Presenter::encodeCommands(
     WMT::CommandBuffer, WMT::Texture, const PresentState &, std::function<void(WMT::RenderCommandEncoder)> &&,
-    std::function<void(WMT::RenderCommandEncoder)> &&, uint64_t, unsigned *
+    std::function<void(WMT::RenderCommandEncoder)> &&, uint64_t, unsigned *, uint64_t *
 );
 template WMT::MetalDrawable Presenter::encodeCommands(
     WMT::Metal4CommandBuffer, WMT::Texture, const PresentState &,
     std::function<void(WMT::Metal4RenderCommandEncoder)> &&, std::function<void(WMT::Metal4RenderCommandEncoder)> &&,
-    uint64_t, unsigned *
+    uint64_t, unsigned *, uint64_t *
 );
 
 void

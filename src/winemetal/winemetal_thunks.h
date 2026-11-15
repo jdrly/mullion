@@ -112,6 +112,13 @@ struct unixcall_generic_obj_constptr_noret {
   struct WMTConstMemoryPointer arg;
 };
 
+// `waited_ns`: how long -nextDrawable took, as the bridge timed it (docs/swtor/README.md § The nextDrawable line)
+struct unixcall_metal_layer_next_drawable {
+  obj_handle_t layer;
+  obj_handle_t ret;
+  uint64_t waited_ns;
+};
+
 // `wait`: MULLION_LAYER_WAIT, whether the caller waits for the main thread to set what changed
 struct unixcall_metal_layer_set_props {
   obj_handle_t layer;

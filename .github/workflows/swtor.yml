@@ -414,6 +414,9 @@ jobs:
               host_window_lines) lines=("failed: an activation alone isn't a visibility line for the report") ;;
               host_window_lines.2) lines=('failed: the report reads the 11 left out') ;;
               host_window_lines.3) lines=('failed: the report reads the 2 left out after an activation line') ;;
+              # the nextDrawable line's threshold at 5000 ms, and HITCH's drawableMs given the encoding time
+              host_window_lines.4) lines=('failed: a call of 50 ms has a nextDrawable line') ;;
+              host_hitch.2) lines=("failed: drawableMs is the bridge's 1149.3 ms in nextDrawable, not the encoding's") ;;
               # SM50_SHADER_FLAG_CHECK_ROOT_RANGES leaving a root CBV, SRV or UAV unchecked, at that view; and a failed
               # check's load reading a root SRV's start instead of the lock table, at the trace of the loads
               host_check_root_ranges) lines=('FAILED: a root CBV is checked with the flag') ;;
