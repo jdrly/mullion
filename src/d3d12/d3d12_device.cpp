@@ -303,8 +303,6 @@ class MTLD3D12DeviceImpl : public MTLD3D12Object<ComObject<MTLD3D12Device, ID3DD
   // jdrly/mullion: the words after the flag where its shaders count the checks that failed (SM50_CHECK_KIND), read at
   // each STATS line while it lives and once at its end
   ranges::ShaderChecks shader_checks_;
-  // the null buffer's length: a constant buffer's every row (D3D12_REQ_CONSTANT_BUFFER_ELEMENT_COUNT)
-  static constexpr UINT kNullBufferBytes = D3D12_REQ_CONSTANT_BUFFER_ELEMENT_COUNT * 4 * sizeof(uint32_t);
   WMT::Reference<WMT::Buffer> null_buffer_;
   uint64_t null_buffer_address_ = 0;
   WMTSparsePageSize sparse_page_size_ = {};
@@ -485,21 +483,18 @@ public:
     // is word 0, and after them the flag of an atomic that gave up waiting, then a word for each kind of check shaders
     // count (SM50_CHECK_KIND, jdrly/mullion)
     // before them, where every shader finds it, the header of the structure of nothing
-    // (SM50_NULL_ACCELERATION_STRUCTURE_HEADER_SIZE), and before it a row of zeros that constant buffers read past
-    // their view or length (SM50_ZERO_ROW_BEFORE_LOCKS, jdrly/mullion)
+    // (SM50_NULL_ACCELERATION_STRUCTURE_HEADER_SIZE)
     auto locks = std::bit_ceil(total_lanes_);
-    constexpr size_t zero_row = SM50_ZERO_ROW_BEFORE_LOCKS - sizeof(AccelerationStructureHeader);
     WMTBufferInfo locks_info{
-        SM50_ZERO_ROW_BEFORE_LOCKS + sizeof(uint32_t) * (locks + 2 + SM50_CHECK_KINDS), WMTResourceStorageModeShared
+        sizeof(AccelerationStructureHeader) + sizeof(uint32_t) * (locks + 2 + SM50_CHECK_KINDS),
+        WMTResourceStorageModeShared
     };
     atomic_locks_ = GetMTLDevice().newBuffer(locks_info);
     if (!atomic_locks_) {
       ERR("Failed to create the lock table of 64-bit atomics");
       return E_FAIL;
     }
-    std::memset(locks_info.memory.get(), 0, zero_row);
-    auto nothing =
-        reinterpret_cast<AccelerationStructureHeader *>(static_cast<char *>(locks_info.memory.get()) + zero_row);
+    auto nothing = static_cast<AccelerationStructureHeader *>(locks_info.memory.get());
     *nothing = {};
     auto words = reinterpret_cast<uint32_t *>(nothing + 1);
     words[0] = locks - 1;
@@ -509,9 +504,9 @@ public:
     if (shader_flags_ & (SM50_SHADER_FLAG_GUARD_STATIC_RANGES | SM50_SHADER_FLAG_CHECK_ROOT_RANGES |
                          SM50_SHADER_FLAG_CHECK_DESCRIPTOR_INDICES))
       ranges::shader_check_words.add(&shader_checks_);
-    atomic_locks_address_ = locks_info.gpu_address + SM50_ZERO_ROW_BEFORE_LOCKS;
+    atomic_locks_address_ = locks_info.gpu_address + sizeof(AccelerationStructureHeader);
     RegisterResidency(atomic_locks_);
-    WMTBufferInfo null_info{kNullBufferBytes, WMTResourceStorageModeShared};
+    WMTBufferInfo null_info{D3D12_REQ_CONSTANT_BUFFER_ELEMENT_COUNT * 4 * sizeof(uint32_t), WMTResourceStorageModeShared};
     if (!(null_buffer_ = GetMTLDevice().newBuffer(null_info))) {
       ERR("Failed to create the target of null buffer views");
       return E_FAIL;
@@ -524,8 +519,7 @@ public:
     // buffer Metal wants them in is one it then reads nothing of. it is built here, on a queue of its own
     D3D12_BUILD_RAYTRACING_ACCELERATION_STRUCTURE_INPUTS no_instances{D3D12_RAYTRACING_ACCELERATION_STRUCTURE_TYPE_TOP_LEVEL};
     auto none = AccelerationStructureInfo(
-        this, no_instances, nullptr, false, atomic_locks_, atomic_locks_,
-        zero_row + offsetof(AccelerationStructureHeader, instances)
+        this, no_instances, nullptr, false, atomic_locks_, atomic_locks_, offsetof(AccelerationStructureHeader, instances)
     );
     GetMTLDevice().accelerationStructureSizes(none);
     null_scene_ = std::make_unique<AccelerationStructure>(this, none.size, 0);
@@ -1444,11 +1438,9 @@ public:
   HRESULT STDMETHODCALLTYPE
   TryCreateConstantBufferView(const D3D12_CONSTANT_BUFFER_VIEW_DESC *pDesc, D3D12_CPU_DESCRIPTOR_HANDLE Descriptor) final {
     auto [Heap, Index] = GetShaderVisibleDescriptorHeap(this, Descriptor);
-    // a view past its buffer is a null view, which shaders read as zeros. with the checks on, a null view is the null
-    // buffer's every row: its rows read zeros the command buffer holds resident, not the shader's own row of zeros,
-    // where Metal's validation sees no resource (private ticket 37)
-    if (ranges::on && (!pDesc || !pDesc->BufferLocation || !ConstantBufferViewInRange(*pDesc) || !pDesc->SizeInBytes))
-      return Heap->AddConstantBufferView(Index, GetNullBuffer(), kNullBufferBytes);
+    // a view past its buffer is a null view, which shaders read as zeros
+    if (ranges::on && pDesc && pDesc->BufferLocation && !ConstantBufferViewInRange(*pDesc))
+      return Heap->AddConstantBufferView(Index, 0, 0);
     return Heap->AddConstantBufferView(Index, pDesc ? pDesc->BufferLocation : 0, pDesc ? pDesc->SizeInBytes : 0);
   };
 

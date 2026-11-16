@@ -577,8 +577,8 @@ and a size whose sum passes 2^64 run past, as they should.
 | `CopyTextureRegion` | A placed footprint runs past its buffer's width (`srcFootprint`, `dstFootprint`): its offset, then every row of every slice at `RowPitch` but the last row, which needs only its texels, each of the larger size of the footprint's format and the texture's at the other end, which Metal moves (a depth-stencil texture's plane by what a copy of it moves, a stencil byte or a 4-byte depth texel: the format's size is both planes'). The source box runs past the source's level or footprint (`srcX`, `srcY`, `srcZ`). The region it writes from `DstX`, `DstY`, `DstZ` runs past the destination's (`dstX`, `dstY`, `dstZ`). A block-compressed level counts in whole 4-texel blocks, small mips too, and a copy between a compressed format and another carries one block into one texel or back. A copy the call drops anyway (no texture or buffer, an empty box, a format Metal lacks) isn't counted |
 | `IASetIndexBuffer` | The view is bound as no view when its `BufferLocation` lies in no live buffer (`viewAddress`, `limit` 0) or its `SizeInBytes` runs past that buffer's end from there (`viewSize`). Draws then read zeros for its indices, as with no index buffer (D3D11.3 8.19.2). A view of no size, or at address 0, isn't checked |
 | `IASetVertexBuffers` | The same for each view it sets: that slot is bound as no view, which the vertex fetch reads as zeros |
-| `CreateConstantBufferView` | The same for the view's `BufferLocation` and `SizeInBytes`: the slot gets a null view, which shaders read as zeros, as for `BufferLocation` 0. With the switch every null constant buffer view, that one or one the game makes, is the device's zero-filled null buffer with its 64 KiB, D3D's 4096 rows, so a row it reads is memory the command buffer holds resident; with a size of 0, as upstream's, every row is past the view and reads the row of zeros before the lock table (below, private tickets 37 and 43). Views are made on any thread, so each thread keeps four ranges of its own, as a command list does |
-| `SetGraphicsRoot*View`, `SetComputeRoot*View` | Nothing is dropped. The root view is bound as given, and its shaders check every access against what the live buffer holding its address has from there, up to 4 GiB: a row or element past it reads 0, a store there writes nothing, as through a descriptor table's bounded view. One at an address no live buffer holds (`SetRootView`, `viewAddress`, `action=clamped`) is bound as the device's zero-filled null buffer with a length of 0. A load whose check fails reads its dropped value from the lock table of 64-bit atomics, which every root signature binds, not from the view's start as a heap view's does: a root view may have fewer bytes left than one load reads (up to 32). A root CBV's row past its length reads the 16 zero bytes the device keeps 32 bytes before the lock table (`SM50_ZERO_ROW_BEFORE_LOCKS`), in the same buffer, as every constant buffer's row past its view does (below, private ticket 37) |
+| `CreateConstantBufferView` | The same for the view's `BufferLocation` and `SizeInBytes`: the slot gets a null view, which shaders read as zeros, as for `BufferLocation` 0. Views are made on any thread, so each thread keeps four ranges of its own, as a command list does |
+| `SetGraphicsRoot*View`, `SetComputeRoot*View` | Nothing is dropped. The root view is bound as given, and its shaders check every access against what the live buffer holding its address has from there, up to 4 GiB: a row or element past it reads 0, a store there writes nothing, as through a descriptor table's bounded view. One at an address no live buffer holds (`SetRootView`, `viewAddress`, `action=clamped`) is bound as the device's zero-filled null buffer with a length of 0. A load whose check fails reads its dropped value from the lock table of 64-bit atomics, which every root signature binds, not from the view's start as a heap view's does: a root view may have fewer bytes left than one load reads (up to 32) |
 | `ExecuteIndirect` | Its `MaxCommandCount` commands run past the argument buffer's width from `ArgumentBufferOffset`: every command but the last takes the signature's `ByteStride`, the last only its arguments' bytes (`argsOffset`, `argsSize`, `given` the commands' bytes). Or its count's 4 bytes at `CountBufferOffset` run past the count buffer's width (`countOffset`, `countSize`). The whole call is dropped, the commands a count buffer would have cut too. A call of no commands isn't checked |
 | `WriteBufferImmediate` | Each write whose 4 bytes at `Dest` lie in no live buffer, or run past its end (`destAddress`, `destSize`), is dropped, a marker's too; the call's other writes go on. Through the command list's ranges, as views are |
 
@@ -652,8 +652,7 @@ does).
 Cost, reasoned from the converter's output, not measured. Off: shaders convert byte for byte as before (the native
 `airconv` of this change and of its base, on Linux, wrote the same LLVM assembly for the 13 shader and root signature
 pairs of `host_check_root_ranges` and `host_guard_static_ranges` and for 53 vertex, pixel and compute shaders of a
-public sample set), the lock table is 12 bytes longer, and 16 more before its header for constant buffers' row of zeros
-(private tickets 37 and 43), and the `RANGE` section reads no device. On: a check that passes
+public sample set), the lock table is 12 bytes longer, and the `RANGE` section reads no device. On: a check that passes
 adds one `select` or `or` of the function's gathered value, no branch, no memory access; each return adds one compare
 and a branch that isn't taken when every check passed. The test's shader of five checks grows from 75 to 86 instructions
 and from one conditional branch to two. A check that fails adds, at the return, one load of the table's mask and one
@@ -668,25 +667,15 @@ Metal 4's draws and argument tables took a buffer's length from an offset as `le
 of undefined behaviour without a switch ([ADR 0001](adr/0001-switches.md)).
 
 A constant buffer's row past its view reads 0 (D3D11.3 7.5), and so does every row of a null view, which upstream
-gives a size of 0. Upstream (`adb8298`) points such a row at a 16-byte row of zeros in the shader's own constant
-memory (`@mullion.zero_row`), where Metal's validation sees no resource: on the rented M1 it reported an invalid load
-in `d3d12_compute` and `d3d12_cbuffer_layout`, on Metal 4 and Metal 3, with no switch involved ([gate.md](gate.md)),
-and with `MULLION_D3D12_CHECK_RANGES=1` in the six range tests (private ticket 37). Whatever the switch, every shader
-whose binding has the lock table, which every root signature binds, now reads the 16 zero bytes the device keeps 32
-bytes before it (`SM50_ZERO_ROW_BEFORE_LOCKS`, `Converter::ZeroRow`), in a buffer the command buffer holds resident.
-A shader converted without a root signature (airconv's command line) and a ray tracing shader with no global root
-signature keep the shader's own row. The values read don't change. A fix of a read Metal calls invalid, without a
-switch ([ADR 0001](adr/0001-switches.md), private ticket 43). It changes the code generated for every shader with a
-bounds-checked constant buffer, so the codegen id moves and every player converts shaders again once
-([caches.md](caches.md)). `host_check_root_ranges` checks that the table CBV of its shader is bounds checked without
-a flag and reads no row of zeros of its own; its break `.25` gives every constant buffer the shader's own row back.
-The report itself was Metal's validation, not a read past memory (private ticket 44, [gate.md](gate.md) § 2): shader
-validation calls every load of a pipeline's own program-scope constants invalid, and zeroes it, when the pipeline
-supports indirect command buffers, as Mullion's Direct3D 12 compute and vertex and fragment render pipelines do (mesh
-pipelines from Apple9). Apple's own compiler's constant
-arrays get the same report, and upstream's [TESTING.md](../TESTING.md) § 6 says the same. On the M1, with #47's
-change undone (`.25`'s), the reports went away when the pipelines were made without that support. The shader's own
-row held its zeros all along.
+gives a size of 0: upstream (`adb8298`) points such a row at a 16-byte row of zeros in the shader's own constant
+memory (`@mullion.zero_row`), with the switch and without it. #39 and #47 (private tickets 37 and 43) had moved that
+row into the lock table's buffer, and #39 gave a null view 64 KiB with the switch, because Metal's validation
+reported its loads as invalid on the rented M1. That report is validation's own (private ticket 44,
+[gate.md](gate.md) § 2): shader validation calls every load of a pipeline's own program-scope constants invalid, and
+zeroes it, when the pipeline supports indirect command buffers, as Mullion's Direct3D 12 compute and vertex and
+fragment render pipelines do (mesh pipelines from Apple9), and Apple's own compiler's constant arrays get the same
+report (upstream's [TESTING.md](../TESTING.md) § 6 says the same). The row always held its zeros, so both were
+reverted (Jan, 2026-11-16): the converter is upstream's there again, and so are the codegen id's inputs it changed.
 
 A command list keeps the buffer it last found an address in, for index buffers, `WriteBufferImmediate` and the
 copies of acceleration structures' data, and `IASetIndexBuffer` skipped a view equal to the one bound last, keeping
@@ -895,11 +884,8 @@ past a buffer and 4 texels past a texture. Both run on the rented M1 under Metal
   each, `.8` clamps no index, `.9` to `.14` leave the constant buffer's, the SRV's, the UAV's, the texture's, the
   sampler's or the counter's out, `.15` to `.19` leave the constant buffer's row, the raw load, the load of several
   units, the load at a constant offset and the store uncounted, `.20` the clamps, `.21` the static range's checks,
-  `.22` counts each check where it fails instead of once at the return, `.23` counts every check, failed or not,
-  `.24` counts a check where it passes, and `.25` has a constant buffer's row past its bound read the shader's own
-  row of zeros instead of the one before the lock table, which the trace, now also through `inttoptr`, `ptrtoint`,
-  `sub` and `add`, has to find behind every load of the checked root CBV (private ticket 37), and which the table
-  CBV converted without a flag mustn't read (private ticket 43).
+  `.22` counts each check where it fails instead of once at the return, `.23` counts every check, failed or not, and
+  `.24` counts a check where it passes.
   Each fails at that view, at the trace or at that kind. DXIL's paths (`dxil_converter.cpp`) have no break here: the
   test makes DXBC only.
 
