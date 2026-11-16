@@ -90,7 +90,7 @@ Converter::LoadConstantBuffer(const ConstantBufferDescriptor &Buffer, llvm::Valu
   auto TyIntVec4 = air.getIntTy(4);
   auto RowPointer = ir.CreateGEP(TyIntVec4, Buffer.Pointer, Row);
   // rows past the bound buffer's size read 0 (D3D11.3 7.5); root CBVs carry no size. such a row's address is a row of
-  // zeros (ZeroRow): Apple's compiler keeps a constant row's load a uniform load when only
+  // zeros in the shader's own constant memory: Apple's compiler keeps a constant row's load a uniform load when only
   // its address is chosen, where choosing the value it loaded (or the row) made each load the threads' own, about 25
   // times the GPU time of a shader that reads hundreds of constant rows (tests/perf cbv_rows, dttdrv/mullion#32).
   // MULLION_AIRCONV_SKIP=cbuffer-bounds leaves the check out, to measure what it costs (it is in the shader cache's key)
@@ -114,20 +114,12 @@ Converter::LoadConstantBuffer(const ConstantBufferDescriptor &Buffer, llvm::Valu
   return Value;
 }
 
-llvm::Value *
+llvm::GlobalVariable *
 Converter::ZeroRow() {
-  auto TyIntVec4 = air.getIntTy(4);
-  // jdrly/mullion: where the binding carries the device's lock table (every root signature does), the 16 zero bytes the
-  // device keeps before it (SM50_ZERO_ROW_BEFORE_LOCKS), which the command buffer holds resident. Metal's validation
-  // sees no resource at the shader's own row and calls a load of it invalid (private tickets 37 and 43)
-  if (auto Locks = ctx.binding.GetAtomicLocks(air))
-    return ir.CreateIntToPtr(
-        ir.CreateSub(ir.CreatePtrToInt(Locks, ir.getInt64Ty()), ir.getInt64(SM50_ZERO_ROW_BEFORE_LOCKS)),
-        TyIntVec4->getPointerTo(2)
-    );
   auto &M = *ir.GetInsertBlock()->getModule();
   if (auto Zero = M.getGlobalVariable("mullion.zero_row", true))
     return Zero;
+  auto TyIntVec4 = air.getIntTy(4);
   auto Zero = new llvm::GlobalVariable(
       M, TyIntVec4, true, llvm::GlobalValue::InternalLinkage, llvm::Constant::getNullValue(TyIntVec4),
       "mullion.zero_row", nullptr, llvm::GlobalValue::NotThreadLocal, 2

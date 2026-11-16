@@ -602,8 +602,7 @@ public:
   llvm::Value *
   LoadConstantBuffer(const ConstantBufferDescriptor &Buffer, llvm::Value *Row, int Component = -1, mask_t Dwords = kMaskAll);
   // a row of zeros in the shader's constant memory, which constant buffer reads past the bound size read instead
-  // (jdrly/mullion: the device's, before the lock table, where the binding has one)
-  llvm::Value *ZeroRow();
+  llvm::GlobalVariable *ZeroRow();
 
   // a D3D texel address (texel coordinates, then the array slice) as Metal's position and array index. texel
   // buffers are addressed inside their view. a position past the view, or at a `Level` below the view's min-LOD
