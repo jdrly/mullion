@@ -93,10 +93,56 @@ cause):
   `d3d12_cbuffer_layout` and `d3d12_compute` showed the same report with no fork switch involved: the same zero row on
   upstream's path, read by a table CBV's row past its view and by a null view. Fixed by #47 (private ticket 43): both
   clean on both paths, and a control that gives the shader its own row back brings the gate's addresses back.
+  **The zero row's reports were validation's own** (private ticket 44, below), so #39 and #47 moved a row nothing
+  misread.
+  - **The evidence.** #47's control (the shader's own row back) brings the reports back in `d3d12_compute`,
+    `d3d12_cbuffer_layout` and `d3d12_root_view_ranges` (#39's checked root CBV).
+  - **The control.** With D3D12's pipelines also made without indirect command buffer support, the same tests report
+    none and pass.
+  - **Not rerun.** #39's other case, `d3d12_cbv_ranges`' null view of size 0, read the same row. It wasn't rerun:
+    with the switch on, #39 still gives that view 64 KiB.
   `d3d12_gather_dxil`, `d3d12_layers`, `d3d12_pipeline_statistics`, `d3d12_sampler_table_lod_dxbc` and
-  `d3d12_viewport_reach` report the same addresses with that fix as without it: another cause, not yet found. On an
-  Apple GPU an
-  invalid read can page-fault and restart WindowServer, so each of these is a stability finding, not noise.
+  `d3d12_viewport_reach` report the same addresses with that fix as without it. Each of their loads reads a constant
+  array of the shader itself: DXBC's immediate constant buffer (`@icb`, and in `d3d12_sampler_table_lod_dxbc` the rows
+  fxc builds to pick a vector's component by index) or an array DXC keeps in the constant address space (`axes`,
+  `corners`).
+  **These reports, and the zero row's, are Metal's validation, not reads past memory** (private ticket 44, at
+  e26baa3). Shader validation calls every load of a pipeline's own program-scope constants invalid, and zeroes it,
+  when the pipeline supports indirect command buffers. Mullion's Direct3D 12 compute pipelines and its vertex and
+  fragment render pipelines support them, for `ExecuteIndirect` (mesh pipelines only from Apple9). Upstream's
+  [TESTING.md](../TESTING.md) § 6 says the same of macOS 27.2.
+  - **Apple's own compiler.** On the M1 a Metal kernel built by Apple's compiler reads a `constant float3 axes[6]`
+    per thread, outside Wine and Mullion. In a pipeline made with `supportIndirectCommandBuffers` and run under
+    validation, it gets the same report (`Invalid load in 'device' or 'constant' address space at GPU address
+    0x11000…`) and reads zeros, dispatched directly or through an indirect command buffer. Without that support, or
+    without validation, it reads the right values, through an indirect command buffer too. A kernel with no
+    constant array never gets the report.
+  - **Ruled out.** Apple's kernel changed to Mullion's forms still reads its values without the report in a pipeline
+    without that support. Each change ran alone and in the combinations tried: the element's `getelementptr`
+    without `inbounds`, a sign-extended index, `@icb`'s `align 4`, airconv's header (`macosx15.0.0`, AIR 2.7,
+    Metal 3.2), and the library written by airconv's metallib writer.
+  - **Inside Mullion.** With D3D12's pipelines made without that support (a diagnostic patch, kept in the workspace:
+    `ExecuteIndirect` needs the support), the eight tests above report no invalid load on Metal 4 or Metal 3, and
+    six of them pass. Both `d3d12_pipeline_statistics` tests stop at Metal's `executeCommandsInBuffer` assertion
+    instead. #47's control (`host_check_root_ranges.25`'s change: the shader's own zero row back) brings the gate's
+    addresses back in `d3d12_compute` and `d3d12_cbuffer_layout`. With the same patch it reports none, and both
+    pass.
+  - **Values.** Without validation all of these tests pass (§ 2a).
+
+  They stay in the known list as validation's, not as stability findings. #39 and #47 moved the zero row out of the
+  shader's constants to avoid such a report. The values they read never changed.
+- **`d3d12_indirect_many`** (private ticket 44, at e26baa3) is another report, and still open:
+  - **What validation reports.** On Metal 4 under validation, both front ends report 13 invalid loads by `vs_main`,
+    during the execution of an indirect command buffer (`Error detected in unknown`). Each is at offset 65536 of a
+    16 MiB buffer validation calls `resident:No`. The test then hangs as upstream's #165 describes
+    ([TESTING.md](../TESTING.md) § 6).
+  - **The buffer.** 16 MiB is the size of the device's first buffer for what the GPU reads of command lists
+    (`kFirstArguments`), which `NewArgumentsBuffer` adds to the device's residency set. The Metal 4 queue carries
+    that set.
+  - **The other runs.** On Metal 3 under validation it passes with no report. On Metal 4 without validation it
+    passes.
+  - **Not settled.** Whether validation misses the queue's residency set, or the GPU really reads memory the set
+    doesn't cover, waits for its own ticket.
 - **`MTLMatrixLayoutRowMajor`.** `d3d12_obligations`, `d3d12_recording_failure` and others build an acceleration
   structure descriptor with a matrix layout the M1 doesn't support; Metal's validation ends the process. Mullion sets
   it without a family check. Fixed by #45: the bridge had set it on every triangle geometry, one without a
