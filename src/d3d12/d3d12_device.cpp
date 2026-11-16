@@ -485,8 +485,8 @@ public:
     // is word 0, and after them the flag of an atomic that gave up waiting, then a word for each kind of check shaders
     // count (SM50_CHECK_KIND, jdrly/mullion)
     // before them, where every shader finds it, the header of the structure of nothing
-    // (SM50_NULL_ACCELERATION_STRUCTURE_HEADER_SIZE), and before it a row of zeros that checked root CBVs read past
-    // their length (SM50_ZERO_ROW_BEFORE_LOCKS, jdrly/mullion)
+    // (SM50_NULL_ACCELERATION_STRUCTURE_HEADER_SIZE), and before it a row of zeros that constant buffers read past
+    // their view or length (SM50_ZERO_ROW_BEFORE_LOCKS, jdrly/mullion)
     auto locks = std::bit_ceil(total_lanes_);
     constexpr size_t zero_row = SM50_ZERO_ROW_BEFORE_LOCKS - sizeof(AccelerationStructureHeader);
     WMTBufferInfo locks_info{

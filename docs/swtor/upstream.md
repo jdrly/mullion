@@ -76,6 +76,9 @@ These resolutions are fixed:
   and `bug_report.yml` as they are on `swtor-on-mac` (`git checkout --ours`), and upstream's numbered issue
   templates stay deleted.
 - A list both sides added to, such as the test list of `tests/d3d12/meson.build`, keeps every entry of both.
+- A conflict on lines where the fork fixed upstream's code (below) keeps the fork's fix, unless the batch fixes the
+  same defect itself: then upstream's fix is taken and the fork's is dropped, and the pull request says which, with
+  the fork's test that shows the defect gone.
 
 The merge commit's body lists each conflict and its resolution, and says an AI agent made it, when one did. A change
 the fork needs because of the batch (a renamed host test in `swtor.yml`, a fork test that has to follow an upstream
@@ -177,6 +180,15 @@ controls failing, and the differences from the fork's list of known failures on 
 new failure blocks the batch, or the commit that causes it is reverted inside the batch (§ 4). A revert or a fix
 after a gate run makes another candidate, and the gate runs again on it. How it runs, its first run and its lists:
 [gate.md](gate.md).
+
+## Fixing upstream's code
+
+The fork fixes obvious defects in upstream's code itself, in its own pull requests, and nothing of it goes upstream:
+no issue, pull request, comment or finding in `dttdrv/mullion` (my decision of 2026-11-15). Obvious means the code is
+plainly wrong: a read Metal's validation calls invalid, undefined behaviour, code that contradicts its own comment
+and callers. Such a fix needs no switch ([ADR 0001](adr/0001-switches.md)), edits upstream's files as narrowly as it
+can, and is marked in the code (`jdrly/mullion:`) so a batch's reader sees whose line it is. Batches stay as above:
+merge commits, each read before it is merged; a conflict on a fixed line follows § 4.
 
 ## How the fork keeps batches cheap
 

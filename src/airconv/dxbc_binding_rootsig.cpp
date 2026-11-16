@@ -255,16 +255,9 @@ public:
     if (DescriptorOffset == ~0u) {
       auto Pointer = GetArgument(Builder, RootSignatureArgumentIndex, CBuf.arg_index);
       auto Length = RootViewLength(Builder, D3D12_DESCRIPTOR_RANGE_TYPE_CBV, Range);
-      if (!Length)
-        return ConstantBufferDescriptor{Pointer, nullptr};
-      auto &B = Builder.builder;
-      auto Zero = B.CreateIntToPtr(
-          B.CreateSub(
-              B.CreatePtrToInt(GetAtomicLocks(Builder), B.getInt64Ty()), B.getInt64(SM50_ZERO_ROW_BEFORE_LOCKS)
-          ),
-          Pointer->getType()
-      );
-      return ConstantBufferDescriptor{Pointer, Length, SM50_CHECK_ROOT_VIEW, Zero};
+      return ConstantBufferDescriptor{
+          Pointer, Length, Length ? std::optional<uint32_t>(SM50_CHECK_ROOT_VIEW) : std::nullopt
+      };
     }
     auto HeapPointer = GetArgument(Builder, RootSignatureArgumentIndex, CBuf.arg_index);
     auto [Pointer, Metadata] = GetBufferDescriptor(

@@ -90,8 +90,12 @@ cause):
 - **Invalid loads.** The six range-check tests (`d3d12_cbv_ranges`, `d3d12_root_view_ranges{,_indirect}`) read memory
   validation calls invalid on their checked path: a constant-buffer row past its bound read the shader's own zero row
   (`@mullion.zero_row`, upstream `adb8298`), where validation sees no resource. Fixed by #39 (1bd0bb9).
-  `d3d12_cbuffer_layout` and `d3d12_compute` show the same kind of report with no fork switch involved: probably the
-  same zero row on upstream's path; not checked. On an Apple GPU an
+  `d3d12_cbuffer_layout` and `d3d12_compute` showed the same report with no fork switch involved: the same zero row on
+  upstream's path, read by a table CBV's row past its view and by a null view. Fixed by #47 (private ticket 43): both
+  clean on both paths, and a control that gives the shader its own row back brings the gate's addresses back.
+  `d3d12_gather_dxil`, `d3d12_layers`, `d3d12_pipeline_statistics`, `d3d12_sampler_table_lod_dxbc` and
+  `d3d12_viewport_reach` report the same addresses with that fix as without it: another cause, not yet found. On an
+  Apple GPU an
   invalid read can page-fault and restart WindowServer, so each of these is a stability finding, not noise.
 - **`MTLMatrixLayoutRowMajor`.** `d3d12_obligations`, `d3d12_recording_failure` and others build an acceleration
   structure descriptor with a matrix layout the M1 doesn't support; Metal's validation ends the process. Mullion sets

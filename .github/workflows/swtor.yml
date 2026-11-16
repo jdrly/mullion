@@ -457,9 +457,11 @@ jobs:
                 lines=("FAILED: every check of a static range counts where it fails, as a root view's do") ;;
               host_check_root_ranges.2[234])
                 lines=("FAILED: a root view's checks count in one atomic, which no check that passes reaches") ;;
-              # and a checked root CBV's row past its length reading the shader's own row of zeros (private ticket 37)
+              # and a constant buffer's row past its bound reading the shader's own row of zeros: a checked root CBV's
+              # (private ticket 37) and, without a flag, a table CBV's (private ticket 43)
               host_check_root_ranges.25)
-                lines=("FAILED: a root CBV's row past its length reads the zeros before the lock table with the flag") ;;
+                lines=("FAILED: a root CBV's row past its length reads the zeros before the lock table with the flag"
+                       "FAILED: a table CBV's row past its view reads the zeros before the lock table without a flag") ;;
               # #7's fixes undone: a pixel shader's unhandled dcl_input_ps_siv or dcl_input_ps_sgv copying v1 from an
               # argument never chosen, and a DXIL typed resource of doubles converted instead of refused
               host_converter_fixes) lines=('FAILED: an unhandled dcl_input_ps_siv converts and adds no argument') ;;

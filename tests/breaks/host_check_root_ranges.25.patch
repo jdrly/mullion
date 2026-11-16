@@ -1,12 +1,12 @@
-# a checked root CBV's row past its length reads the shader's own row of zeros, not the device's before the lock table
---- a/src/airconv/dxbc_binding_rootsig.cpp
-+++ b/src/airconv/dxbc_binding_rootsig.cpp
-@@ -266,7 +266,7 @@ public:
-           ),
-           Pointer->getType()
-       );
--      return ConstantBufferDescriptor{Pointer, Length, SM50_CHECK_ROOT_VIEW, Zero};
-+      return ConstantBufferDescriptor{Pointer, Length, SM50_CHECK_ROOT_VIEW, nullptr};
-     }
-     auto HeapPointer = GetArgument(Builder, RootSignatureArgumentIndex, CBuf.arg_index);
-     auto [Pointer, Metadata] = GetBufferDescriptor(
+# a constant buffer's row past its bound reads the shader's own row of zeros, not the device's before the lock table
+--- a/src/airconv/nt/dxbc_converter_base.cpp
++++ b/src/airconv/nt/dxbc_converter_base.cpp
+@@ -120,7 +120,7 @@ Converter::ZeroRow() {
+   // jdrly/mullion: where the binding carries the device's lock table (every root signature does), the 16 zero bytes the
+   // device keeps before it (SM50_ZERO_ROW_BEFORE_LOCKS), which the command buffer holds resident. Metal's validation
+   // sees no resource at the shader's own row and calls a load of it invalid (private tickets 37 and 43)
+-  if (auto Locks = ctx.binding.GetAtomicLocks(air))
++  if (auto Locks = ctx.binding.GetAtomicLocks(air); false)
+     return ir.CreateIntToPtr(
+         ir.CreateSub(ir.CreatePtrToInt(Locks, ir.getInt64Ty()), ir.getInt64(SM50_ZERO_ROW_BEFORE_LOCKS)),
+         TyIntVec4->getPointerTo(2)

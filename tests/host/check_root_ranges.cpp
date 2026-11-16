@@ -8,6 +8,8 @@
 //   descriptor against nothing, and the flag checks each against the length its root arguments carry.
 // - a root CBV with the flag: each load of a row passes a select of the row and the row of zeros 32 bytes before the
 //   lock table (SM50_ZERO_ROW_BEFORE_LOCKS), and nothing reads the shader's own row of zeros (private ticket 37).
+// - the table alone without a flag: its CBV is bounds checked, and nothing reads the shader's own row of zeros either:
+//   a row past the view reads the row before the lock table (private ticket 43).
 // - a constant buffer, SRV or UAV through a descriptor table, the other two root descriptors: more bounds compares with
 //   -check-descriptor-indices (SM50_SHADER_FLAG_CHECK_DESCRIPTOR_INDICES) than without, each kind on its own. its
 //   descriptor index is clamped below the count of descriptors the heap has from the table's start.
@@ -843,6 +845,13 @@ main(int argc, char **argv) {
                 loads.from_views, loads.unguarded);
     check(loads.from_views && !loads.unguarded && rows.find("@mullion.zero_row") == std::string::npos,
           "a root CBV's row past its length reads the zeros before the lock table with the flag");
+  }
+  // and without any flag, upstream's default path: a table CBV's row past its view reads the same zeros, so no shader
+  // whose root signature binds the lock table has a row of zeros of its own (private ticket 43)
+  if (!table_plain.empty()) {
+    auto compares = count(table_plain, "icmp ult"), own = count(table_plain, "@mullion.zero_row");
+    std::printf("table: %zu bounds compares without a flag, %zu uses of the shader's own row of zeros\n", compares, own);
+    check(compares && !own, "a table CBV's row past its view reads the zeros before the lock table without a flag");
   }
   // the loads of root SRVs whose checks can fail: with the flag every one reads a failed check's value from the lock
   // table, not from the view's start, which may have fewer bytes than one load; without it they read the view
