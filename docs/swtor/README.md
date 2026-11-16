@@ -682,7 +682,8 @@ bounds-checked constant buffer, so the codegen id moves and every player convert
 a flag and reads no row of zeros of its own; its break `.25` gives every constant buffer the shader's own row back.
 The report itself was Metal's validation, not a read past memory (private ticket 44, [gate.md](gate.md) § 2): shader
 validation calls every load of a pipeline's own program-scope constants invalid, and zeroes it, when the pipeline
-supports indirect command buffers, as every Direct3D 12 pipeline Mullion makes does. Apple's own compiler's constant
+supports indirect command buffers, as Mullion's Direct3D 12 compute and vertex and fragment render pipelines do (mesh
+pipelines from Apple9). Apple's own compiler's constant
 arrays get the same report, and upstream's [TESTING.md](../TESTING.md) § 6 says the same. On the M1, with #47's
 change undone (`.25`'s), the reports went away when the pipelines were made without that support. The shader's own
 row held its zeros all along.

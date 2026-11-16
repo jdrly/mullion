@@ -108,8 +108,9 @@ cause):
   `corners`).
   **These reports, and the zero row's, are Metal's validation, not reads past memory** (private ticket 44, at
   e26baa3). Shader validation calls every load of a pipeline's own program-scope constants invalid, and zeroes it,
-  when the pipeline supports indirect command buffers. Every Direct3D 12 pipeline Mullion makes supports them, for
-  `ExecuteIndirect`. Upstream's [TESTING.md](../TESTING.md) § 6 says the same of macOS 27.2.
+  when the pipeline supports indirect command buffers. Mullion's Direct3D 12 compute pipelines and its vertex and
+  fragment render pipelines support them, for `ExecuteIndirect` (mesh pipelines only from Apple9). Upstream's
+  [TESTING.md](../TESTING.md) § 6 says the same of macOS 27.2.
   - **Apple's own compiler.** On the M1 a Metal kernel built by Apple's compiler reads a `constant float3 axes[6]`
     per thread, outside Wine and Mullion. In a pipeline made with `supportIndirectCommandBuffers` and run under
     validation, it gets the same report (`Invalid load in 'device' or 'constant' address space at GPU address
