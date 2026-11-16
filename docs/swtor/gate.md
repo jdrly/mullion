@@ -93,6 +93,14 @@ cause):
   `d3d12_cbuffer_layout` and `d3d12_compute` showed the same report with no fork switch involved: the same zero row on
   upstream's path, read by a table CBV's row past its view and by a null view. Fixed by #47 (private ticket 43): both
   clean on both paths, and a control that gives the shader its own row back brings the gate's addresses back.
+  **The zero row's reports were validation's own** (private ticket 44, below), so #39 and #47 moved a row nothing
+  misread.
+  - **The evidence.** #47's control (the shader's own row back) brings the reports back in `d3d12_compute`,
+    `d3d12_cbuffer_layout` and `d3d12_root_view_ranges` (#39's checked root CBV).
+  - **The control.** With D3D12's pipelines also made without indirect command buffer support, the same tests report
+    none and pass.
+  - **Not rerun.** #39's other case, `d3d12_cbv_ranges`' null view of size 0, read the same row. It wasn't rerun:
+    with the switch on, #39 still gives that view 64 KiB.
   `d3d12_gather_dxil`, `d3d12_layers`, `d3d12_pipeline_statistics`, `d3d12_sampler_table_lod_dxbc` and
   `d3d12_viewport_reach` report the same addresses with that fix as without it. Each of their loads reads a constant
   array of the shader itself: DXBC's immediate constant buffer (`@icb`, and in `d3d12_sampler_table_lod_dxbc` the rows
