@@ -9,7 +9,9 @@
 // bits, never dereferenced. A new table holds 0 there; a pooled one must too, or the slot still names the released
 // function table, which the new buffer doesn't keep resident: such a slot reads the table's resource ID. Under
 // Metal's validation, which refuses any kernel that declares a slot nobody bound, the second pass runs a kernel that
-// declares no slot 3 instead, and only validation's own report can tell the tables apart.
+// declares no slot 3 instead, and validation reports nothing of the slot either way (measured on the M1, private
+// ticket 54's amendment): there the test checks only the bridge's count of the slots its dealloc clears, a structural
+// check. The slot's clearing itself is observed only without validation.
 //
 // Three rounds of that, on, off and on again, with their controls: a kernel calls through the function table in its
 // own pass, so the binding is real; on, the second buffer has the first one's table, so the pool was taken, and the
@@ -100,8 +102,8 @@ static id<MTLDevice> device;
 static id<MTLComputePipelineState> pso, caller;
 // under Metal's validation (MTL_DEBUG_LAYER), which refuses every kernel that declares a slot nobody bound: one never
 // written ("was never set"), one setAddress:0 cleared ("cannot be null") and one a function table's ID is left in
-// ("should have been set with setAddress:atIndex:"). the second pass then runs `quiet`, which declares no slot 3, and
-// what validation says of the table's slot 3 is its own report
+// ("should have been set with setAddress:atIndex:"). the second pass then runs `quiet`, which declares no slot 3, so
+// that the run gets through; it reads nothing of the slot
 static id<MTLComputePipelineState> quiet;
 static bool validated;
 static id<MTLFunction> vf;
@@ -276,7 +278,8 @@ round_of(bool reuse, unsigned round, id pooled, id *first_table, id *second_tabl
   // held, so that no other table can get its address
   id held = *first_table = [compute_table(a) retain];
   expect(held != nil, "the first buffer has a compute table");
-  // what the dealloc's clear stands on, and the one check validation's run has of the slot
+  // what the dealloc's clear stands on, and under validation the only check of slot 3: a structural one, which a
+  // dealloc that counts the slot and doesn't clear it would pass (break .4)
   printf("     compute slots counted: %u\n", compute_buffers_set(a));
   expect(compute_buffers_set(a) >= 4, "the function table's slot 3 is counted for the clear");
   if (pooled)

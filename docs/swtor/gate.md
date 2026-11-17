@@ -184,6 +184,33 @@ M1 gets, and `tests/swtor/known-m1.txt` (the list run.py reads without `--valida
 - The six range-check tests pass without validation (their invalid loads were validation's view of the shader's own
   zero row, § 2).
 
+## 2b. What validation can't see: an argument-table slot nobody bound
+
+Private ticket 54 (#53), on the rented M1, macOS 27.0 (26A428), 2026-11-17. A finding by ADR 0006's rule, with its
+controls; no code changes for it.
+
+- **Validation refuses every kernel that declares a buffer slot nobody bound, whatever the slot holds.** The
+  dispatch stops at `-[MTL4DebugComputeCommandEncoder dispatchThreads:threadsPerThreadgroup:]` with one of three
+  messages:
+  - a new argument table: "Buffer binding at index 3 for slot was never set";
+  - a slot `setAddress:0` cleared: "cannot be null";
+  - a slot that still holds a visible function table's resource ID: "should have been set with setAddress:atIndex:".
+- **A kernel that doesn't declare the slot runs clean**, even with a released function table's ID in it.
+- **The control is the run without validation.** The same kernel reads the slot's 64 bits: 0 in a new table, the
+  table's ID (`0x1`) after `setResource:atBufferIndex:`, 0 again after `setAddress:0` (a probe outside the
+  repository, the PR has the readings).
+
+So validation can't tell a pooled table that still names a released object from one that was cleared:
+`host_metal4_parts`, the test of `MULLION_METAL4_REUSE_PARTS`, observes the slot only without validation. Under
+validation it checks the bridge's count of the slots `dealloc` clears, a structural check (the ticket's amendment of
+2026-11-17).
+
+| break | without validation | under validation |
+|---|---|---|
+| `tests/breaks/host_metal4_parts.patch`: the function table's slot not counted | fails: slot 3 reads `0x1` in the pooled table | fails: the count is 1 |
+| `.4`: `dealloc` doesn't clear the buffer slots | fails: slot 3 reads `0x1` | passes: the count is right, and nothing reads the slot |
+| `.2`, `.3`: off takes from, or gives back to, the pool | fails | fails |
+
 ## 3. Upstream's baseline
 
 `tests/known.txt` (one M5 Pro, no validation, 23 lines) stays upstream's. The fork's lists are per chip:

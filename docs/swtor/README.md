@@ -828,7 +828,10 @@ past a buffer and 4 texels past a texture. Both run on the rented M1 under Metal
   timeout, a skip, a test meson doesn't know and a patch named otherwise each fail the step. A new break needs no
   line in the workflow: the file in `tests/breaks/` is enough, and a break its test doesn't notice fails the pull
   request. The converter's `tests/breaks/d3d12_bounds_guarded.patch` and `.2.patch` run against
-  `host_guard_static_ranges` too, named in the step. The breaks below also have to fail at a line the step names.
+  `host_guard_static_ranges` too, named in the step. One test is left out: `host_metal4_parts` runs Metal 4 command
+  buffers on the GPU, which the runner has none of, so it skips there and the step leaves its breaks out with a line;
+  they are run on the rented M1, with and without Metal's validation ([gate.md § 2b](gate.md#2b-what-validation-cant-see-an-argument-table-slot-nobody-bound)).
+  The breaks below also have to fail at a line the step names.
 
   `host_layer_apply` runs the bridge's layer setters (`src/winemetal/unix/layer.c`) on a `CAMetalLayer` without a
   device while the test's main thread is held for 2 s without its run loop. Its four breaks put `dispatch_sync` back
