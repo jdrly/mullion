@@ -3254,7 +3254,7 @@ public:
       RangeFired(kTableSpan, ranges::Overrun{"Size", span, left});
     if (count != left) {
       count = left;
-      dirty_state_.set(dirty);
+      RootArgumentsChanged(dirty);
     }
   }
 
@@ -3268,11 +3268,16 @@ public:
     for (UINT i = 0; rootsig->TableCountQwords && i < rootsig->ParameterSlots; i++)
       if (rootsig->TableCountQwords[i] != ~0u)
         SetTableCount(rootsig, staging, dirty, i, staging[rootsig->SlotQwordOffsets[i]]);
-    if (rootsig->ResourceHeapCountQword != ~0u)
-      staging[rootsig->ResourceHeapCountQword] = resource_heap_count_ ? resource_heap_count_ : UINT32_MAX;
-    if (rootsig->SamplerHeapCountQword != ~0u)
-      staging[rootsig->SamplerHeapCountQword] = sampler_heap_count_ ? sampler_heap_count_ : UINT32_MAX;
-    dirty_state_.set(dirty);
+    // a count that changes uploads the arguments again: since upstream's 0576603 a pass binds the copy an earlier one
+    // uploaded until RootArgumentsChanged
+    auto write = [&](uint32_t qword, uint64_t value) {
+      if (qword == ~0u || staging[qword] == value)
+        return;
+      staging[qword] = value;
+      RootArgumentsChanged(dirty);
+    };
+    write(rootsig->ResourceHeapCountQword, resource_heap_count_ ? resource_heap_count_ : UINT32_MAX);
+    write(rootsig->SamplerHeapCountQword, sampler_heap_count_ ? sampler_heap_count_ : UINT32_MAX);
   }
 
   void STDMETHODCALLTYPE
@@ -3347,13 +3352,16 @@ public:
     auto qword = rootsig->RootLengthQwords[Index];
     if (qword == ~0u)
       return VA;
+    // a root CBV of no buffer comes as the null buffer's address (upstream's fe27824): no buffer, as address 0 is
+    if (VA == device_->GetNullBuffer())
+      VA = 0;
     auto end = VA ? HeldEnd(VA) : 0;
     auto view = ranges::RootViewBinding(VA, end != 0, end, device_->GetNullBuffer());
     if (VA && !end)
       RangeFired(kRootViewAddress, ranges::View(VA, 1, false, 0));
     if (staging[qword] != view.length) {
       staging[qword] = view.length;
-      dirty_state_.set(dirty);
+      RootArgumentsChanged(dirty);
     }
     return view.address;
   }
