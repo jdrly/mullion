@@ -1,0 +1,14 @@
+# the pacing ignores MULLION_SYNC_INTERVAL: every present keeps the game's interval
+diff --git a/src/mullion/mullion_present_pacing.hpp b/src/mullion/mullion_present_pacing.hpp
+index dd7048d..4162e91 100644
+--- a/src/mullion/mullion_present_pacing.hpp
++++ b/src/mullion/mullion_present_pacing.hpp
+@@ -53,7 +53,7 @@ struct Pacing {
+ // for none). With nothing forced, PresentFrame's expression before the switch, operand for operand
+ inline Pacing
+ Pace(unsigned game, int forced, double refresh_hz, int cap_fps) {
+-  unsigned interval = forced == kNotForced ? game : unsigned(forced);
++  unsigned interval = game;
+   return {interval, std::max(interval * 1.0 / (cap_fps ? cap_fps : refresh_hz), cap_fps ? 1.0 / cap_fps : 0)};
+ }
+ 
