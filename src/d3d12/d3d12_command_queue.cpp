@@ -55,6 +55,12 @@ const std::string dump_frames = env::getEnvVar("MULLION_D3D12_DUMP_FRAMES"); // 
 // (docs/swtor/README.md). The bridge reads it too, for the status (winemetal_unix.c, encoder_errors)
 static sw::Switch<bool> kGPUErrorDetail{"MULLION_GPU_ERROR_DETAIL", false, sw::exactlyOne};
 
+// jdrly/mullion: MULLION_METAL4_REUSE_PARTS=1: a Metal 4 command buffer takes the residency set and argument tables a
+// done one of its queue left (upstream's 0fedd37), and leaves its own. Off, each buffer makes its own as before 0fedd37.
+// Read as each queue makes its Metal 4 queue, so every buffer of a queue, and the queue's pool, has the same value
+// (private ticket 54, docs/swtor/README.md)
+static sw::Switch<bool> kMetal4ReuseParts{"MULLION_METAL4_REUSE_PARTS", false, sw::exactlyOne};
+
 bool
 GPUErrorDetail() {
   // MULLION_D3D12_GPU_ERRORS and MULLION_TRACE_GPU=heavy imply it, as they make the bridge ask for the status
@@ -188,6 +194,8 @@ class MTLD3D12CommandQueueImpl : public MTLD3D12Pageable<MTLD3D12CommandQueue, I
   // the clock of the timestamps the queue's work writes: Metal 3 samples nanoseconds, a Metal 4 counter heap ticks
   // (MTLDevice.h queryTimestampFrequency: "the frequency of the GPU timestamp in ticks per second")
   uint64_t timestamp_frequency_ = kGPUTimestampFrequency;
+  // jdrly/mullion: MULLION_METAL4_REUSE_PARTS, as the Metal 4 queue was made
+  bool reuse_parts_ = false;
   static uint64_t
   Rescale(uint64_t time, uint64_t to, uint64_t from) {
     return uint64_t((unsigned __int128)time * to / from);
@@ -1329,7 +1337,8 @@ private:
     return WMT::Reference<MetalCommandBuffer>(MTL4CommandBuffer_new(
         queue_, fence_, completion_event_, seq, device_->GetGlobalResidencySet(),
         {kCustomBufferArgumentIndex0 + 1, D3D12_COMMONSHADER_INPUT_RESOURCE_SLOT_COUNT,
-         D3D12_COMMONSHADER_SAMPLER_SLOT_COUNT}
+         D3D12_COMMONSHADER_SAMPLER_SLOT_COUNT},
+        reuse_parts_
     ));
   }
 
@@ -1413,6 +1422,7 @@ public:
     auto metal_device = device_->GetMTLDevice();
     if constexpr (Metal4) {
       queue_ = metal_device.newMTL4CommandQueue();
+      reuse_parts_ = kMetal4ReuseParts();
       completion_event_ = metal_device.newSharedEvent();
       if (!completion_event_)
         return E_OUTOFMEMORY;

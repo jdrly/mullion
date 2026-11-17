@@ -2214,10 +2214,11 @@ WMTPresentStatistics_get(obj_handle_t statistics, struct WMTPresentStatistics *o
 WINEMETAL_API obj_handle_t
 MTL4CommandBuffer_new(
     obj_handle_t queue, obj_handle_t fence, obj_handle_t event, uint64_t value, obj_handle_t residency,
-    struct WMTMetal4BindingCounts bindings
+    struct WMTMetal4BindingCounts bindings, bool reuse_parts
 ) {
   struct unixcall_metal4_new p = {
-      .queue = queue, .fence = fence, .event = event, .residency = residency, .value = value, .bindings = bindings
+      .queue = queue, .fence = fence, .event = event, .residency = residency, .value = value, .bindings = bindings,
+      .reuse_parts = reuse_parts
   };
   UNIX_CALL(WMTUnixMetal4NewBuffer, &p);
   return p.ret;

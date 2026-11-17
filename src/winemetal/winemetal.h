@@ -2794,9 +2794,11 @@ struct WMTMetal4Feedback {
   obj_handle_t error;
   uint64_t gpu_start, gpu_end;
 };
+// jdrly/mullion: `reuse_parts` (MULLION_METAL4_REUSE_PARTS, the same for every buffer of a queue): the buffer takes
+// the residency set and argument tables a done buffer of its queue left, and leaves its own when it is done
 WINEMETAL_API obj_handle_t MTL4CommandBuffer_new(
     obj_handle_t queue, obj_handle_t fence, obj_handle_t event, uint64_t value, obj_handle_t residency,
-    struct WMTMetal4BindingCounts bindings
+    struct WMTMetal4BindingCounts bindings, bool reuse_parts
 );
 // a compute-class `samples` that starts where the previous pass's end was sampled gets that sample as its start
 WINEMETAL_API obj_handle_t MTL4CommandBuffer_encoder(

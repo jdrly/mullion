@@ -5792,6 +5792,9 @@ API_AVAILABLE(macos(26.0)) @interface MullionMetal4Buffer : NSObject {
   id<MTLResidencySet> residency;
   NSMutableSet *allocations;
   id recent[64];
+  // jdrly/mullion: MULLION_METAL4_REUSE_PARTS, as MTL4CommandBuffer_new was given it. off, the buffer takes no parts
+  // from its queue's pool, leaves none there, and asks `allocations` about every object as before 0fedd37
+  bool reuse_parts;
   NSMutableSet *objects;
   id<MTLBuffer> bytes;
   uint64_t bytes_used;
@@ -5932,7 +5935,7 @@ API_AVAILABLE(macos(26.0)) metal4_parts(id<MTL4CommandQueue> queue) {
   dispatch_release(feedback_ready);
   // the GPU is done with the commands once the buffer's feedback came, and never had those of one not committed
   bool done = finished || feedback.status < WMTCommandBufferStatusCommitted;
-  MullionMetal4Parts *parts = done && residency ? [[MullionMetal4Parts alloc] init] : nil;
+  MullionMetal4Parts *parts = reuse_parts && done && residency ? [[MullionMetal4Parts alloc] init] : nil;
   if (parts) {
     // the next buffer's passes start as with new tables, as a render pass leaves them (MTL4CommandEncoder_endEncoding)
     for (unsigned stage = 0; stage < Metal4BindingStageCount; stage++) {
@@ -5985,7 +5988,7 @@ API_AVAILABLE(macos(26.0)) metal4_resident(MullionMetal4Buffer *state, id<MTLAll
     return;
   // an object's address is a multiple of 16
   id *recent = &state->recent[((uintptr_t)resource >> 4) % (sizeof(state->recent) / sizeof(state->recent[0]))];
-  if (*recent == resource)
+  if (state->reuse_parts && *recent == resource)
     return;
   *recent = resource;
   if (![state->allocations containsObject:resource]) {
@@ -6121,12 +6124,15 @@ _MTL4CommandBuffer_new(void *obj) {
     state->allocations = [[NSMutableSet alloc] init];
     state->objects = [[NSMutableSet alloc] init];
     state->feedback_ready = dispatch_group_create();
-    NSMutableArray *parts_pool = metal4_parts(state->queue);
-    MullionMetal4Parts *parts;
-    @synchronized(parts_pool) {
-      parts = [[parts_pool lastObject] retain];
-      if (parts)
-        [parts_pool removeLastObject];
+    state->reuse_parts = p->reuse_parts;
+    MullionMetal4Parts *parts = nil;
+    if (state->reuse_parts) {
+      NSMutableArray *parts_pool = metal4_parts(state->queue);
+      @synchronized(parts_pool) {
+        parts = [[parts_pool lastObject] retain];
+        if (parts)
+          [parts_pool removeLastObject];
+      }
     }
     // tables made for other counts go with their set
     if (parts && !memcmp(&parts->bindings, &state->bindings, sizeof(state->bindings))) {
@@ -6136,6 +6142,10 @@ _MTL4CommandBuffer_new(void *obj) {
         state->tables[i] = parts->tables[i];
         parts->tables[i] = nil;
       }
+      // jdrly/mullion: the first time in the process (docs/swtor/README.md § Log lines)
+      static atomic_flag said = ATOMIC_FLAG_INIT;
+      if (!atomic_flag_test_and_set(&said))
+        fprintf(stderr, "mullion: metal4 parts=reused\n");
     }
     [parts release];
     if (!state->residency)
