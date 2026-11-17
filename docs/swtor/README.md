@@ -584,11 +584,11 @@ Mullion paces a Direct3D 12 present itself: the layer's display sync is off, and
 alike. The interval is the game's, or `MULLION_SYNC_INTERVAL`'s when set; the rate is `d3d12.preferredMaxFrameRate`
 when set, and never less than one of its frames, else the display's refresh rate. The arithmetic and the pacing
 line's limit are in [`mullion_present_pacing.hpp`](../../src/mullion/mullion_present_pacing.hpp), which
-`host_present_pacing` tests.
+`host_present_pacing` tests. The Mac check presents with [`tests/swtor/present_pace.c`](../../tests/swtor/present_pace.c), a loop built and run by hand.
 
 The refresh rate is the one read when the swap chain was made, so a window moved to a display with another rate keeps
 the old pacing; fixing that is not this switch's change. Entering full screen with a display mode change sets it to
-that mode's rate, and leaving such a full screen makes it `unknown`, after which no interval paces anything: the code
+that mode's rate, and leaving such a full screen makes it `unknown`, after which, without a cap, no interval paces anything: the code
 at `8b3fb93` does the same, and the line's `refreshHz=unknown` shows it.
 
 Needs the Mac: that a forced interval of 1 holds a real swap chain at the display's rate through the presenter's
