@@ -25,6 +25,7 @@
 #include <unistd.h>
 #include <signal.h>
 #include <time.h>
+#include <sys/resource.h>
 #include <mach/mach.h>
 #include <mach/mach_time.h>
 #define WINEMETAL_API
@@ -309,8 +310,9 @@ round_of(bool reuse, unsigned round, id pooled, id *first_table, id *second_tabl
 // alternating rounds (off first) of `buffers` command buffers each (default 2000, the first 200 of each round not
 // counted). Each buffer has one compute pass of 64 dispatches, each after binding the same 8 buffers and 8 textures,
 // as a draw-heavy pass binds the same few objects again, and at most 3 are in flight: the oldest is waited for and
-// released, as the queue's completion thread does. Prints, per round, the caller's thread CPU time per buffer and
-// the wall time of each step, in us, and the process's footprint at the round's end.
+// released, as the queue's completion thread does. Prints, per round and per counted buffer, in us: the process's CPU
+// time (all threads) and the round's wall time, and the wall time of each step of the calling thread; and how often
+// the release ran the buffer's dealloc on the calling thread, and the process's footprint at the round's end.
 static double
 us(uint64_t ticks) {
   static mach_timebase_info_data_t base;
@@ -319,11 +321,12 @@ us(uint64_t ticks) {
   return (double)ticks * base.numer / base.denom / 1000.0;
 }
 
+// the process's CPU time, every thread's (Metal's completion and feedback threads too), user and system
 static double
-thread_us(void) {
-  struct timespec t;
-  clock_gettime(CLOCK_THREAD_CPUTIME_ID, &t);
-  return t.tv_sec * 1e6 + t.tv_nsec / 1e3;
+process_us(void) {
+  struct rusage u;
+  getrusage(RUSAGE_SELF, &u);
+  return (u.ru_utime.tv_sec + u.ru_stime.tv_sec) * 1e6 + u.ru_utime.tv_usec + u.ru_stime.tv_usec;
 }
 
 static double
@@ -378,16 +381,20 @@ bench(id<MTLComputePipelineState> kernel, unsigned buffers) {
   }
   printf("bench: %u command buffers a round, %d dispatches of %d buffer and %d texture binds each, %d in flight\n",
          buffers, kDispatches, kBinds, kBinds, kInFlight);
-  printf("round reuse cpu/cb  new  encode  commit  wait  release  dealloc-here  footprintMiB\n");
+  printf("round reuse  cpu/cb  wall/cb   new  encode  commit  wait  release  dealloc-here  footprintMiB\n");
   for (unsigned round = 0; round < 8; round++) {
     bool reuse = round & 1;
     obj_handle_t ring[kInFlight] = {0};
-    double sum[5] = {0}, cpu = 0;
+    double sum[5] = {0}, cpu0 = 0, cpu1 = 0;
+    uint64_t wall0 = 0, wall1 = 0;
     unsigned counted = 0, here = 0;
     for (unsigned n = 0; n < buffers + kWarmup + kInFlight; n++) {
       @autoreleasepool {
         bool count = n >= kWarmup && n < kWarmup + buffers;
-        double c0 = thread_us();
+        if (n == kWarmup) {
+          cpu0 = process_us();
+          wall0 = mach_absolute_time();
+        }
         uint64_t t[7];
         t[0] = mach_absolute_time();
         obj_handle_t buffer = 0;
@@ -429,17 +436,19 @@ bench(id<MTLComputePipelineState> kernel, unsigned buffers) {
           [strong release];
           objc_destroyWeak(&weak);
         }
-        double c1 = thread_us();
+        if (n == kWarmup + buffers - 1) {
+          cpu1 = process_us();
+          wall1 = mach_absolute_time();
+        }
         if (count) {
           counted++;
           for (unsigned i = 0; i < 5; i++)
             sum[i] += us(t[i + 1] - t[i]);
-          // the wait blocks without CPU; the weak reference's own calls are left in, on both sides alike
-          cpu += c1 - c0;
         }
       }
     }
-    printf("%5u %5d %6.2f %5.2f %7.2f %7.2f %5.1f %8.2f %8u/%u %10.1f\n", round + 1, reuse, cpu / counted,
+    printf("%5u %5d %7.2f %8.2f %5.2f %7.2f %7.2f %5.1f %8.2f %8u/%u %10.1f\n", round + 1, reuse,
+           (cpu1 - cpu0) / counted, us(wall1 - wall0) / counted,
            sum[0] / counted, sum[1] / counted, sum[2] / counted, sum[3] / counted, sum[4] / counted, here, counted,
            footprint_mib());
   }
