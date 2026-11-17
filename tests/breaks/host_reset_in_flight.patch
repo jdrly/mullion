@@ -1,0 +1,12 @@
+# the line says half the lists that were in flight
+--- a/src/mullion/mullion_reset_in_flight.hpp
++++ b/src/mullion/mullion_reset_in_flight.hpp
+@@ -43,7 +43,7 @@
+   std::snprintf(
+       line, sizeof(line), "MULLION-RESET-IN-FLIGHT at=%02u:%02u:%02u.%03u type=%s lists=%u frame=%llu allocator=%llu",
+       first.at.hour % 100, first.at.minute % 100, first.at.second % 100, first.at.millisecond % 1000, first.type,
+-      first.lists, (unsigned long long)first.frame, (unsigned long long)first.allocator
++      first.lists / 2, (unsigned long long)first.frame, (unsigned long long)first.allocator
+   );
+   return line;
+ }

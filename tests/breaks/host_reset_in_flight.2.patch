@@ -1,0 +1,12 @@
+# the section counts every Reset since the DLL loaded, not the second's
+--- a/src/mullion/mullion_reset_in_flight.hpp
++++ b/src/mullion/mullion_reset_in_flight.hpp
+@@ -72,7 +72,7 @@
+     return {};
+   char text[64];
+   std::snprintf(
+-      text, sizeof(text), "resets=%llu lists=%llu", (unsigned long long)window, (unsigned long long)window_lists
++      text, sizeof(text), "resets=%llu lists=%llu", (unsigned long long)resets, (unsigned long long)window_lists
+   );
+   return text;
+ }

@@ -99,6 +99,49 @@ cache_remove_shards(const char *directory, const char *shard_family, const char 
   closedir(dir);
 }
 
+// removes the files of the store's other versions in `directory`, as upstream's remove_other_versions (cache.c) does
+// when a writer opens: those named <stem>* but not <kept>*, where the store is <stem>db and this identity's file
+// <kept> (cache.c's versioned()), the store from before a version had a file of its own among them. first it counts
+// the cache_* tables of each that is an SQLite file (a name ending in .db), for droppedTables, and the bytes of every
+// file it removes, for droppedMiB. a file it can't read as a store counts no table
+static void
+cache_remove_versions(const char *directory, const char *stem, const char *kept, struct WMTCachePrepared *prepared) {
+  size_t stem_length = strlen(stem), kept_length = strlen(kept), suffix = strlen(".db");
+  for (int pass = 0; pass < 2; pass++) {
+    DIR *dir = opendir(directory);
+    if (!dir)
+      return;
+    for (struct dirent *entry; (entry = readdir(dir));) {
+      const char *name = entry->d_name;
+      size_t length = strlen(name);
+      if (strncmp(name, stem, stem_length) || !strncmp(name, kept, kept_length))
+        continue;
+      char *file = sqlite3_mprintf("%s/%s", directory, name);
+      struct stat st;
+      if (!file || lstat(file, &st) || !S_ISREG(st.st_mode)) {
+        sqlite3_free(file);
+        continue;
+      }
+      // the tables first, while the file's journal is still beside it; then every file
+      if (!pass && length >= suffix && !strcmp(name + length - suffix, ".db")) {
+        sqlite3 *db = NULL;
+        if (sqlite3_open_v2(file, &db, SQLITE_OPEN_READONLY | SQLITE_OPEN_NOMUTEX, NULL) == SQLITE_OK) {
+          int64_t tables = cache_query_number(
+              db, "SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name GLOB 'cache_*';"
+          );
+          if (tables > 0)
+            prepared->dropped_tables += (uint64_t)tables;
+        }
+        sqlite3_close(db);
+      } else if (pass && !unlink(file)) {
+        prepared->dropped_bytes += (uint64_t)st.st_size;
+      }
+      sqlite3_free(file);
+    }
+    closedir(dir);
+  }
+}
+
 // WMTCachePrepare on a resolved path; `prepared` starts as the thunk leaves it (entries and bytes -1, the rest 0)
 static void
 cache_prepare(const char *db_path, uint64_t version, const char *shard_family, const char *shard_keep,

@@ -38,8 +38,8 @@ WriteSessionHeader(uint64_t handle, const char *api, uint32_t feature_level, boo
   header.working_set = device.recommendedMaxWorkingSetSize();
   header.placement_sparse = device.supportsPlacementSparse();
 
-  // the file ShaderCache opens for this Metal version
-  header.cache_file = str::format("shaders_", shader_metal, ".db");
+  // the file ShaderCache opens for this Metal version and identity
+  header.cache_file = ShaderCacheFile(shader_metal);
   if (auto directory = ShaderCacheDirectory(); !directory.empty()) {
     header.cache_directory = directory;
     // opens it (it writes its cacheOpen line) as the first pipeline would, for the rows it counted

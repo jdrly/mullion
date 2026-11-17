@@ -551,6 +551,10 @@ _NSObject_description(void *obj) {
   return STATUS_SUCCESS;
 }
 
+// what a pipeline made with keep_for_binary_archive is made of, kept on it until it is added to an archive
+// (_MTLBinaryArchive_add)
+static char archive_descriptor;
+
 static NTSTATUS
 CREATES(_MTLDevice_newComputePipelineState)(void *obj) {
   struct unixcall_mtldevice_newcomputepso *params = obj;
@@ -573,10 +577,8 @@ CREATES(_MTLDevice_newComputePipelineState)(void *obj) {
   params->ret_pso =
       (obj_handle_t)[device newComputePipelineStateWithDescriptor:descriptor options:options reflection:nil error:&err];
   params->ret_error = (obj_handle_t)[err retain];
-  if (!err && info->binary_archive_for_serialization) {
-    [(id<MTLBinaryArchive>)info->binary_archive_for_serialization addComputePipelineFunctionsWithDescriptor:descriptor
-                                                                                                      error:&err];
-  }
+  if (params->ret_pso && info->keep_for_binary_archive)
+    objc_setAssociatedObject((id)params->ret_pso, &archive_descriptor, descriptor, OBJC_ASSOCIATION_RETAIN);
   [descriptor release];
   return STATUS_SUCCESS;
 }
@@ -815,10 +817,8 @@ CREATES(_MTLDevice_newRenderPipelineState)(void *obj) {
                                                                                            reflection:nil
                                                                                                 error:&err];
   params->ret_error = (obj_handle_t)[err retain];
-  if (!err && info->binary_archive_for_serialization) {
-    [(id<MTLBinaryArchive>)info->binary_archive_for_serialization addRenderPipelineFunctionsWithDescriptor:descriptor
-                                                                                                     error:&err];
-  }
+  if (params->ret_pso && info->keep_for_binary_archive)
+    objc_setAssociatedObject((id)params->ret_pso, &archive_descriptor, descriptor, OBJC_ASSOCIATION_RETAIN);
   [descriptor release];
   return STATUS_SUCCESS;
 }
@@ -971,11 +971,8 @@ CREATES(_MTLDevice_newMeshRenderPipelineState)(void *obj) {
   params->ret_error = (obj_handle_t)[err retain];
 #if __MAC_OS_X_VERSION_MAX_ALLOWED >= 150000
   if (@available(macOS 15, *)) {
-    if (!err && info->binary_archive_for_serialization) {
-      [(id<MTLBinaryArchive>)info->binary_archive_for_serialization
-          addMeshRenderPipelineFunctionsWithDescriptor:descriptor
-                                                 error:&err];
-    }
+    if (params->ret_pso && info->keep_for_binary_archive)
+      objc_setAssociatedObject((id)params->ret_pso, &archive_descriptor, descriptor, OBJC_ASSOCIATION_RETAIN);
   }
 #endif
   [descriptor release];
@@ -2101,11 +2098,28 @@ static const int SIGNALS[] = {
 #endif
 };
 
+// whether the descriptor takes what the info asks of the motion vectors
+static bool
+temporal_scaler_motion(MTLFXTemporalScalerDescriptor *desc, const struct WMTFXTemporalScalerInfo *info) {
+#if __MAC_OS_X_VERSION_MAX_ALLOWED >= 270000
+  if (@available(macOS 27.0, *)) {
+    desc.jitteredMotionVectorsEnabled = info->jittered_motion_vectors;
+    return true;
+  }
+#endif
+  return !info->jittered_motion_vectors;
+}
+
 static NTSTATUS
 CREATES(_MTLDevice_newTemporalScaler)(void *obj) {
   struct unixcall_mtldevice_newfxtemporalscaler *params = obj;
   MTLFXTemporalScalerDescriptor *desc = [[MTLFXTemporalScalerDescriptor alloc] init];
   const struct WMTFXTemporalScalerInfo *info = params->info.ptr;
+  params->ret = NULL_OBJECT_HANDLE;
+  if (!temporal_scaler_motion(desc, info)) {
+    [desc release];
+    return STATUS_SUCCESS;
+  }
   desc.colorTextureFormat = to_metal_pixel_format(info->color_format);
   desc.outputTextureFormat = to_metal_pixel_format(info->output_format);
   desc.depthTextureFormat = to_metal_pixel_format(info->depth_format);
@@ -2267,7 +2281,8 @@ CREATES(_MTLDevice_newTemporalScaler4)(void *obj) {
     desc.inputContentPropertiesEnabled = info->input_content_properties_enabled;
     desc.requiresSynchronousInitialization = info->requires_synchronous_initialization;
     desc.autoExposureEnabled = info->auto_exposure;
-    params->ret = (obj_handle_t)[desc newTemporalScalerWithDevice:device compiler:compiler];
+    if (temporal_scaler_motion(desc, info))
+      params->ret = (obj_handle_t)[desc newTemporalScalerWithDevice:device compiler:compiler];
     [desc release];
     [compiler release];
   }
@@ -2780,6 +2795,16 @@ thunk_SM50GetArgumentsInfo(void *args) {
 }
 
 static NTSTATUS
+thunk_SM50CompileRayDispatcher(void *args) {
+  struct sm50_compile_ray_dispatcher_params *params = args;
+  params->ret = SM50CompileRayDispatcher(
+      params->dispatcher, params->shaders, params->shader_count, params->table, params->metal_version, params->bitcode,
+      params->error
+  );
+  return STATUS_SUCCESS;
+}
+
+static NTSTATUS
 thunk_SM50GetRayShader(void *args) {
   struct sm50_get_ray_shader_params *params = args;
   params->ret = SM50GetRayShader(params->shader, params->index, params->name, params->name_size, params->info);
@@ -3208,6 +3233,16 @@ thunk32_SM50CompileGeometryPipelineGeometry(void *args) {
 
   sm50_compilation_argument32_free(&first_arg);
 
+  return STATUS_SUCCESS;
+}
+
+static NTSTATUS
+thunk32_SM50CompileRayDispatcher(void *args) {
+  struct sm50_compile_ray_dispatcher_params32 *params = args;
+  params->ret = SM50CompileRayDispatcher(
+      params->dispatcher, UInt32ToPtr(params->shaders), params->shader_count, params->table, params->metal_version,
+      UInt32ToPtr(params->bitcode), UInt32ToPtr(params->error)
+  );
   return STATUS_SUCCESS;
 }
 
@@ -3854,6 +3889,31 @@ _MTLBinaryArchive_serialize(void *obj) {
   params->ret_error = (obj_handle_t)[err retain];
   [url release];
   [path_str release];
+  return STATUS_SUCCESS;
+}
+
+static NTSTATUS
+_MTLBinaryArchive_add(void *obj) {
+  struct unixcall_generic_obj_obj_noret *params = obj;
+  id<MTLBinaryArchive> archive = (id<MTLBinaryArchive>)params->handle;
+  id pipeline = (id)params->arg, descriptor = objc_getAssociatedObject(pipeline, &archive_descriptor);
+  NSError *err = nil;
+  // the archives the pipeline was looked up in are not asked again: one of them may have been lost to a fault in
+  // Metal since, and holds whoever asks it
+  [descriptor setBinaryArchives:nil];
+  if ([descriptor isKindOfClass:MTLRenderPipelineDescriptor.class])
+    [archive addRenderPipelineFunctionsWithDescriptor:descriptor error:&err];
+  else if ([descriptor isKindOfClass:MTLComputePipelineDescriptor.class])
+    [archive addComputePipelineFunctionsWithDescriptor:descriptor error:&err];
+#if __MAC_OS_X_VERSION_MAX_ALLOWED >= 150000
+  else if (@available(macOS 15, *)) {
+    if ([descriptor isKindOfClass:MTLMeshRenderPipelineDescriptor.class])
+      [archive addMeshRenderPipelineFunctionsWithDescriptor:descriptor error:&err];
+    else if ([descriptor isKindOfClass:MTLTileRenderPipelineDescriptor.class])
+      [archive addTileRenderPipelineFunctionsWithDescriptor:descriptor error:&err];
+  }
+#endif
+  objc_setAssociatedObject(pipeline, &archive_descriptor, nil, OBJC_ASSOCIATION_RETAIN);
   return STATUS_SUCCESS;
 }
 
@@ -4654,11 +4714,8 @@ CREATES(_MTLDevice_newTileRenderPipelineState)(void *obj) {
   params->ret_error = (obj_handle_t)[err retain];
 #if __MAC_OS_X_VERSION_MAX_ALLOWED >= 150000
   if (@available(macOS 15, *)) {
-    if (!err && info->binary_archive_for_serialization) {
-      [(id<MTLBinaryArchive>)info->binary_archive_for_serialization
-          addTileRenderPipelineFunctionsWithDescriptor:descriptor
-                                                 error:&err];
-    }
+    if (params->ret_pso && info->keep_for_binary_archive)
+      objc_setAssociatedObject((id)params->ret_pso, &archive_descriptor, descriptor, OBJC_ASSOCIATION_RETAIN);
   }
 #endif
   [descriptor release];
@@ -7572,7 +7629,7 @@ const void *__wine_unix_call_funcs[] = {
     &thunk_SM50FreeError,
     &thunk_SM50CompileGeometryPipelineVertex,
     &thunk_SM50CompileGeometryPipelineGeometry,
-    NULL,
+    &thunk_SM50CompileRayDispatcher,
     &thunk_SM50CompileTessellationPipelineHull,
     &thunk_SM50CompileTessellationPipelineDomain,
     &_MTLCommandEncoder_setLabel,
@@ -7707,6 +7764,7 @@ const void *__wine_unix_call_funcs[] = {
     &_WMTCachePrepare,
     &_WMTMemorySampler,
     &_WMTMainThreadWaitMax,
+    &_MTLBinaryArchive_add,
 };
 
 #ifndef MULLION_NATIVE
@@ -7794,7 +7852,7 @@ const void *__wine_unix_call_wow64_funcs[] = {
     &thunk_SM50FreeError,
     &thunk32_SM50CompileGeometryPipelineVertex,
     &thunk32_SM50CompileGeometryPipelineGeometry,
-    NULL,
+    &thunk32_SM50CompileRayDispatcher,
     &thunk32_SM50CompileTessellationPipelineHull,
     &thunk32_SM50CompileTessellationPipelineDomain,
     &_MTLCommandEncoder_setLabel,
@@ -7929,6 +7987,7 @@ const void *__wine_unix_call_wow64_funcs[] = {
     &_WMTCachePrepare,
     &_WMTMemorySampler,
     &_WMTMainThreadWaitMax,
+    &_MTLBinaryArchive_add,
 };
 _Static_assert(sizeof(__wine_unix_call_wow64_funcs) / sizeof(__wine_unix_call_wow64_funcs[0]) == WMTUnixCallCount,
                "32-bit bridge call count");

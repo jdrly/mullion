@@ -75,6 +75,9 @@ struct EncoderData {
   // MULLION_GPU_ERROR_DETAIL: the name of the pass's first pipeline, and its targets (` rt0=1920x1080 RGBA8`), which
   // its encoder's label has (d3d12_command_queue.cpp, PassLabel)
   std::string pipeline, targets;
+  // the commands recorded in a pass of draws, copies or dispatches, counted as they are recorded: what encoding it
+  // costs (MTLD3D12CommandQueue's Commands)
+  uint32_t commands = 0;
 };
 
 struct RenderEncoderColorAttachmentData {
