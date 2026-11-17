@@ -7217,6 +7217,11 @@ API_AVAILABLE(macos(26.0)) metal4_compute(MullionMetal4Encoder *state, const str
       metal4_resident(state->owner, (id<MTLVisibleFunctionTable>)body->table);
       [metal4_table(state, Metal4ComputeBinding) setResource:[(id<MTLVisibleFunctionTable>)body->table gpuResourceID]
                                                atBufferIndex:body->index];
+      // jdrly/mullion: a buffer slot, which the buffer's dealloc clears below this count before its tables go to the
+      // pool (setAddress:0 clears a slot setResource wrote: tests/host/metal4_parts.c). uncounted, a pooled table
+      // named this function table in the next buffer, which doesn't keep it (private ticket 54)
+      state->owner->buffers_set[Metal4ComputeBinding] =
+          MAX(state->owner->buffers_set[Metal4ComputeBinding], body->index + 1);
       break;
     }
     case WMTComputeCommandWaitForFence: {
