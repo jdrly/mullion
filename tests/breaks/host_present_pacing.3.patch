@@ -1,0 +1,14 @@
+# the pacing line holds nothing: every change writes at once
+diff --git a/src/mullion/mullion_present_pacing.hpp b/src/mullion/mullion_present_pacing.hpp
+index dd7048d..fc7df29 100644
+--- a/src/mullion/mullion_present_pacing.hpp
++++ b/src/mullion/mullion_present_pacing.hpp
+@@ -108,7 +108,7 @@ public:
+     seen_ = fields;
+     uint64_t at = now();
+     bool quiet = at - said_ns_ >= kSecondNs;
+-    if (changed && !held_ && quiet) {
++    if (changed) {
+       said_ns_ = at;
+       return true;
+     }

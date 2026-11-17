@@ -1,0 +1,14 @@
+# the grammar takes 5, an interval Present refuses
+diff --git a/src/mullion/mullion_present_pacing.hpp b/src/mullion/mullion_present_pacing.hpp
+index dd7048d..f9832d7 100644
+--- a/src/mullion/mullion_present_pacing.hpp
++++ b/src/mullion/mullion_present_pacing.hpp
+@@ -29,7 +29,7 @@ constexpr int kNotForced = -1;
+ // the interval a value of the switch forces: "0" to "4"; kNotForced for anything else, kUnset included
+ inline int
+ Forced(const std::string &value) {
+-  return value.size() == 1 && value[0] >= '0' && value[0] <= '4' ? value[0] - '0' : kNotForced;
++  return value.size() == 1 && value[0] >= '0' && value[0] <= '5' ? value[0] - '0' : kNotForced;
+ }
+ 
+ // MULLION_SYNC_INTERVAL's grammar: "0" to "4" as they are; unset, empty or anything else the fallback (kUnset)
