@@ -96,8 +96,9 @@ follow-up.
       nothing. A skipped test never counts as passed.
 - [ ] **Needs the Mac run.** A change on a high path that the runner can't exercise says "Needs the Mac run" at the
       top of the pull request, with the exact commands to run. It claims none of their results, and it merges with
-      its new behaviour off. A fix that needs no switch (above) has no off: it merges on, and still says "Needs the
-      Mac run".
+      its new behaviour off, unless the off state is the defect itself (ADR 0001's reasoning, scoped in
+      [ADR 0004](../docs/swtor/adr/0004-the-drawable-is-taken-off-the-commit-path.md)). A fix that needs no switch
+      (above) has no off: it merges on, and still says "Needs the Mac run".
 - [ ] **Generated code.** A change to `src/airconv` says whether the shader code it generates changes. Any change
       to the converter's inputs gives a new codegen id, so players convert every shader again once, and the next
       build's notes say so ([caches.md](../docs/swtor/caches.md)).
