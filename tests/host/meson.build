@@ -43,6 +43,20 @@ test('host_compile_key', executable('host_compile_key',
                                      '../../src/util/sha1/sha1.c'],
                                     include_directories : include_directories('../../src/util'),
                                     override_options : ['cpp_std=c++20'], native : true), suite : 'host')
+# jdrly/mullion: mullion::condition_variable's waits under wakeups with nothing notified, early returns and a time
+# past (private ticket 55). the Win32 class is copied out of src/util/thread.hpp at build time
+condition_variable_class = custom_target('condition_variable_class',
+                                         input : '../../src/util/thread.hpp',
+                                         output : 'condition_variable.inc',
+                                         command : [find_program('python3', native : true),
+                                                    files('condition_variable.py'), '@INPUT@', '@OUTPUT@'])
+test('host_condition_variable', executable('host_condition_variable',
+                                           ['condition_variable.cpp', condition_variable_class],
+                                           override_options : ['cpp_std=c++20'], native : true), suite : 'host')
+# jdrly/mullion: the flight dumps a process writes (src/winemetal/unix/flight_cap.h, private ticket 55)
+test('host_flight_cap', executable('host_flight_cap', 'flight_cap.cpp',
+                                   include_directories : include_directories('../../src/winemetal/unix'),
+                                   override_options : ['cpp_std=c++20'], native : true), suite : 'host')
 # the converter's codegen id (tools/codegen_id.py)
 test('host_codegen_id', find_program('python3', native : true),
      args : files('codegen_id.py') + [meson.project_source_root() / 'tools/codegen_id.py'], suite : 'host')

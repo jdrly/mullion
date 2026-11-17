@@ -96,7 +96,8 @@ removed with `DXGI_ERROR_DEVICE_HUNG`. A release build doesn't have it.
 | `MULLION-GPU-HUNG at= queue= cmdbuf= waitedMs= status=name(n) encoders=r/c/b present= flight=` | Always, once for a command buffer the queue has waited on for 10 s (2 s, or `MULLION_TRACE_GPU_HANG_MS`, with `MULLION_TRACE_GPU`), after the flight dump. Mullion goes on waiting and the device stays. Replaces `command buffer <n> of queue <pointer> has not completed for …` | `d3d12.log`, at `warn` | The same, on a freeze |
 | `MULLION-FEATURE-LEVEL asked= reaches= tiledResourcesTier= macOS=` | Always, each time `D3D12CreateDevice` refuses the feature level asked for. Replaces `D3D12CreateDevice: feature level <n> is not supported` | `d3d12.log`, at `warn` | The same, when the game won't start |
 | `MULLION-RESET-IN-FLIGHT at= type= lists= frame= allocator=` | Always, the first time each command allocator is `Reset` while lists recorded from it are still queued or on the GPU, which Direct3D forbids: `type` the allocator's list type (`direct`, `bundle`, `compute`, `copy`), `lists` its lists not completed, `frame` the process's Presents so far, `allocator` the allocators of the process reset in flight, this one included. The `Reset` hands the lists' recording to the queues, which keep it until their work has completed (upstream's, since batch 3). Replaces upstream's `CommandAllocator: Reset while N of its submitted lists have not completed`, written at `err` for every such `Reset` | `d3d12.log` (`wine.log`), at `warn` | Me: the game resets allocators in flight, and from which frame |
-| `mullion: flight record of <reason> in <executable>.flight` | Each flight dump. The file's name only: the folder is `MULLION_DIAG_PATH`, or `~/Library/Logs/Mullion` | The process's stderr (`wine.log`): the bridge writes it | Me: which dump to open |
+| `mullion: flight record of <reason> in <executable>.flight` | Each flight dump the process writes: its first 8, whatever their reason, and after them only the first of each reason it hasn't dumped yet (`src/winemetal/unix/flight_cap.h`, private ticket 55). A dump the file can't take (the folder can't be written) counts for nothing. Upstream's file took every dump, a few MB each: false `MULLION-GPU-HUNG` reports a few ms apart wrote 4.4 GB in a minute on the rented M1. So a removed device and the exit after a run of stuck command buffers are still dumped, and the file holds at most 8 dumps and one of each other reason, as many MB as that is. No switch: no value brings back unlimited dumps, as with `MULLION_SHADER_DUMP_PATH`'s 32. The file's name only: the folder is `MULLION_DIAG_PATH`, or `~/Library/Logs/Mullion` | The process's stderr (`wine.log`): the bridge writes it | Me: which dump to open |
+| `mullion: flight record of <reason> not written: <executable>.flight has <n> dumps, and takes only a reason not dumped yet now` | Once a process, for the first dump the cap above leaves out. Later ones say nothing, and a `MULLION-GPU-HUNG` or `MULLION-DEVICE-REMOVED` line whose dump is left out says `flight=none` | The process's stderr (`wine.log`): the bridge writes it | Me: the file stopped taking dumps of that reason, and from when |
 | `DIAG MEM frame= allocatedMiB= footprintMiB= footprintPeakMiB= budgetMiB= usageMiB= workingSetMiB= \| system: swapMiB= compressedMiB= freeMiB= pageouts= swapouts= \| heaps=n/MiB \| at=` | With `MULLION_MEMSTATS` on, at the first Present after each sample of the bridge's memory sampler; none while nothing presents | `d3d12.log` (`wine.log`), at `warn` | The app's session report, which reads d9mt's line of that name (`frame`, `allocatedMiB`); me, when a session degrades |
 | `MULLION-MEMORY-PRESSURE at= swapMiB= footprintMiB= ramMiB=` | Always, once per process, at the first Present after the first sample in which the Mac swapped out while the process's footprint was over half its RAM, with that sample's numbers and time | The same, at `warn` | Me, on "it got slow after an hour" from an 8 or 16 GB Mac |
 | `MULLION-RANGE call= what= given= limit= action=dropped` | With `MULLION_D3D12_CHECK_RANGES=1`, the first time each check drops a call or a view, or binds a root view as the null buffer, once per process ([§ Ranges](#ranges)) | `d3d12.log` (`wine.log`), at `warn` | Me: a call the game made with numbers past its resource |
@@ -382,7 +383,8 @@ device, by the call that removes it; a later call on a removed device writes not
   | `open-list-executed` | The game executed a command list it hadn't closed |
 
 - `frame`: the process's Presents so far, as `MULLION-GPU-ERROR`'s.
-- `flight`: the flight file's name, `<executable>.flight`, without its folder; `none` when the dump wrote no file.
+- `flight`: the flight file's name, `<executable>.flight`, without its folder; `none` when the dump wrote no file, or
+  the flight dumps' cap left it out (§ Log lines).
 
 `MULLION-GPU-HUNG`: a command buffer the queue has waited on for `waitedMs` without Metal completing it. d9mt ends the
 process at this point (`D9MT-GPU-HUNG`, exit `0xD9D9`); Mullion doesn't. The queue goes on waiting and the device
@@ -932,6 +934,24 @@ past a buffer and 4 texels past a texture. Both run on the rented M1 under Metal
   `tests/breaks/host_converter_fixes{,.2}.patch`, put back the `dcl_input_ps_siv` and `dcl_input_ps_sgv` cases that
   copy `v1` from an argument never chosen, of a function that has none, and `.3` takes the refusal out, so the shader
   converts. Each fails at that shader.
+  The waits of `mullion::condition_variable`, the Win32 one in `src/util/thread.hpp` that every queue and completion
+  thread waits on: `host_condition_variable` copies the class out of `thread.hpp` at build time
+  (`tests/host/condition_variable.py`, which fails the build when it doesn't find the class and its four waits once
+  each) and runs it against a `SleepConditionVariableSRW` of the test's, which wakes with nothing notified, returns
+  before the time asked for, or sleeps it, and records what it was asked for (private ticket 55). A wait with a
+  predicate has to return false only once its time is up, after any number of such wakeups and early returns, and
+  true as soon as the predicate is; a wait until a time has to ask for the time left, and one until a time past has
+  to return at once. Its breaks: `tests/breaks/host_condition_variable.patch` gives `wait_for` with a predicate back
+  its one wait, upstream's, which took any wakeup for a timeout and made the queue's watch report command buffers it
+  had waited on for a few ms as `MULLION-GPU-HUNG waitedMs=10000`; `.2` gives `wait_until` back upstream's
+  `now - time`, a negative time that Win32 reads as about 49 days; `.3` gives `wait_until` with a predicate one wait.
+
+  The flight dumps' cap: `host_flight_cap` builds `src/winemetal/unix/flight_cap.h` natively and requires a run of
+  stuck command buffers to be dumped 8 times, the 9th to write the line once, a removed device and the exit after them
+  to be dumped, `tests/flight.py`'s `busy` (8 dumps and the exit) to keep all 9, and 100 reasons to write no more
+  dumps than the 16 reasons the cap remembers, and 20 dumps the file couldn't take to leave the first 8 still to
+  write. Its breaks: `tests/breaks/host_flight_cap.patch` writes every dump, `.2` leaves out a reason's first dump
+  after the 8th, `.3` counts a dump before the file has taken it.
 - **Publish** (`ubuntu-24.04`, after the other jobs): packs the artifact into `mullion-swtor-<commit>.tar.xz` and
   checks that it unpacks to the same files, hash for hash. Only for a push to `swtor-on-mac` does it upload the archive
   (§ Releases). It is the only job with `contents: write`.

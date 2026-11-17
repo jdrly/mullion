@@ -23,6 +23,7 @@
 #include "window.h"
 #include "../memory_pressure.h"
 #include "texture_compression.h"
+#include "flight_cap.h"
 #include "buffer_range.h"
 
 typedef int NTSTATUS;
@@ -5462,12 +5463,29 @@ _WMTFlightWrite(void *obj) {
                                                     error:nil];
     NSString *path = [directory
         stringByAppendingPathComponent:[NSString stringWithFormat:@"%s.flight", (const char *)params->executable.ptr]];
+    // jdrly/mullion: a process's first dumps, then only a reason's first (flight_cap.h). the PE side holds its dump
+    // lock across this call, so the cap needs none
+    static struct flight_cap cap;
+    switch (flight_cap_check(&cap, (const char *)params->reason.ptr)) {
+    case FLIGHT_CAP_WRITE:
+      break;
+    case FLIGHT_CAP_STOP: {
+      char line[512];
+      flight_cap_line(line, sizeof(line), &cap, (const char *)params->reason.ptr, path.lastPathComponent.UTF8String);
+      fprintf(stderr, "%s\n", line);
+      return STATUS_SUCCESS;
+    }
+    case FLIGHT_CAP_SKIP:
+      return STATUS_SUCCESS;
+    }
     FILE *file = fopen(path.fileSystemRepresentation, written ? "a" : "w");
     if (!file) {
       perror("mullion: flight record");
       return STATUS_SUCCESS;
     }
     written = true;
+    // jdrly/mullion: counted once the file has taken it
+    flight_cap_wrote(&cap, (const char *)params->reason.ptr);
     // stable: records a counter tick apart keep their thread's order, and the order the rings were read in otherwise
     if (mergesort(entries, params->count, sizeof(*entries), flight_order))
       perror("mullion: flight record order");

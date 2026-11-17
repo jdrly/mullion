@@ -1,0 +1,13 @@
+diff --git a/src/util/thread.hpp b/src/util/thread.hpp
+index 660d42d..6ab0e56 100644
+--- a/src/util/thread.hpp
++++ b/src/util/thread.hpp
+@@ -282,7 +282,7 @@ public:
+     auto now = Clock::now();
+ 
+     if (now < time)
+-      wait_for(lock, std::chrono::ceil<std::chrono::milliseconds>(time - now));
++      wait_for(lock, std::chrono::ceil<std::chrono::milliseconds>(now - time));
+     return Clock::now() < time ? std::cv_status::no_timeout : std::cv_status::timeout;
+   }
+ 

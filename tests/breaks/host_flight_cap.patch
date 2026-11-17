@@ -1,0 +1,13 @@
+diff --git a/src/winemetal/unix/flight_cap.h b/src/winemetal/unix/flight_cap.h
+index def5c6e..8a07faa 100644
+--- a/src/winemetal/unix/flight_cap.h
++++ b/src/winemetal/unix/flight_cap.h
+@@ -44,7 +44,7 @@ flight_cap_fresh(const struct flight_cap *cap, const char *reason) {
+ // take uses up nothing
+ static inline enum flight_cap_verdict
+ flight_cap_check(struct flight_cap *cap, const char *reason) {
+-  if (cap->written < kFlightDumpsAny || flight_cap_fresh(cap, reason))
++  if (true)
+     return FLIGHT_CAP_WRITE;
+   if (cap->stopped)
+     return FLIGHT_CAP_SKIP;
