@@ -396,9 +396,16 @@ _WMTCachePrepare(void *obj) {
   struct unixcall_cache_prepare *params = obj;
   @autoreleasepool {
     NSString *db_path = resolve_cache_dir([NSString stringWithUTF8String:params->path.ptr], true);
-    if (db_path)
-      cache_prepare(db_path.fileSystemRepresentation, params->version, params->shard_family.ptr,
-                    params->shard_keep.ptr, params->prepared.ptr);
+    if (db_path) {
+      // this identity's file of the store (upstream's 0643542: one file per version, the tag being the version), and
+      // the other versions' files, counted as they go before upstream's writer would remove them uncounted
+      NSString *kept = versioned(db_path, params->version);
+      cache_prepare(kept.fileSystemRepresentation, params->version, params->shard_family.ptr, params->shard_keep.ptr,
+                    params->prepared.ptr);
+      NSString *stem = [[[db_path lastPathComponent] stringByDeletingPathExtension] stringByAppendingString:@"."];
+      cache_remove_versions([db_path stringByDeletingLastPathComponent].fileSystemRepresentation, stem.UTF8String,
+                            [kept lastPathComponent].UTF8String, params->prepared.ptr);
+    }
   }
   return 0;
 }

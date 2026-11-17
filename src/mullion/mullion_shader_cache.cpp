@@ -160,15 +160,25 @@ ShaderCacheArchivePrefix(uint32_t metal_version) {
   return str::format("pipelines_", metal_version, "_", tag, "_");
 }
 
-// opens the table of this identity, after the bridge has dropped other identities' tables and archives
+std::string
+ShaderCacheStore(uint32_t metal_version) {
+  return str::format("shaders_", metal_version, ".db");
+}
+
+std::string
+ShaderCacheFile(uint32_t metal_version) {
+  return str::format("shaders_", metal_version, ".v", (unsigned long long)ShaderCacheTag(), ".db");
+}
+
+// opens the table of this identity in its file, after the bridge has removed other identities' files and archives
 // (WMTCachePrepare), and says what it found in a cacheOpen line (docs/swtor/README.md)
 ShaderCache::ShaderCache(WMTMetalVersion metal_version) {
   session::CacheOpen open;
   open.directory = ShaderCacheDirectory();
   if (open.directory.empty())
     return;
-  open.file = str::format("shaders_", (unsigned int)metal_version, ".db");
-  auto path = open.directory + open.file;
+  open.file = ShaderCacheFile(metal_version);
+  auto path = open.directory + ShaderCacheStore(metal_version);
   auto family = str::format("pipelines_", (unsigned int)metal_version, "_");
   WMTCachePrepared prepared;
   WMTCachePrepare(path.c_str(), ShaderCacheTag(), family.c_str(), ShaderCacheArchivePrefix(metal_version).c_str(),

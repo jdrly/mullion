@@ -1,7 +1,9 @@
 // contract: when a shader cache opens (WMTCachePrepare, src/winemetal/unix/cache_prepare.h), every cache_* table but
 // its own identity's is dropped, once, and what they took is counted; its own table's rows are counted under the
-// writers' lock, so a write that holds the lock is counted; and the pipeline archives of other identities of the same
-// Metal version are removed, nothing else of the directory
+// writers' lock, so a write that holds the lock is counted; the pipeline archives of other identities of the same
+// Metal version are removed, nothing else of the directory; and the files of the store's other versions (one file
+// per identity since upstream's 0643542) are removed with their journals, their cache_* tables and bytes counted,
+// and this identity's file, other stores' and other Metal versions' are left
 #define WINEMETAL_API
 #include "../../src/winemetal/winemetal.h"
 #include "../../src/winemetal/unix/cache_prepare.h"
@@ -178,6 +180,44 @@ main(void) {
   prepared = (struct WMTCachePrepared){.entries = -1, .bytes = -1};
   cache_prepare(bad, TAG, "pipelines_400_", "pipelines_400_0123456789abcdef_", &prepared);
   check(prepared.entries == -1 && prepared.dropped_tables == 0, "a damaged file: n/a");
+
+  // the other versions' files: the store from before files per version (two tables), another identity's (one table)
+  // with its journal and lock, a file of the store's name that isn't a database; left: this identity's, another
+  // Metal version's store and a store of another name
+  {
+    char path[600];
+    snprintf(path, sizeof(path), "%s/shaders_500.db", directory);
+    sqlite3_open(path, &db);
+    fill(db, "cache_104", 64);
+    fill(db, "cache_fedcba9876543210", 1);
+    sqlite3_close(db);
+    snprintf(path, sizeof(path), "%s/shaders_500.v42.db", directory);
+    sqlite3_open(path, &db);
+    fill(db, "cache_000000000000002a", 1);
+    sqlite3_close(db);
+    touch(directory, "shaders_500.v42.db-lock", 0);
+    touch(directory, "shaders_500.v42.db-wal", 100);
+    touch(directory, "shaders_500.v7.txt", 10);
+    touch(directory, "shaders_500.v81985529216486895.db", 10);
+    touch(directory, "shaders_500.v81985529216486895.db-lock", 0);
+    touch(directory, "shaders_310.db", 10);
+    touch(directory, "shaders_5000.db", 10);
+    prepared = (struct WMTCachePrepared){.entries = -1, .bytes = -1};
+    cache_remove_versions(directory, "shaders_500.", "shaders_500.v81985529216486895.db", &prepared);
+    check(prepared.dropped_tables == 3, "the other versions' tables counted");
+    check(prepared.dropped_bytes >= (64ull << 10) + 110, "the other versions' bytes counted");
+    check(!exists(directory, "shaders_500.db") && !exists(directory, "shaders_500.v42.db") &&
+              !exists(directory, "shaders_500.v42.db-lock") && !exists(directory, "shaders_500.v42.db-wal") &&
+              !exists(directory, "shaders_500.v7.txt"),
+          "the other versions' files and journals are gone");
+    check(exists(directory, "shaders_500.v81985529216486895.db") &&
+              exists(directory, "shaders_500.v81985529216486895.db-lock") && exists(directory, "shaders_310.db") &&
+              exists(directory, "shaders_5000.db"),
+          "this identity's file and lock, another Metal version's and another store's are left");
+    prepared = (struct WMTCachePrepared){.entries = -1, .bytes = -1};
+    cache_remove_versions(directory, "shaders_500.", "shaders_500.v81985529216486895.db", &prepared);
+    check(prepared.dropped_tables == 0 && prepared.dropped_bytes == 0, "the next open removes nothing");
+  }
 
   char command[600];
   snprintf(command, sizeof(command), "rm -rf '%s'", directory);

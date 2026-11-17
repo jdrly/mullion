@@ -1,0 +1,12 @@
+# the other versions' tables go uncounted
+--- a/src/winemetal/unix/cache_prepare.h
++++ b/src/winemetal/unix/cache_prepare.h
+@@ -129,7 +129,7 @@
+           int64_t tables = cache_query_number(
+               db, "SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name GLOB 'cache_*';"
+           );
+-          if (tables > 0)
++          if (tables > 0 && 0)
+             prepared->dropped_tables += (uint64_t)tables;
+         }
+         sqlite3_close(db);

@@ -53,6 +53,11 @@ const cache::Identity &ShaderCacheIdentity();
 uint64_t ShaderCacheTag();
 // the start of the names of the pipeline archives of this Metal version and this identity, in ShaderCacheDirectory
 std::string ShaderCacheArchivePrefix(uint32_t metal_version);
+// the store the bridge is given for this Metal version (shaders_<metal>.db), and the file in ShaderCacheDirectory it
+// keeps this identity's shaders in: the bridge's versioned() of that name at ShaderCacheTag (cache.c), one file per
+// identity since upstream's 0643542 (shaders_400.v<tag in decimal>.db)
+std::string ShaderCacheStore(uint32_t metal_version);
+std::string ShaderCacheFile(uint32_t metal_version);
 
 // what SM50Initialize reports of a shader, which a pipeline reads before any of its functions is converted
 struct ShaderReflection {

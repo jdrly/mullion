@@ -5,7 +5,7 @@ the converted-shader cache's key: [ADR 0003](adr/0003-shader-cache-keyed-on-code
 
 | Cache | Where | Key | Starts cold when |
 |---|---|---|---|
-| Converted shaders | `<user cache>/mullion/<exe>/shaders_<metal>.db` (SQLite, WAL), table `cache_<tag>` | SHA-1 of the codegen id, the macOS build, the device's `registryID`, the function name, the shaders' digests and every compile argument (`CompileFunction`, `src/d3d12/d3d12_pipeline_graphics.cpp`) | The codegen id changes, or the macOS build |
+| Converted shaders | `<user cache>/mullion/<exe>/shaders_<metal>.v<tag in decimal>.db` (SQLite, WAL), table `cache_<tag>`: one file per identity since upstream batch 3 (upstream's `0643542`) | SHA-1 of the codegen id, the macOS build, the device's `registryID`, the function name, the shaders' digests and every compile argument (`CompileFunction`, `src/d3d12/d3d12_pipeline_graphics.cpp`) | The codegen id changes, or the macOS build |
 | Pipeline archives | `pipelines_<metal>_<tag>_<n>.metallib` beside it (`MTLBinaryArchive`, `src/d3d12/d3d12_device.cpp`) | Metal's own, by the function's content; the name keeps one identity's shards together | The same |
 | A game's pipeline library | The game's file (`ID3D12PipelineLibrary`) | Its header's version is the tag's low 32 bits; its shaders are stored under the keys above | The same: another tag's library fails to load with `D3D12_ERROR_DRIVER_VERSION_MISMATCH`, and the game builds a new one |
 
@@ -39,16 +39,21 @@ The build checks itself: `.github/swtor/check-build.py` computes the id again fr
 
 Once per process, Metal version and DLL, at the first pipeline (or just before the session header, which opens it):
 
-1. Under the writers' lock (`<file>-lock`), the bridge makes this tag's table, drops every other `cache_*` table in one
-   transaction, and counts this table's rows (`WMTCachePrepare`, `src/winemetal/unix/cache_prepare.h`). Every writer
-   takes that lock for each write, so nothing is written during the count.
+1. Under the writers' lock (`<file>-lock`), the bridge makes this tag's table in this identity's file, drops every
+   other `cache_*` table there in one transaction (a file of one identity has none), and counts this table's rows
+   (`WMTCachePrepare`, `src/winemetal/unix/cache_prepare.h`). Every writer takes that lock for each write, so nothing
+   is written during the count.
 2. It removes the archives of this Metal version whose names don't carry this tag, those of upstream's naming
    (`pipelines_<metal>_<n>.metallib`) included.
+3. It removes the files of this Metal version's other identities, `shaders_<metal>.*` but this identity's, with their
+   journals and locks, the single file of the fork's builds before upstream batch 3 (`shaders_<metal>.db`) among them,
+   and counts their `cache_*` tables and their bytes. Upstream's writer would remove the same files when it opens, not
+   counting them; it finds none left.
 3. The driver writes one line: `Mullion: cacheOpen shaders= codegen= build= entries= sizeMiB= droppedTables=
    droppedShards= droppedMiB=` (docs/swtor/README.md § Log lines).
 
-A dropped table's pages stay in the file, free, and new entries fill them: the file doesn't shrink, and doesn't grow
-until the new table is larger than the old one. Dropping a table reads it once, on the first start after an update.
+An old identity's file is removed whole, so the cache shrinks to the new identity's entries. A process that still has
+the old file open (an older build running beside the new one) keeps it until it ends.
 
 A stored shader Metal refuses is deleted and converted again, as before; the `STATS` line's `CACHE rejected=` section
 counts them.
@@ -59,5 +64,5 @@ A build whose `VERSION` codegen line differs from the build before:
 
 > The first start after this update compiles shaders again, and takes longer. The starts after it don't.
 
-A macOS update does the same without a new build. The `cacheOpen` line of that first start shows `entries=0` and the
-old table in `droppedTables`.
+A macOS update does the same without a new build. The `cacheOpen` line of that first start shows `entries=0`, the old
+file's tables in `droppedTables` and its size in `droppedMiB`.

@@ -1,0 +1,12 @@
+# this identity's own file is removed with the other versions'
+--- a/src/winemetal/unix/cache_prepare.h
++++ b/src/winemetal/unix/cache_prepare.h
+@@ -114,7 +114,7 @@
+     for (struct dirent *entry; (entry = readdir(dir));) {
+       const char *name = entry->d_name;
+       size_t length = strlen(name);
+-      if (strncmp(name, stem, stem_length) || !strncmp(name, kept, kept_length))
++      if (strncmp(name, stem, stem_length))
+         continue;
+       char *file = sqlite3_mprintf("%s/%s", directory, name);
+       struct stat st;
