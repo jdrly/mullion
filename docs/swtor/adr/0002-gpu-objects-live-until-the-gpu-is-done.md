@@ -88,3 +88,10 @@ fork's `d3d12_allocator_reset_in_flight` (it asserted the wait itself), replaced
 name. Upstream's `ERR` line for every such `Reset` is replaced by a line the first time each allocator is reset in
 flight, `MULLION-RESET-IN-FLIGHT`, and a `STATS` section `RESETINFLIGHT` ([README](../README.md) § Log lines), so
 that a game that resets a frame early doesn't write a line every frame.
+
+The same batch moves four of the objects listed under Context onto the path (upstream's `8fabf33`): shader-visible
+descriptor heaps and sampler heaps, a root signature's static samplers' buffer, and a stream output query heap's
+results now end through `EndAfterWorkInFlight`. `d3d12_heap_release_in_flight` tests the two heaps; the root
+signature's and the query heap's release have no test. Still released at once, as read at the batch's merge: the
+Metal pipeline, and the results buffer of a query heap of another type (`~MTLD3D12QueryHeapImpl` keeps only stream
+output's; what a recorded pass binds of the others is not read here).

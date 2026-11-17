@@ -35,6 +35,10 @@ longer serves a stale shader.
 The build checks itself: `.github/swtor/check-build.py` computes the id again from the checkout and requires it in
 `d3d11.dll`, `d3d12core.dll` and `VERSION` (docs/swtor/README.md § CI).
 
+Since upstream batch 3 the file also holds a shader's stored reflection (upstream's `91e65c8`), a DXIL library's list of
+ray tracing shaders and a ray tracing shader's conversion (`72f0ca7`, `9139ade`). Their keys don't hash the codegen id
+as a converted function's does: they are one identity's because the file and its table are.
+
 ## When the cache opens
 
 Once per process, Metal version and DLL, at the first pipeline (or just before the session header, which opens it):
