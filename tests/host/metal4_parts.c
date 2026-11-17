@@ -20,6 +20,9 @@
 #include <stdlib.h>
 #include <string.h>
 #include <unistd.h>
+#include <time.h>
+#include <mach/mach.h>
+#include <mach/mach_time.h>
 #define WINEMETAL_API
 #include "winemetal_thunks.h"
 
@@ -73,6 +76,9 @@ static NSString *const kSource = @"#include <metal_stdlib>\n"
                                   "kernel void probe(device ulong *out [[buffer(0)]], device ulong *slot [[buffer(3)]]) {\n"
                                   "  out[0] = reinterpret_cast<ulong>(slot);\n"
                                   "  out[1] = slot != nullptr ? 1 : 0;\n"
+                                  "}\n"
+                                  "kernel void bench(device uint *out [[buffer(0)]], uint i [[thread_position_in_grid]]) {\n"
+                                  "  if (i == 0xffffffffu) out[0] = 1;\n"
                                   "}\n";
 
 static id<MTLDevice> device;
@@ -233,8 +239,149 @@ round_of(bool reuse, unsigned round, id pooled, id *first_table, id *second_tabl
   release(b);
 }
 
+// --bench [buffers]: not a test. The bridge's own cost of a Metal 4 command buffer, switch off and on, in eight
+// alternating rounds (off first) of `buffers` command buffers each (default 2000, the first 200 of each round not
+// counted). Each buffer has one compute pass of 64 dispatches, each after binding the same 8 buffers and 8 textures,
+// as a draw-heavy pass binds the same few objects again, and at most 3 are in flight: the oldest is waited for and
+// released, as the queue's completion thread does. Prints, per round, the caller's thread CPU time per buffer and
+// the wall time of each step, in us, and the process's footprint at the round's end.
+static double
+us(uint64_t ticks) {
+  static mach_timebase_info_data_t base;
+  if (!base.denom)
+    mach_timebase_info(&base);
+  return (double)ticks * base.numer / base.denom / 1000.0;
+}
+
+static double
+thread_us(void) {
+  struct timespec t;
+  clock_gettime(CLOCK_THREAD_CPUTIME_ID, &t);
+  return t.tv_sec * 1e6 + t.tv_nsec / 1e3;
+}
+
+static double
+footprint_mib(void) {
+  task_vm_info_data_t info;
+  mach_msg_type_number_t count = TASK_VM_INFO_COUNT;
+  if (task_info(mach_task_self(), TASK_VM_INFO, (task_info_t)&info, &count) != KERN_SUCCESS)
+    return -1;
+  return info.phys_footprint / 1048576.0;
+}
+
+static int
+bench(id<MTLComputePipelineState> kernel, unsigned buffers) {
+  enum { kDispatches = 64, kBinds = 8, kInFlight = 3, kWarmup = 200 };
+  id<MTLBuffer> objects[kBinds];
+  id<MTLTexture> textures[kBinds];
+  MTLTextureDescriptor *td = [MTLTextureDescriptor texture2DDescriptorWithPixelFormat:MTLPixelFormatRGBA8Unorm
+                                                                                width:16
+                                                                               height:16
+                                                                            mipmapped:NO];
+  for (unsigned i = 0; i < kBinds; i++) {
+    objects[i] = [device newBufferWithLength:4096 options:MTLResourceStorageModeShared];
+    textures[i] = [device newTextureWithDescriptor:td];
+  }
+  // the pass's commands, linked in order
+  static struct wmtcmd_compute_setpso pipeline;
+  static struct wmtcmd_compute_setbuffer binds[kDispatches][kBinds];
+  static struct wmtcmd_compute_settexture views[kDispatches][kBinds];
+  static struct wmtcmd_compute_dispatch dispatches[kDispatches];
+  pipeline = (struct wmtcmd_compute_setpso){
+      .type = WMTComputeCommandSetPSO, .pso = (obj_handle_t)kernel, .threadgroup_size = {32, 1, 1}
+  };
+  struct wmtcmd_base *last = (struct wmtcmd_base *)&pipeline;
+  for (unsigned d = 0; d < kDispatches; d++) {
+    for (unsigned i = 0; i < kBinds; i++) {
+      binds[d][i] = (struct wmtcmd_compute_setbuffer){
+          .type = WMTComputeCommandSetBuffer, .buffer = (obj_handle_t)objects[i], .offset = 0, .index = i
+      };
+      WMT_MEMPTR_SET(last->next, &binds[d][i]);
+      last = (struct wmtcmd_base *)&binds[d][i];
+    }
+    for (unsigned i = 0; i < kBinds; i++) {
+      views[d][i] = (struct wmtcmd_compute_settexture){
+          .type = WMTComputeCommandSetTexture, .texture = (obj_handle_t)textures[i], .index = i
+      };
+      WMT_MEMPTR_SET(last->next, &views[d][i]);
+      last = (struct wmtcmd_base *)&views[d][i];
+    }
+    dispatches[d] = (struct wmtcmd_compute_dispatch){.type = WMTComputeCommandDispatchThreads, .size = {32, 1, 1}};
+    WMT_MEMPTR_SET(last->next, &dispatches[d]);
+    last = (struct wmtcmd_base *)&dispatches[d];
+  }
+  printf("bench: %u command buffers a round, %d dispatches of %d buffer and %d texture binds each, %d in flight\n",
+         buffers, kDispatches, kBinds, kBinds, kInFlight);
+  printf("round reuse cpu/cb  new  encode  commit  wait  release  dealloc-here  footprintMiB\n");
+  for (unsigned round = 0; round < 8; round++) {
+    bool reuse = round & 1;
+    obj_handle_t ring[kInFlight] = {0};
+    double sum[5] = {0}, cpu = 0;
+    unsigned counted = 0, here = 0;
+    for (unsigned n = 0; n < buffers + kWarmup + kInFlight; n++) {
+      @autoreleasepool {
+        bool count = n >= kWarmup && n < kWarmup + buffers;
+        double c0 = thread_us();
+        uint64_t t[7];
+        t[0] = mach_absolute_time();
+        obj_handle_t buffer = 0;
+        if (n < buffers + kWarmup) {
+          struct unixcall_metal4_new p = {
+              .queue = (obj_handle_t)queue, .fence = (obj_handle_t)fence, .event = (obj_handle_t)event,
+              .residency = (obj_handle_t)global, .value = ++value, .bindings = kBindings, .reuse_parts = reuse
+          };
+          call(WMTUnixMetal4NewBuffer, &p);
+          buffer = p.ret;
+          t[1] = mach_absolute_time();
+          struct unixcall_metal4_encoder e = {.buffer = buffer, .kind = WMTMetal4Compute};
+          call(WMTUnixMetal4Encoder, &e);
+          struct unixcall_metal4_commands c = {.encoder = e.ret, .kind = WMTMetal4Compute};
+          WMT_MEMPTR_SET(c.head, &pipeline);
+          call(WMTUnixMetal4Commands, &c);
+          struct unixcall_generic_obj_uint64_noret end = {e.ret, 0};
+          call(WMTUnixMetal4EndEncoder, &end);
+          t[2] = mach_absolute_time();
+          call(WMTUnixMetal4Commit, &buffer);
+          t[3] = mach_absolute_time();
+        } else {
+          t[1] = t[2] = t[3] = t[0];
+        }
+        obj_handle_t oldest = ring[n % kInFlight];
+        ring[n % kInFlight] = buffer;
+        t[4] = t[5] = t[3];
+        if (oldest) {
+          call(WMTUnixMetal4Wait, &oldest);
+          t[4] = mach_absolute_time();
+          id weak = nil;
+          objc_initWeak(&weak, (id)oldest);
+          uint64_t r0 = mach_absolute_time();
+          [(id)oldest release];
+          t[5] = t[4] + (mach_absolute_time() - r0);
+          id strong = objc_loadWeakRetained(&weak);
+          if (count && !strong)
+            here++;
+          [strong release];
+          objc_destroyWeak(&weak);
+        }
+        double c1 = thread_us();
+        if (count) {
+          counted++;
+          for (unsigned i = 0; i < 5; i++)
+            sum[i] += us(t[i + 1] - t[i]);
+          // the wait blocks without CPU; the weak reference's own calls are left in, on both sides alike
+          cpu += c1 - c0;
+        }
+      }
+    }
+    printf("%5u %5d %6.2f %5.2f %7.2f %7.2f %5.1f %8.2f %8u/%u %10.1f\n", round + 1, reuse, cpu / counted,
+           sum[0] / counted, sum[1] / counted, sum[2] / counted, sum[3] / counted, sum[4] / counted, here, counted,
+           footprint_mib());
+  }
+  return 0;
+}
+
 int
-main(void) {
+main(int argc, char **argv) {
   @autoreleasepool {
     if (@available(macOS 26.0, *)) {
       device = MTLCreateSystemDefaultDevice();
@@ -274,6 +421,19 @@ main(void) {
     if (!queue || !fence || !event || !global || !out) {
       printf("setup failed\n");
       return 1;
+    }
+    if (argc > 1 && !strcmp(argv[1], "--bench")) {
+      MTLComputePipelineDescriptor *bd = [[[MTLComputePipelineDescriptor alloc] init] autorelease];
+      bd.computeFunction = [[library newFunctionWithName:@"bench"] autorelease];
+      id<MTLComputePipelineState> kernel = [device newComputePipelineStateWithDescriptor:bd
+                                                                                 options:MTLPipelineOptionNone
+                                                                              reflection:nil
+                                                                                   error:&error];
+      if (!kernel) {
+        printf("pipeline: %s\n", error.description.UTF8String);
+        return 1;
+      }
+      return bench(kernel, argc > 2 ? (unsigned)atoi(argv[2]) : 2000);
     }
     // on: the second buffer takes the first one's parts, and leaves them in the pool. off: neither buffer takes
     // them, and neither leaves its own, so that on again takes the first round's
