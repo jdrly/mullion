@@ -1,0 +1,18 @@
+diff --git a/src/util/thread.hpp b/src/util/thread.hpp
+index 660d42d..038f335 100644
+--- a/src/util/thread.hpp
++++ b/src/util/thread.hpp
+@@ -291,10 +291,9 @@ public:
+   bool wait_until(std::unique_lock<mullion::mutex> &lock,
+                   const std::chrono::time_point<Clock, Duration> &time,
+                   Predicate pred) {
+-    while (!pred())
+-      if (wait_until(lock, time) == std::cv_status::timeout)
+-        return pred();
+-    return true;
++    if (!pred())
++      wait_until(lock, time);
++    return pred();
+   }
+ 
+   template <typename Rep, typename Period>

@@ -1,0 +1,17 @@
+diff --git a/src/util/thread.hpp b/src/util/thread.hpp
+index 660d42d..b94b956 100644
+--- a/src/util/thread.hpp
++++ b/src/util/thread.hpp
+@@ -312,8 +312,10 @@ public:
+   bool wait_for(std::unique_lock<mullion::mutex> &lock,
+                 const std::chrono::duration<Rep, Period> &timeout,
+                 Predicate pred) {
+-    // jdrly/mullion: a wakeup with the predicate still false is no timeout: until the time is up, as std's
+-    return wait_until(lock, std::chrono::steady_clock::now() + timeout, pred);
++    bool result = pred();
++    if (!result && wait_for(lock, timeout) == std::cv_status::no_timeout)
++      result = pred();
++    return result;
+   }
+ 
+   native_handle_type native_handle() { return &m_cond; }

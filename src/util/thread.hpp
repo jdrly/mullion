@@ -273,24 +273,28 @@ public:
       wait(lock);
   }
 
+  // jdrly/mullion: the time left, not its negative, and a timeout only once the time has come, as std's: Wine's
+  // SleepConditionVariableSRW can return before it, either way, with nothing notified (private ticket 55)
   template <typename Clock, typename Duration>
   std::cv_status
   wait_until(std::unique_lock<mullion::mutex> &lock,
              const std::chrono::time_point<Clock, Duration> &time) {
     auto now = Clock::now();
 
-    return (now < time) ? wait_for(lock, now - time) : std::cv_status::timeout;
+    if (now < time)
+      wait_for(lock, std::chrono::ceil<std::chrono::milliseconds>(time - now));
+    return Clock::now() < time ? std::cv_status::no_timeout : std::cv_status::timeout;
   }
 
+  // jdrly/mullion: waits again after each wakeup with the predicate still false, until the time has come
   template <typename Clock, typename Duration, typename Predicate>
   bool wait_until(std::unique_lock<mullion::mutex> &lock,
                   const std::chrono::time_point<Clock, Duration> &time,
                   Predicate pred) {
-    if (pred())
-      return true;
-
-    auto now = Clock::now();
-    return now < time && wait_for(lock, now - time, pred);
+    while (!pred())
+      if (wait_until(lock, time) == std::cv_status::timeout)
+        return pred();
+    return true;
   }
 
   template <typename Rep, typename Period>
@@ -308,12 +312,8 @@ public:
   bool wait_for(std::unique_lock<mullion::mutex> &lock,
                 const std::chrono::duration<Rep, Period> &timeout,
                 Predicate pred) {
-    bool result = pred();
-
-    if (!result && wait_for(lock, timeout) == std::cv_status::no_timeout)
-      result = pred();
-
-    return result;
+    // jdrly/mullion: a wakeup with the predicate still false is no timeout: until the time is up, as std's
+    return wait_until(lock, std::chrono::steady_clock::now() + timeout, pred);
   }
 
   native_handle_type native_handle() { return &m_cond; }
