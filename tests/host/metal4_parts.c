@@ -134,6 +134,14 @@ compute_table(obj_handle_t buffer) {
   return tables[4]; // Metal4ComputeBinding, after the vertex, fragment, object and mesh stages
 }
 
+// the compute stage's count of buffer slots a bridge command buffer's passes bound, which its dealloc clears below
+static unsigned
+compute_buffers_set(obj_handle_t buffer) {
+  id object = (id)buffer;
+  Ivar ivar = class_getInstanceVariable(object_getClass(object), "buffers_set");
+  return ivar ? ((unsigned *)((char *)object + ivar_getOffset(ivar)))[4] : 0;
+}
+
 // a command buffer of one compute pass with its output at `slot_out` (16 bytes each): with a function table, `caller`
 // with the table bound at slot 3; without, `pso`, with no buffer bound there when `null` asks for that. Committed and
 // completed
@@ -267,6 +275,9 @@ round_of(bool reuse, unsigned round, id pooled, id *first_table, id *second_tabl
   // held, so that no other table can get its address
   id held = *first_table = [compute_table(a) retain];
   expect(held != nil, "the first buffer has a compute table");
+  // what the dealloc's clear stands on, and the one check validation's run has of the slot
+  printf("     compute slots counted: %u\n", compute_buffers_set(a));
+  expect(compute_buffers_set(a) >= 4, "the function table's slot 3 is counted for the clear");
   if (pooled)
     expect((held == pooled) == reuse, reuse ? "the first buffer has the pool's last compute table"
                                             : "the first buffer has a compute table of its own, not the pool's");
