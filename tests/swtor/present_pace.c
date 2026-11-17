@@ -5,6 +5,10 @@
  *   x86_64-w64-mingw32-gcc -O1 -Wall -o present_pace.exe present_pace.c -ld3d12 -ldxgi
  *   present_pace.exe [seconds=15] [latency=2] [interval=0]
  *
+ * `seconds` counts from the first frame: the window, the device and the swap chain are made before it, so every run gets
+ * the same time presenting. `latency` is clamped to 1 to 3, the back buffers' count: a frame's allocator is reset only
+ * after the fence of the frame that last used it is reached.
+ *
  * Each frame: wait in 2 ms slices until the fence of frame n - latency is reached, clear a 1280x720 back buffer, execute,
  * Signal(fence, n), Present(interval, 0), as fast as the interval lets it. Output:
  *   PACE start seconds=<s> latency=<n> interval=<n>
@@ -49,9 +53,12 @@ main(int argc, char **argv) {
   setvbuf(stdout, NULL, _IONBF, 0);
   double seconds = argc > 1 ? atof(argv[1]) : 15;
   UINT64 latency = argc > 2 ? _strtoui64(argv[2], NULL, 10) : 2;
+  if (latency < 1)
+    latency = 1;
+  if (latency > NBUF)
+    latency = NBUF;
   UINT interval = argc > 3 ? (UINT)atoi(argv[3]) : 0;
   QueryPerformanceFrequency(&qf);
-  QueryPerformanceCounter(&q0);
 
   WNDCLASSW wc = {0};
   wc.lpfnWndProc = wndproc;
@@ -110,6 +117,8 @@ main(int argc, char **argv) {
   CHECK(ID3D12Device_CreateFence(dev, 0, D3D12_FENCE_FLAG_NONE, &IID_ID3D12Fence, (void **)&fence));
   HANDLE event = CreateEventW(NULL, FALSE, FALSE, NULL);
   printf("PACE start seconds=%.0f latency=%llu interval=%u\n", seconds, (unsigned long long)latency, interval);
+  // the measured time starts here, after the setup
+  QueryPerformanceCounter(&q0);
 
   UINT64 n = 0;
   long total = 0, second_frames = 0, second = 0;
