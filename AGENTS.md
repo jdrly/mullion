@@ -12,8 +12,9 @@ Wars: The Old Republic on Apple Silicon through Wine. AI agents write its change
   decide.
 - **The fork fixes obvious defects in upstream's code itself** (my decision of 2026-11-15), editing upstream's files
   as narrowly as it can, through the fork's own pull request. Such a fix goes nowhere upstream either. Obvious means
-  the code is plainly wrong: a read Metal's validation calls invalid, undefined behaviour, code that contradicts its
-  own comment and callers ([ADR 0001](docs/swtor/adr/0001-switches.md)'s no-switch case). No checkout has a remote that can push there: `gh repo clone` adds `upstream`, so remove it.
+  the code is plainly wrong: a read Metal's validation calls invalid, once its control has run
+  ([ADR 0006](docs/swtor/adr/0006-a-validation-finding-needs-a-control.md)), undefined behaviour, code that
+  contradicts its own comment and callers ([ADR 0001](docs/swtor/adr/0001-switches.md)'s no-switch case). No checkout has a remote that can push there: `gh repo clone` adds `upstream`, so remove it.
 - Every `gh` command names the fork: `--repo jdrly/mullion`, and `--base swtor-on-mac` for `gh pr create`. Without
   them `gh` in a fork picks the upstream repository.
 - Mark every AI-written commit as such in its body.
