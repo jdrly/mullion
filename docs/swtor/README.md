@@ -4,7 +4,18 @@ Every `MULLION_*` switch this fork adds or changes, and every log line it writes
 a switch or a log line updates this file in the same pull request. Upstream's own variables are in
 [DEBUGGING.md](../DEBUGGING.md), [tracing.md](../tracing.md) and [`mullion.conf`](../../mullion.conf).
 
-How a switch is declared: [ADR 0001](adr/0001-switches.md).
+How a switch is declared: [ADR 0001](adr/0001-switches.md). The fork's other decisions, in [`adr/`](adr/):
+
+- [ADR 0002](adr/0002-gpu-objects-live-until-the-gpu-is-done.md): a GPU object lives until the GPU is done with the
+  work that uses it.
+- [ADR 0003](adr/0003-shader-cache-keyed-on-codegen.md): the shader cache is keyed on a codegen id and the macOS
+  build.
+- [ADR 0004](adr/0004-the-drawable-is-taken-off-the-commit-path.md): a Direct3D 12 present takes its drawable off the
+  queue's commit path, and why `MULLION_PRESENT_THREAD` is on by default.
+- [ADR 0005](adr/0005-the-fork-fixes-upstreams-defects-itself.md): the fork fixes upstream's defects itself, and
+  nothing goes upstream.
+- [ADR 0006](adr/0006-a-validation-finding-needs-a-control.md): a report from Metal's validation is a defect only
+  after its control.
 
 ## Switches
 
@@ -516,7 +527,8 @@ switch away from the game window's Space, macOS holds the layer's drawables for 
 line](#the-nextdrawable-line)). A present that asks for one on the commit thread holds up every command buffer and
 fence behind it, and SWTOR's DX12 client takes the late fence for a hung GPU. Nothing decided before the call avoids
 it: under Wine the call that blocks starts 9–10 ms before AppKit says the window was hidden (M1, macOS 27.0, six
-switches), which is why a visibility gate (private ticket 36) didn't help.
+switches), which is why a visibility gate (private ticket 36) didn't help
+([ADR 0004](adr/0004-the-drawable-is-taken-off-the-commit-path.md)).
 
 What it does:
 

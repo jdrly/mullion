@@ -185,8 +185,9 @@ after a gate run makes another candidate, and the gate runs again on it. How it 
 
 The fork fixes obvious defects in upstream's code itself, in its own pull requests, and nothing of it goes upstream:
 no issue, pull request, comment or finding in `dttdrv/mullion` (my decision of 2026-11-15). Obvious means the code is
-plainly wrong: a read Metal's validation calls invalid, undefined behaviour, code that contradicts its own comment
-and callers. Such a fix needs no switch ([ADR 0001](adr/0001-switches.md)), edits upstream's files as narrowly as it
+plainly wrong: a read Metal's validation calls invalid, once its control has run
+([ADR 0006](adr/0006-a-validation-finding-needs-a-control.md)), undefined behaviour, code that contradicts its own
+comment and callers. Such a fix needs no switch ([ADR 0001](adr/0001-switches.md)), edits upstream's files as narrowly as it
 can, and is marked in the code (`jdrly/mullion:`) so a batch's reader sees whose line it is. Batches stay as above:
 merge commits, each read before it is merged; a conflict on a fixed line follows § 4.
 

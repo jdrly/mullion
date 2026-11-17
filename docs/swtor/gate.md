@@ -8,7 +8,8 @@ family, on the maintainer's M5 Max.
 Max (`--family native,9`, not run yet). Green means: every control fails its test, and the run differs from the
 family's known list ([`tests/swtor/known-m1.txt`](../../tests/swtor/known-m1.txt)) in nothing, or every difference is
 explained in the pull request that ships. Upstream's batches go through it as [upstream.md § 7](upstream.md#7-the-gate)
-says. A switch turns on by default only when its tests passed here with their control.
+says. A switch turns on by default only when its tests passed here with their control, unless the off state is the
+defect itself (ADR 0001's reasoning, scoped in [ADR 0004](adr/0004-the-drawable-is-taken-off-the-commit-path.md)).
 
 ## 1. How it runs
 
