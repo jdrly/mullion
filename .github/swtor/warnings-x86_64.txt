@@ -150,4 +150,5 @@ src/d3d12/d3d12_pipeline_graphics.cpp: warning: conditional expression between d
 src/d3d12/d3d12_pipeline_graphics.cpp: warning: unused variable 'VS' [-Wunused-variable]
 src/d3d12/d3d12_sampler.cpp: warning: case value not in enumerated type 'D3D12_STATIC_BORDER_COLOR' (aka 'enum D3D12_STATIC_BORDER_COLOR') [-Wswitch]
 src/winemetal/unix/winemetal_unix.c: warning: enumeration value 'SM50_SHADER_LIBRARIES' not handled in switch [-Wswitch]
+src/winemetal/unix/winemetal_unix.c: warning: local declaration of 'parts' hides instance variable [-Wshadow-ivar]
 src/winemetal/unix/winemetal_unix.c: warning: missing field 'ret' initializer [-Wmissing-field-initializers]

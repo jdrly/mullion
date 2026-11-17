@@ -1,0 +1,12 @@
+# off still takes parts from the pool
+--- a/src/winemetal/unix/winemetal_unix.c
++++ b/src/winemetal/unix/winemetal_unix.c
+@@ -6108,7 +6108,7 @@
+     state->feedback_ready = dispatch_group_create();
+     state->reuse_parts = p->reuse_parts;
+     MullionMetal4Parts *parts = nil;
+-    if (state->reuse_parts) {
++    if (true) {
+       NSMutableArray *parts_pool = metal4_parts(state->queue);
+       @synchronized(parts_pool) {
+         parts = [[parts_pool lastObject] retain];

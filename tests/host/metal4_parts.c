@@ -1,0 +1,545 @@
+// jdrly/mullion: what a Metal 4 command buffer leaves for the next ones of its queue (MULLION_METAL4_REUSE_PARTS,
+// upstream's 0fedd37, private ticket 54), through the bridge's own unix calls (src/winemetal/unix/winemetal_unix.c,
+// built into this program), on the machine's GPU and without Wine.
+//
+// A compute pass binds a visible function table at buffer slot 3 of its argument table, which only
+// WMTComputeCommandSetVisibleFunctionTable writes, and nothing at slots 1 and 2, and calls through it. Its command
+// buffer completes and is released, and so is the function table. The next command buffer of the queue takes that
+// buffer's argument table from the pool, and its pass reads slot 3 without binding it, as a buffer's address: its 64
+// bits, never dereferenced. A new table holds 0 there; a pooled one must too, or the slot still names the released
+// function table, which the new buffer doesn't keep resident: such a slot reads the table's resource ID. Under
+// Metal's validation, which refuses any kernel that declares a slot nobody bound, the second pass runs a kernel that
+// declares no slot 3 instead, and validation reports nothing of the slot either way (measured on the M1, private
+// ticket 54's amendment): there the test checks only the bridge's count of the slots its dealloc clears, a structural
+// check. The slot's clearing itself is observed only without validation.
+//
+// Three rounds of that, on, off and on again, with their controls: a kernel calls through the function table in its
+// own pass, so the binding is real; on, the second buffer has the first one's table, so the pool was taken, and the
+// line says so the first time; off, no buffer has a table from the pool (which the first round left parts in) and
+// none leaves its own there, so the third round takes the first one's. Exit 77 (skipped) where the machine has no
+// Metal 4.
+#import <Foundation/Foundation.h>
+#import <Metal/Metal.h>
+#include <objc/runtime.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <unistd.h>
+#include <signal.h>
+#include <time.h>
+#include <sys/resource.h>
+#include <mach/mach.h>
+#include <mach/mach_time.h>
+#define WINEMETAL_API
+#include "winemetal_thunks.h"
+
+typedef int NTSTATUS;
+
+// the runtime's weak references, which a file built without ARC reaches through these
+id objc_initWeak(id *location, id value);
+id objc_loadWeakRetained(id *location);
+void objc_destroyWeak(id *location);
+
+// the three of Wine's ntdll the bridge links against; nothing here reaches them
+NTSTATUS
+NtSetEvent(void *handle, void *prev_state) {
+  abort();
+}
+NTSTATUS
+NtDuplicateObject(
+    void *source_process, void *source, void *dest_process, void **dest, uint32_t access, uint32_t attributes,
+    uint32_t options
+) {
+  abort();
+}
+NTSTATUS
+NtClose(void *handle) {
+  abort();
+}
+
+extern const void *__wine_unix_call_funcs[];
+
+static void
+call(unsigned code, void *params) {
+  NTSTATUS status = ((NTSTATUS (*)(void *))__wine_unix_call_funcs[code])(params);
+  if (status) {
+    printf("unix call %u: 0x%x\n", code, status);
+    exit(1);
+  }
+}
+
+static int failures;
+
+static void
+expect(bool ok, const char *what) {
+  printf("%s %s\n", ok ? "ok  " : "FAIL", what);
+  if (!ok)
+    failures++;
+}
+
+static NSString *const kSource = @"#include <metal_stdlib>\n"
+                                  "using namespace metal;\n"
+                                  "[[visible]] int vf(int x) { return x + 1; }\n"
+                                  "kernel void call(device ulong *out [[buffer(0)]],\n"
+                                  "                 visible_function_table<int(int)> functions [[buffer(3)]]) {\n"
+                                  "  out[0] = ulong(functions[0](41));\n"
+                                  "  out[1] = 1;\n"
+                                  "}\n"
+                                  "kernel void probe(device ulong *out [[buffer(0)]], device ulong *slot [[buffer(3)]]) {\n"
+                                  "  out[0] = reinterpret_cast<ulong>(slot);\n"
+                                  "  out[1] = slot != nullptr ? 1 : 0;\n"
+                                  "}\n"
+                                  "kernel void quiet(device ulong *out [[buffer(0)]]) {\n"
+                                  "  out[0] = 7;\n"
+                                  "  out[1] = 7;\n"
+                                  "}\n"
+                                  "kernel void bench(device uint *out [[buffer(0)]], uint i [[thread_position_in_grid]]) {\n"
+                                  "  if (i == 0xffffffffu) out[0] = 1;\n"
+                                  "}\n";
+
+static id<MTLDevice> device;
+// `caller` calls through a function table at slot 3; `pso` reads slot 3's 64 bits as a buffer's address
+static id<MTLComputePipelineState> pso, caller;
+// under Metal's validation (MTL_DEBUG_LAYER), which refuses every kernel that declares a slot nobody bound: one never
+// written ("was never set"), one setAddress:0 cleared ("cannot be null") and one a function table's ID is left in
+// ("should have been set with setAddress:atIndex:"). the second pass then runs `quiet`, which declares no slot 3, so
+// that the run gets through; it reads nothing of the slot
+static id<MTLComputePipelineState> quiet;
+static bool validated;
+static id<MTLFunction> vf;
+static id<MTL4CommandQueue> queue;
+static id<MTLFence> fence;
+static id<MTLSharedEvent> event;
+static id<MTLResidencySet> global;
+static id<MTLBuffer> out;
+static uint64_t value;
+
+// Direct3D 12's counts (d3d12_command_queue.cpp, NewCommandBuffer)
+static const struct WMTMetal4BindingCounts kBindings = {31, 128, 16};
+
+static id<MTLVisibleFunctionTable>
+new_function_table(void) {
+  MTLVisibleFunctionTableDescriptor *desc = [[[MTLVisibleFunctionTableDescriptor alloc] init] autorelease];
+  desc.functionCount = 1;
+  id<MTLVisibleFunctionTable> table = [caller newVisibleFunctionTableWithDescriptor:desc];
+  [table setFunction:[caller functionHandleWithFunction:vf] atIndex:0];
+  return table;
+}
+
+// the compute argument table a bridge command buffer has, read from its ivars
+static id
+compute_table(obj_handle_t buffer) {
+  id object = (id)buffer;
+  Ivar ivar = class_getInstanceVariable(object_getClass(object), "tables");
+  if (!ivar)
+    return nil;
+  id *tables = (id *)((char *)object + ivar_getOffset(ivar));
+  return tables[4]; // Metal4ComputeBinding, after the vertex, fragment, object and mesh stages
+}
+
+// the compute stage's count of buffer slots a bridge command buffer's passes bound, which its dealloc clears below
+static unsigned
+compute_buffers_set(obj_handle_t buffer) {
+  id object = (id)buffer;
+  Ivar ivar = class_getInstanceVariable(object_getClass(object), "buffers_set");
+  return ivar ? ((unsigned *)((char *)object + ivar_getOffset(ivar)))[4] : 0;
+}
+
+// a command buffer of one compute pass with its output at `slot_out` (16 bytes each): with a function table, `caller`
+// with the table bound at slot 3; without, `pso`, with no buffer bound there when `null` asks for that. Committed and
+// completed
+static obj_handle_t
+run(bool reuse, id<MTLVisibleFunctionTable> table, bool null, unsigned slot_out) {
+  struct unixcall_metal4_new p = {
+      .queue = (obj_handle_t)queue, .fence = (obj_handle_t)fence, .event = (obj_handle_t)event,
+      .residency = (obj_handle_t)global, .value = ++value, .bindings = kBindings, .reuse_parts = reuse
+  };
+  call(WMTUnixMetal4NewBuffer, &p);
+  obj_handle_t buffer = p.ret;
+  struct unixcall_metal4_encoder e = {.buffer = buffer, .kind = WMTMetal4Compute};
+  call(WMTUnixMetal4Encoder, &e);
+  struct wmtcmd_compute_dispatch dispatch = {.type = WMTComputeCommandDispatchThreads, .size = {1, 1, 1}};
+  struct wmtcmd_compute_setvisiblefunctiontable functions = {
+      .type = WMTComputeCommandSetVisibleFunctionTable, .table = (obj_handle_t)table, .index = 3
+  };
+  struct wmtcmd_compute_setbuffer output = {
+      .type = WMTComputeCommandSetBuffer, .buffer = (obj_handle_t)out, .offset = slot_out * 16, .index = 0
+  };
+  struct wmtcmd_compute_setbuffer none = {.type = WMTComputeCommandSetBuffer, .buffer = 0, .index = 3};
+  struct wmtcmd_compute_setpso pipeline = {
+      .type = WMTComputeCommandSetPSO, .pso = (obj_handle_t)(table ? caller : validated ? quiet : pso),
+      .threadgroup_size = {1, 1, 1}
+  };
+  WMT_MEMPTR_SET(pipeline.next, &output);
+  WMT_MEMPTR_SET(output.next, table ? (void *)&functions : null ? (void *)&none : (void *)&dispatch);
+  WMT_MEMPTR_SET(functions.next, &dispatch);
+  WMT_MEMPTR_SET(none.next, &dispatch);
+  struct unixcall_metal4_commands c = {.encoder = e.ret, .kind = WMTMetal4Compute};
+  WMT_MEMPTR_SET(c.head, &pipeline);
+  call(WMTUnixMetal4Commands, &c);
+  struct unixcall_generic_obj_uint64_noret end = {e.ret, 0};
+  call(WMTUnixMetal4EndEncoder, &end);
+  call(WMTUnixMetal4Commit, &buffer);
+  call(WMTUnixMetal4Wait, &buffer);
+  struct unixcall_metal4_feedback f = {.buffer = buffer};
+  call(WMTUnixMetal4Feedback, &f);
+  if (f.ret.status != WMTCommandBufferStatusCompleted) {
+    printf("command buffer status %u\n", f.ret.status);
+    exit(1);
+  }
+  return buffer;
+}
+
+// releases the command buffer and waits until it is gone: Metal's feedback handler may hold it a little longer, and
+// its dealloc is what leaves the parts in the pool
+static void
+release(obj_handle_t buffer) {
+  id weak = nil;
+  objc_initWeak(&weak, (id)buffer);
+  [(id)buffer release];
+  for (unsigned ms = 0;; ms++) {
+    id strong = objc_loadWeakRetained(&weak);
+    [strong release];
+    if (!strong)
+      break;
+    if (ms == 5000) {
+      printf("a command buffer is still alive 5 s after its release\n");
+      exit(1);
+    }
+    usleep(1000);
+  }
+  objc_destroyWeak(&weak);
+}
+
+static const uint64_t *
+reading(unsigned slot_out) {
+  return (const uint64_t *)[out contents] + 2 * slot_out;
+}
+
+// stderr into a file while `block` runs, then the file's text, also written to stderr. An abort meanwhile (Metal's
+// validation ends a process so) writes the file to stderr first, so that its report isn't lost
+static int captured_fd = -1, captured_saved = -1;
+
+static void
+captured_abort(int signal) {
+  char text[4096];
+  ssize_t n;
+  lseek(captured_fd, 0, SEEK_SET);
+  while ((n = read(captured_fd, text, sizeof(text))) > 0)
+    write(captured_saved, text, n);
+  dup2(captured_saved, 2);
+  sigaction(SIGABRT, &(struct sigaction){.sa_handler = SIG_DFL}, NULL);
+  raise(signal);
+}
+
+static NSString *
+captured(void (^block)(void)) {
+  char path[] = "/tmp/metal4_parts.XXXXXX";
+  int fd = mkstemp(path);
+  unlink(path);
+  fflush(stderr);
+  int saved = dup(2);
+  captured_fd = fd, captured_saved = saved;
+  struct sigaction old;
+  sigaction(SIGABRT, &(struct sigaction){.sa_handler = captured_abort}, &old);
+  dup2(fd, 2);
+  block();
+  fflush(stderr);
+  dup2(saved, 2);
+  sigaction(SIGABRT, &old, NULL);
+  NSMutableData *data = [NSMutableData data];
+  char text[4096];
+  ssize_t n;
+  lseek(fd, 0, SEEK_SET);
+  while ((n = read(fd, text, sizeof(text))) > 0)
+    [data appendBytes:text length:n];
+  close(saved);
+  close(fd);
+  NSString *string = [[[NSString alloc] initWithData:data encoding:NSUTF8StringEncoding] autorelease];
+  fputs(string.UTF8String ?: "", stderr);
+  return string ?: @"";
+}
+
+// one round: the first buffer binds a function table and is released with it, then the second reads the slot.
+// `pooled`, when not nil, is the compute table the pool's last parts have; the round's two tables are returned, held
+static void
+round_of(bool reuse, unsigned round, id pooled, id *first_table, id *second_table) {
+  const unsigned first = 2 * round, second = first + 1;
+  printf("round %u: MULLION_METAL4_REUSE_PARTS=%d\n", round + 1, reuse);
+  id<MTLVisibleFunctionTable> table = new_function_table();
+  uint64_t id_bits = table.gpuResourceID._impl;
+  __block obj_handle_t a = 0, b = 0;
+  @autoreleasepool {
+    a = run(reuse, table, false, first);
+  }
+  printf("     function table gpuResourceID 0x%llx; vf(41) through it in its own pass: %lld\n",
+         (unsigned long long)id_bits, (long long)reading(first)[0]);
+  expect(reading(first)[0] == 42 && reading(first)[1] == 1, "a kernel calls through the function table in its own pass");
+  // held, so that no other table can get its address
+  id held = *first_table = [compute_table(a) retain];
+  expect(held != nil, "the first buffer has a compute table");
+  // what the dealloc's clear stands on, and under validation the only check of slot 3: a structural one, which a
+  // dealloc that counts the slot and doesn't clear it would pass (break .4)
+  printf("     compute slots counted: %u\n", compute_buffers_set(a));
+  expect(compute_buffers_set(a) >= 4, "the function table's slot 3 is counted for the clear");
+  if (pooled)
+    expect((held == pooled) == reuse, reuse ? "the first buffer has the pool's last compute table"
+                                            : "the first buffer has a compute table of its own, not the pool's");
+  [table release];
+  release(a);
+  NSString *text = captured(^{
+    @autoreleasepool {
+      // off, its table is a new one, whose slot 3 Metal's validation calls never set when the kernel runs: it is
+      // bound to no buffer, as Direct3D's null descriptor is. on, it reads the slot the first buffer left
+      b = run(reuse, nil, !reuse, second);
+    }
+  });
+  *second_table = [compute_table(b) retain];
+  expect((*second_table == held) == reuse, reuse ? "the second buffer has the first one's compute table"
+                                                 : "the second buffer has a compute table of its own");
+  if (!round)
+    expect([text containsString:@"mullion: metal4 parts=reused\n"], "the line says the parts were reused");
+  if (validated) {
+    expect(reading(second)[0] == 7 && reading(second)[1] == 7, "the second buffer's pass ran, slot 3 not read");
+  } else {
+    printf("     slot 3 in the second buffer's pass 0x%llx\n", (unsigned long long)reading(second)[0]);
+    expect(reading(second)[0] == 0 && reading(second)[1] == 0,
+           "slot 3 holds nothing in the second buffer's pass, as in a new table");
+  }
+  release(b);
+}
+
+// --bench [buffers]: not a test. The bridge's own cost of a Metal 4 command buffer, switch off and on, in eight
+// alternating rounds (off first) of `buffers` command buffers each (default 2000, the first 200 of each round not
+// counted). Each buffer has one compute pass of 64 dispatches, each after binding the same 8 buffers and 8 textures,
+// as a draw-heavy pass binds the same few objects again, and at most 3 are in flight: the oldest is waited for and
+// released, as the queue's completion thread does. Prints, per round and per counted buffer, in us: the process's CPU
+// time (all threads) and the round's wall time, and the wall time of each step of the calling thread; and how often
+// the release ran the buffer's dealloc on the calling thread, and the process's footprint at the round's end.
+static double
+us(uint64_t ticks) {
+  static mach_timebase_info_data_t base;
+  if (!base.denom)
+    mach_timebase_info(&base);
+  return (double)ticks * base.numer / base.denom / 1000.0;
+}
+
+// the process's CPU time, every thread's (Metal's completion and feedback threads too), user and system
+static double
+process_us(void) {
+  struct rusage u;
+  getrusage(RUSAGE_SELF, &u);
+  return (u.ru_utime.tv_sec + u.ru_stime.tv_sec) * 1e6 + u.ru_utime.tv_usec + u.ru_stime.tv_usec;
+}
+
+static double
+footprint_mib(void) {
+  task_vm_info_data_t info;
+  mach_msg_type_number_t count = TASK_VM_INFO_COUNT;
+  if (task_info(mach_task_self(), TASK_VM_INFO, (task_info_t)&info, &count) != KERN_SUCCESS)
+    return -1;
+  return info.phys_footprint / 1048576.0;
+}
+
+static int
+bench(id<MTLComputePipelineState> kernel, unsigned buffers) {
+  enum { kDispatches = 64, kBinds = 8, kInFlight = 3, kWarmup = 200 };
+  id<MTLBuffer> objects[kBinds];
+  id<MTLTexture> textures[kBinds];
+  MTLTextureDescriptor *td = [MTLTextureDescriptor texture2DDescriptorWithPixelFormat:MTLPixelFormatRGBA8Unorm
+                                                                                width:16
+                                                                               height:16
+                                                                            mipmapped:NO];
+  for (unsigned i = 0; i < kBinds; i++) {
+    objects[i] = [device newBufferWithLength:4096 options:MTLResourceStorageModeShared];
+    textures[i] = [device newTextureWithDescriptor:td];
+  }
+  // the pass's commands, linked in order
+  static struct wmtcmd_compute_setpso pipeline;
+  static struct wmtcmd_compute_setbuffer binds[kDispatches][kBinds];
+  static struct wmtcmd_compute_settexture views[kDispatches][kBinds];
+  static struct wmtcmd_compute_dispatch dispatches[kDispatches];
+  pipeline = (struct wmtcmd_compute_setpso){
+      .type = WMTComputeCommandSetPSO, .pso = (obj_handle_t)kernel, .threadgroup_size = {32, 1, 1}
+  };
+  struct wmtcmd_base *last = (struct wmtcmd_base *)&pipeline;
+  for (unsigned d = 0; d < kDispatches; d++) {
+    for (unsigned i = 0; i < kBinds; i++) {
+      binds[d][i] = (struct wmtcmd_compute_setbuffer){
+          .type = WMTComputeCommandSetBuffer, .buffer = (obj_handle_t)objects[i], .offset = 0, .index = i
+      };
+      WMT_MEMPTR_SET(last->next, &binds[d][i]);
+      last = (struct wmtcmd_base *)&binds[d][i];
+    }
+    for (unsigned i = 0; i < kBinds; i++) {
+      views[d][i] = (struct wmtcmd_compute_settexture){
+          .type = WMTComputeCommandSetTexture, .texture = (obj_handle_t)textures[i], .index = i
+      };
+      WMT_MEMPTR_SET(last->next, &views[d][i]);
+      last = (struct wmtcmd_base *)&views[d][i];
+    }
+    dispatches[d] = (struct wmtcmd_compute_dispatch){.type = WMTComputeCommandDispatchThreads, .size = {32, 1, 1}};
+    WMT_MEMPTR_SET(last->next, &dispatches[d]);
+    last = (struct wmtcmd_base *)&dispatches[d];
+  }
+  printf("bench: %u command buffers a round, %d dispatches of %d buffer and %d texture binds each, %d in flight\n",
+         buffers, kDispatches, kBinds, kBinds, kInFlight);
+  printf("round reuse  cpu/cb  wall/cb   new  encode  commit  wait  release  dealloc-here  footprintMiB\n");
+  for (unsigned round = 0; round < 8; round++) {
+    bool reuse = round & 1;
+    obj_handle_t ring[kInFlight] = {0};
+    double sum[5] = {0}, cpu0 = 0, cpu1 = 0;
+    uint64_t wall0 = 0, wall1 = 0;
+    unsigned counted = 0, here = 0;
+    for (unsigned n = 0; n < buffers + kWarmup + kInFlight; n++) {
+      @autoreleasepool {
+        bool count = n >= kWarmup && n < kWarmup + buffers;
+        if (n == kWarmup) {
+          cpu0 = process_us();
+          wall0 = mach_absolute_time();
+        }
+        uint64_t t[7];
+        t[0] = mach_absolute_time();
+        obj_handle_t buffer = 0;
+        if (n < buffers + kWarmup) {
+          struct unixcall_metal4_new p = {
+              .queue = (obj_handle_t)queue, .fence = (obj_handle_t)fence, .event = (obj_handle_t)event,
+              .residency = (obj_handle_t)global, .value = ++value, .bindings = kBindings, .reuse_parts = reuse
+          };
+          call(WMTUnixMetal4NewBuffer, &p);
+          buffer = p.ret;
+          t[1] = mach_absolute_time();
+          struct unixcall_metal4_encoder e = {.buffer = buffer, .kind = WMTMetal4Compute};
+          call(WMTUnixMetal4Encoder, &e);
+          struct unixcall_metal4_commands c = {.encoder = e.ret, .kind = WMTMetal4Compute};
+          WMT_MEMPTR_SET(c.head, &pipeline);
+          call(WMTUnixMetal4Commands, &c);
+          struct unixcall_generic_obj_uint64_noret end = {e.ret, 0};
+          call(WMTUnixMetal4EndEncoder, &end);
+          t[2] = mach_absolute_time();
+          call(WMTUnixMetal4Commit, &buffer);
+          t[3] = mach_absolute_time();
+        } else {
+          t[1] = t[2] = t[3] = t[0];
+        }
+        obj_handle_t oldest = ring[n % kInFlight];
+        ring[n % kInFlight] = buffer;
+        t[4] = t[5] = t[3];
+        if (oldest) {
+          call(WMTUnixMetal4Wait, &oldest);
+          t[4] = mach_absolute_time();
+          id weak = nil;
+          objc_initWeak(&weak, (id)oldest);
+          uint64_t r0 = mach_absolute_time();
+          [(id)oldest release];
+          t[5] = t[4] + (mach_absolute_time() - r0);
+          id strong = objc_loadWeakRetained(&weak);
+          if (count && !strong)
+            here++;
+          [strong release];
+          objc_destroyWeak(&weak);
+        }
+        if (n == kWarmup + buffers - 1) {
+          cpu1 = process_us();
+          wall1 = mach_absolute_time();
+        }
+        if (count) {
+          counted++;
+          for (unsigned i = 0; i < 5; i++)
+            sum[i] += us(t[i + 1] - t[i]);
+        }
+      }
+    }
+    printf("%5u %5d %7.2f %8.2f %5.2f %7.2f %7.2f %5.1f %8.2f %8u/%u %10.1f\n", round + 1, reuse,
+           (cpu1 - cpu0) / counted, us(wall1 - wall0) / counted,
+           sum[0] / counted, sum[1] / counted, sum[2] / counted, sum[3] / counted, sum[4] / counted, here, counted,
+           footprint_mib());
+  }
+  return 0;
+}
+
+int
+main(int argc, char **argv) {
+  @autoreleasepool {
+    if (@available(macOS 26.0, *)) {
+      device = MTLCreateSystemDefaultDevice();
+      if (!device || ![device supportsFamily:MTLGPUFamilyMetal4]) {
+        printf("skipped: no Metal 4 device\n");
+        return 77;
+      }
+    } else {
+      printf("skipped: macOS before 26\n");
+      return 77;
+    }
+    printf("device %s\n", device.name.UTF8String);
+    NSError *error = nil;
+    id<MTLLibrary> library = [device newLibraryWithSource:kSource options:nil error:&error];
+    if (!library) {
+      printf("library: %s\n", error.description.UTF8String);
+      return 1;
+    }
+    vf = [library newFunctionWithName:@"vf"];
+    MTLComputePipelineDescriptor *desc = [[[MTLComputePipelineDescriptor alloc] init] autorelease];
+    desc.computeFunction = [[library newFunctionWithName:@"call"] autorelease];
+    MTLLinkedFunctions *linked = [[[MTLLinkedFunctions alloc] init] autorelease];
+    linked.functions = @[ vf ];
+    desc.linkedFunctions = linked;
+    caller = [device newComputePipelineStateWithDescriptor:desc options:MTLPipelineOptionNone reflection:nil error:&error];
+    MTLComputePipelineDescriptor *reader = [[[MTLComputePipelineDescriptor alloc] init] autorelease];
+    reader.computeFunction = [[library newFunctionWithName:@"probe"] autorelease];
+    if (caller)
+      pso = [device newComputePipelineStateWithDescriptor:reader
+                                                  options:MTLPipelineOptionNone
+                                               reflection:nil
+                                                    error:&error];
+    MTLComputePipelineDescriptor *other = [[[MTLComputePipelineDescriptor alloc] init] autorelease];
+    other.computeFunction = [[library newFunctionWithName:@"quiet"] autorelease];
+    if (pso)
+      quiet = [device newComputePipelineStateWithDescriptor:other
+                                                    options:MTLPipelineOptionNone
+                                                 reflection:nil
+                                                      error:&error];
+    const char *layer = getenv("MTL_DEBUG_LAYER");
+    validated = layer && strcmp(layer, "0");
+    if (validated)
+      printf("under Metal's validation: the second passes don't read slot 3\n");
+    if (!caller || !pso || !quiet) {
+      printf("pipeline: %s\n", error.description.UTF8String);
+      return 1;
+    }
+    queue = [device newMTL4CommandQueue];
+    fence = [device newFence];
+    event = [device newSharedEvent];
+    global = [device newResidencySetWithDescriptor:[[[MTLResidencySetDescriptor alloc] init] autorelease] error:nil];
+    [global commit];
+    out = [device newBufferWithLength:6 * 16 options:MTLResourceStorageModeShared];
+    memset([out contents], 0xab, [out length]);
+    if (!queue || !fence || !event || !global || !out) {
+      printf("setup failed\n");
+      return 1;
+    }
+    if (argc > 1 && !strcmp(argv[1], "--bench")) {
+      MTLComputePipelineDescriptor *bd = [[[MTLComputePipelineDescriptor alloc] init] autorelease];
+      bd.computeFunction = [[library newFunctionWithName:@"bench"] autorelease];
+      id<MTLComputePipelineState> kernel = [device newComputePipelineStateWithDescriptor:bd
+                                                                                 options:MTLPipelineOptionNone
+                                                                              reflection:nil
+                                                                                   error:&error];
+      if (!kernel) {
+        printf("pipeline: %s\n", error.description.UTF8String);
+        return 1;
+      }
+      return bench(kernel, argc > 2 ? (unsigned)atoi(argv[2]) : 2000);
+    }
+    // on: the second buffer takes the first one's parts, and leaves them in the pool. off: neither buffer takes
+    // them, and neither leaves its own, so that on again takes the first round's
+    id tables[6];
+    round_of(true, 0, nil, &tables[0], &tables[1]);
+    round_of(false, 1, tables[1], &tables[2], &tables[3]);
+    round_of(true, 2, tables[1], &tables[4], &tables[5]);
+    for (unsigned i = 0; i < 6; i++)
+      [tables[i] release];
+  }
+  printf("%s\n", failures ? "FAILED" : "passed");
+  return failures ? 1 : 0;
+}

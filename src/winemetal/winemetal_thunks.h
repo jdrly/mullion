@@ -641,7 +641,7 @@ struct unixcall_metal4_new {
   obj_handle_t queue, fence, event, residency;
   uint64_t value;
   struct WMTMetal4BindingCounts bindings;
-  uint32_t padding;
+  uint32_t reuse_parts; // jdrly/mullion: was padding
   obj_handle_t ret;
 };
 struct unixcall_metal4_encoder {

@@ -1,0 +1,12 @@
+# the visible function table's slot isn't counted, so a pooled compute table still names it
+--- a/src/winemetal/unix/winemetal_unix.c
++++ b/src/winemetal/unix/winemetal_unix.c
+@@ -7202,8 +7202,6 @@
+       // jdrly/mullion: a buffer slot, which the buffer's dealloc clears below this count before its tables go to the
+       // pool (setAddress:0 clears a slot setResource wrote: tests/host/metal4_parts.c). uncounted, a pooled table
+       // named this function table in the next buffer, which doesn't keep it (private ticket 54)
+-      state->owner->buffers_set[Metal4ComputeBinding] =
+-          MAX(state->owner->buffers_set[Metal4ComputeBinding], body->index + 1);
+       break;
+     }
+     case WMTComputeCommandWaitForFence: {

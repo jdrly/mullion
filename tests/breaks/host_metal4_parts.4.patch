@@ -1,0 +1,12 @@
+# dealloc gives its tables to the pool without clearing their buffer slots
+--- a/src/winemetal/unix/winemetal_unix.c
++++ b/src/winemetal/unix/winemetal_unix.c
+@@ -5921,8 +5921,6 @@
+   if (parts) {
+     // the next buffer's passes start as with new tables, as a render pass leaves them (MTL4CommandEncoder_endEncoding)
+     for (unsigned stage = 0; stage < Metal4BindingStageCount; stage++) {
+-      for (unsigned i = 0; i < buffers_set[stage]; i++)
+-        [tables[stage] setAddress:0 atIndex:i];
+       for (unsigned i = 0; i < textures_set[stage]; i++)
+         [tables[stage] setTexture:(MTLResourceID){0} atIndex:i];
+       parts->tables[stage] = tables[stage];

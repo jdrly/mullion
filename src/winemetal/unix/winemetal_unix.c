@@ -5784,8 +5784,17 @@ API_AVAILABLE(macos(26.0)) @interface MullionMetal4Buffer : NSObject {
   id<MTL4CommandAllocator> allocator;
   id<MTLSharedEvent> event;
   id<MTLFence> fence;
+  // what the buffer's encoders use is resident through this set and kept by `allocations` until the buffer is done:
+  // Metal 4 keeps nothing a command buffer names, and the device's own set (useResidencySet in MTL4CommandBuffer_new)
+  // has the application's resources alone, not the pipelines, indirect command buffers, visibility and scratch
+  // buffers, drawables' textures and uploaded bytes that passes use beside them. `recent` is the allocations last
+  // asked about, by address: a pass binds the same few for each of its draws
   id<MTLResidencySet> residency;
   NSMutableSet *allocations;
+  id recent[64];
+  // jdrly/mullion: MULLION_METAL4_REUSE_PARTS, as MTL4CommandBuffer_new was given it. off, the buffer takes no parts
+  // from its queue's pool, leaves none there, and asks `allocations` about every object as before 0fedd37
+  bool reuse_parts;
   NSMutableSet *objects;
   id<MTLBuffer> bytes;
   uint64_t bytes_used;
@@ -5844,19 +5853,52 @@ API_AVAILABLE(macos(26.0)) @interface MullionMetal4Encoder : NSObject {
 }
 @end
 
+// what a command buffer the GPU is done with leaves for the queue's next ones: its residency set, emptied, and its
+// argument tables, with nothing bound: a new set took two microseconds and each new table one, where they were
+// measured, of every command buffer of a frame of many submissions
+API_AVAILABLE(macos(26.0)) @interface MullionMetal4Parts : NSObject {
+@public
+  id<MTLResidencySet> residency;
+  id<MTL4ArgumentTable> tables[Metal4BindingStageCount];
+  // what the tables were made for
+  struct WMTMetal4BindingCounts bindings;
+}
+@end
+
+@implementation MullionMetal4Parts
+- (void)dealloc {
+  for (unsigned i = 0; i < Metal4BindingStageCount; i++)
+    [tables[i] release];
+  [residency release];
+  [super dealloc];
+}
+@end
+
+// a queue's pool of what no work holds, one for each `key`
+static NSMutableArray *
+API_AVAILABLE(macos(26.0)) metal4_pool(id<MTL4CommandQueue> queue, const void *key) {
+  @synchronized(queue) {
+    NSMutableArray *pool = objc_getAssociatedObject(queue, key);
+    if (!pool) {
+      pool = [NSMutableArray array];
+      objc_setAssociatedObject(queue, key, pool, OBJC_ASSOCIATION_RETAIN);
+    }
+    return pool;
+  }
+}
+
 // the queue's allocators that no work holds: a new one costs its command buffer tens of microseconds to make, and its
 // commit as long again before the GPU starts it, where a reset one costs neither
 static NSMutableArray *
 API_AVAILABLE(macos(26.0)) metal4_allocators(id<MTL4CommandQueue> queue) {
   static char key;
-  @synchronized(queue) {
-    NSMutableArray *pool = objc_getAssociatedObject(queue, &key);
-    if (!pool) {
-      pool = [NSMutableArray array];
-      objc_setAssociatedObject(queue, &key, pool, OBJC_ASSOCIATION_RETAIN);
-    }
-    return pool;
-  }
+  return metal4_pool(queue, &key);
+}
+
+static NSMutableArray *
+API_AVAILABLE(macos(26.0)) metal4_parts(id<MTL4CommandQueue> queue) {
+  static char key;
+  return metal4_pool(queue, &key);
 }
 
 @implementation MullionMetal4Buffer
@@ -5891,14 +5933,38 @@ API_AVAILABLE(macos(26.0)) metal4_allocators(id<MTL4CommandQueue> queue) {
 }
 - (void)dealloc {
   dispatch_release(feedback_ready);
+  // the GPU is done with the commands once the buffer's feedback came, and never had those of one not committed
+  bool done = finished || feedback.status < WMTCommandBufferStatusCommitted;
+  MullionMetal4Parts *parts = reuse_parts && done && residency ? [[MullionMetal4Parts alloc] init] : nil;
+  if (parts) {
+    // the next buffer's passes start as with new tables, as a render pass leaves them (MTL4CommandEncoder_endEncoding)
+    for (unsigned stage = 0; stage < Metal4BindingStageCount; stage++) {
+      for (unsigned i = 0; i < buffers_set[stage]; i++)
+        [tables[stage] setAddress:0 atIndex:i];
+      for (unsigned i = 0; i < textures_set[stage]; i++)
+        [tables[stage] setTexture:(MTLResourceID){0} atIndex:i];
+      parts->tables[stage] = tables[stage];
+      tables[stage] = nil;
+    }
+    // a set gives its allocations up at its next commit
+    [residency removeAllAllocations];
+    [residency commit];
+    parts->residency = residency;
+    residency = nil;
+    parts->bindings = bindings;
+    NSMutableArray *pool = metal4_parts(queue);
+    @synchronized(pool) {
+      [pool addObject:parts];
+    }
+    [parts release];
+  }
   for (unsigned i = 0; i < Metal4BindingStageCount; i++)
     [tables[i] release];
   [objects release];
   [allocations release];
   [residency release];
   [buffer release];
-  // the GPU is done with the commands once the buffer's feedback came, and never had those of one not committed
-  if (allocator && (finished || feedback.status < WMTCommandBufferStatusCommitted)) {
+  if (allocator && done) {
     [allocator reset];
     NSMutableArray *pool = metal4_allocators(queue);
     @synchronized(pool) {
@@ -5918,7 +5984,14 @@ API_AVAILABLE(macos(26.0)) metal4_allocators(id<MTL4CommandQueue> queue) {
 
 static void
 API_AVAILABLE(macos(26.0)) metal4_resident(MullionMetal4Buffer *state, id<MTLAllocation> resource) {
-  if (resource && ![state->allocations containsObject:resource]) {
+  if (!resource)
+    return;
+  // an object's address is a multiple of 16
+  id *recent = &state->recent[((uintptr_t)resource >> 4) % (sizeof(state->recent) / sizeof(state->recent[0]))];
+  if (state->reuse_parts && *recent == resource)
+    return;
+  *recent = resource;
+  if (![state->allocations containsObject:resource]) {
     [state->allocations addObject:resource];
     [state->residency addAllocation:resource];
   }
@@ -6051,8 +6124,34 @@ _MTL4CommandBuffer_new(void *obj) {
     state->allocations = [[NSMutableSet alloc] init];
     state->objects = [[NSMutableSet alloc] init];
     state->feedback_ready = dispatch_group_create();
-    state->residency =
-        [state->device newResidencySetWithDescriptor:[[[MTLResidencySetDescriptor alloc] init] autorelease] error:nil];
+    state->reuse_parts = p->reuse_parts;
+    MullionMetal4Parts *parts = nil;
+    if (state->reuse_parts) {
+      NSMutableArray *parts_pool = metal4_parts(state->queue);
+      @synchronized(parts_pool) {
+        parts = [[parts_pool lastObject] retain];
+        if (parts)
+          [parts_pool removeLastObject];
+      }
+    }
+    // tables made for other counts go with their set
+    if (parts && !memcmp(&parts->bindings, &state->bindings, sizeof(state->bindings))) {
+      state->residency = parts->residency;
+      parts->residency = nil;
+      for (unsigned i = 0; i < Metal4BindingStageCount; i++) {
+        state->tables[i] = parts->tables[i];
+        parts->tables[i] = nil;
+      }
+      // jdrly/mullion: the first time in the process (docs/swtor/README.md § Log lines)
+      static atomic_flag said = ATOMIC_FLAG_INIT;
+      if (!atomic_flag_test_and_set(&said))
+        fprintf(stderr, "mullion: metal4 parts=reused\n");
+    }
+    [parts release];
+    if (!state->residency)
+      state->residency =
+          [state->device newResidencySetWithDescriptor:[[[MTLResidencySetDescriptor alloc] init] autorelease]
+                                                 error:nil];
     if (!state->buffer || !state->allocator || !state->residency || !state->objects || !state->allocations) {
       [state fail:nil];
       p->ret = (obj_handle_t)state;
@@ -7118,6 +7217,11 @@ API_AVAILABLE(macos(26.0)) metal4_compute(MullionMetal4Encoder *state, const str
       metal4_resident(state->owner, (id<MTLVisibleFunctionTable>)body->table);
       [metal4_table(state, Metal4ComputeBinding) setResource:[(id<MTLVisibleFunctionTable>)body->table gpuResourceID]
                                                atBufferIndex:body->index];
+      // jdrly/mullion: a buffer slot, which the buffer's dealloc clears below this count before its tables go to the
+      // pool (setAddress:0 clears a slot setResource wrote: tests/host/metal4_parts.c). uncounted, a pooled table
+      // named this function table in the next buffer, which doesn't keep it (private ticket 54)
+      state->owner->buffers_set[Metal4ComputeBinding] =
+          MAX(state->owner->buffers_set[Metal4ComputeBinding], body->index + 1);
       break;
     }
     case WMTComputeCommandWaitForFence: {
