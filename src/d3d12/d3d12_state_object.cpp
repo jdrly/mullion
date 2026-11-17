@@ -1096,7 +1096,7 @@ public:
     // and reports what cannot be, and not in the first DispatchRays
     if (!MakePipeline(CallDepth()).pipeline)
       return FAIL(E_FAIL);
-      device_->PipelineMade(name, "ray", start);
+    device_->PipelineMade(name, "ray", start);
     return S_OK;
   }
 
