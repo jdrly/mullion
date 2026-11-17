@@ -982,7 +982,7 @@ private:
       if (inflight.cmdbuf.status() < WMTCommandBufferStatusCommitted) {
         for (auto &allocator : inflight.allocators)
           if (allocator)
-            reset_wait::Completed(allocator->pending, device_->reset_wakes);
+            allocator->pending--;
         if (inflight.semaphore)
           ReleaseSemaphore(inflight.semaphore, 1, nullptr);
         inflight = {};
@@ -1160,7 +1160,7 @@ private:
       }
       for (auto &allocator : inflight.allocators)
         if (allocator)
-          reset_wait::Completed(allocator->pending, device_->reset_wakes);
+          allocator->pending--;
       if (inflight.completed)
         inflight.completed();
       if (inflight.semaphore) {

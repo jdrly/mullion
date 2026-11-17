@@ -19,7 +19,6 @@
 #include "d3d12_command_allocator.hpp"
 #include "com/com_pointer.hpp"
 #include "mullion_diag.hpp"
-#include "util_switch.hpp"
 #include <map>
 #include <bit>
 
@@ -469,41 +468,30 @@ MTLD3D12CommandAllocatorImpl::QueryInterface(REFIID riid, void **ppvObject) {
   return MTLD3D12DeviceChild::QueryInterface(riid, ppvObject);
 }
 
-// jdrly/mullion: a Reset with lists still pending waits for them (docs/swtor/README.md). Read once, at the first such
-// Reset of the process. On since the GPU gate ran d3d12_allocator_reset_in_flight and its break on the rented M1
-// (private ticket 15); `0` is upstream's reset at once
-static sw::Switch<bool> kResetWaits{"MULLION_D3D12_RESET_WAITS", true, sw::notZero};
-
-static bool
-ResetWaits() {
-  static const bool waits = kResetWaits();
-  return waits;
-}
-
-// RESETWAIT after STATS (docs/swtor/README.md): the Resets that waited in the second
-static stats::SectionRegistrar kResetWaitSection{"RESETWAIT", [](double, uint64_t) {
-  static uint64_t waits = 0, ns = 0;
-  return reset_wait::Section(reset_wait::counters, waits, ns);
+// jdrly/mullion: RESETINFLIGHT after STATS (docs/swtor/README.md): the Resets with lists in flight in the second
+static stats::SectionRegistrar kResetInFlightSection{"RESETINFLIGHT", [](double, uint64_t) {
+  static uint64_t resets = 0, lists = 0;
+  return reset_in_flight::Section(reset_in_flight::counters, resets, lists);
 }};
 
+// jdrly/mullion: in place of upstream's ERR line for every such Reset, the allocator's first writes
+// MULLION-RESET-IN-FLIGHT, and each one counts in RESETINFLIGHT (mullion_reset_in_flight.hpp)
 void
-MTLD3D12CommandAllocatorImpl::WaitForLists() {
-  if (!std::exchange(waited_, true)) {
+MTLD3D12CommandAllocatorImpl::ResetInFlight() {
+  auto lists = pending.load();
+  if (!std::exchange(reset_in_flight_, true)) {
     static std::atomic<uint64_t> allocators{0};
     constexpr const char *types[] = {"direct", "bundle", "compute", "copy"};
     SYSTEMTIME time;
     GetLocalTime(&time);
-    reset_wait::First first;
+    reset_in_flight::First first;
     first.at = {time.wHour, time.wMinute, time.wSecond, time.wMilliseconds};
     first.type = unsigned(type_) < std::size(types) ? types[type_] : "other";
-    first.lists = pending.load(), first.frame = PresentsSoFar(), first.allocator = ++allocators;
-    Logger::warn(reset_wait::FirstLine(first));
+    first.lists = lists, first.frame = PresentsSoFar(), first.allocator = ++allocators;
+    Logger::warn(reset_in_flight::FirstLine(first));
   }
-  hitch::Scope waiting(hitch::AllocReset);
-  auto began = stats::on ? hitch::SteadyNs() : 0;
-  reset_wait::Wait(pending, device_->reset_wakes, [this] { return FAILED(device_->RemovedReason()); });
   if (stats::on)
-    reset_wait::counters.Add(hitch::SteadyNs() - began);
+    reset_in_flight::counters.Add(lists);
 }
 
 HRESULT STDMETHODCALLTYPE
@@ -515,7 +503,7 @@ MTLD3D12CommandAllocatorImpl::Reset() {
   // rely on that, so the recording stays for the work the queues have, and the allocator starts again without it:
   // waiting for that work here could wait for a fence this thread is to signal
   if (pending) {
-    ERR("CommandAllocator: Reset while ", pending.load(), " of its submitted lists have not completed");
+    ResetInFlight();
     Retire();
   }
 

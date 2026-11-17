@@ -104,10 +104,9 @@ test('host_memory', executable('host_memory', 'memory.cpp', override_options : [
 test('host_window_lines', executable('host_window_lines', 'window_lines.cpp', override_options : ['cpp_std=c++20'],
                                      native : true),
      args : files('../swtor/fixtures/session.log'), suite : 'host')
-# a command allocator's Reset waiting for its lists (MULLION_D3D12_RESET_WAITS), its MULLION-RESET-WAIT line and its
-# RESETWAIT section
-test('host_reset_wait', executable('host_reset_wait', 'reset_wait.cpp', override_options : ['cpp_std=c++20'],
-                                   dependencies : dependency('threads', native : true), native : true), suite : 'host')
+# a command allocator's Reset with lists in flight: its MULLION-RESET-IN-FLIGHT line and its RESETINFLIGHT section
+test('host_reset_in_flight', executable('host_reset_in_flight', 'reset_in_flight.cpp',
+                                        override_options : ['cpp_std=c++20'], native : true), suite : 'host')
 test('host_rc_self_move', executable('host_rc_self_move', 'rc.cpp',
                                     override_options : ['cpp_std=c++20'], native : true), suite : 'host')
 test('host_denorm', executable('host_denorm', 'denorm.cpp', include_directories : include_directories('metal'),

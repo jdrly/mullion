@@ -206,6 +206,9 @@ none faulted the GPU.
 | `tests/breaks/d3d12_cbv_ranges.patch` | `d3d12_cbv_ranges_{dxil,dxbc}` | `wrong: a view of 512 bytes over 256: v[0] is 0x1, want 0` and a validation assertion | `MULLION_D3D12_CHECK_RANGES` |
 | `tests/breaks/d3d12_root_view_ranges.patch` | `d3d12_root_view_ranges_{dxil,dxbc}` | `failed: 4 wrong results` and `Invalid load … at offset 320` | the same |
 
+- The allocator row is history: since upstream batch 3 (private ticket 51) `d3d12_allocator_reset_in_flight` and its
+  break are upstream's, and `MULLION_D3D12_RESET_WAITS` is gone ([ADR 0002](adr/0002-gpu-objects-live-until-the-gpu-is-done.md),
+  amendment of 2026-11-17).
 - The texture control is the gate's own, not a file of `tests/breaks`: the fork's breaks for
   `MULLION_TEX_MSAA_COMPRESSION` are host tests, and the one that lets `auto` ignore the family gives the M1's own
   answer on Apple7. It leaves the device's field at 0:
