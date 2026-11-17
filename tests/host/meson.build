@@ -155,6 +155,23 @@ test('host_shader_store',
                              '-lsqlite3'],
                 native : true),
      suite : 'host', timeout : 120)
+# jdrly/mullion: what a Metal 4 command buffer leaves for the next ones of its queue (MULLION_METAL4_REUSE_PARTS,
+# private ticket 54), through the bridge's unix calls: the bridge's sources built into the test, which links them as
+# the bridge does, without Wine. it runs on the machine's GPU, and is skipped (77) without Metal 4
+test('host_metal4_parts',
+     executable('host_metal4_parts',
+                ['metal4_parts.c', '../../src/winemetal/unix/winemetal_unix.c', '../../src/winemetal/unix/cache.c',
+                 '../../src/winemetal/unix/layer.c', '../../src/winemetal/unix/window.c'],
+                dependencies : airconv_dep_darwin,
+                include_directories : [mullion_include_path, include_directories('../../src/winemetal')],
+                # the bridge's own warnings are its build's to report
+                c_args : ['-ObjC', '-w'],
+                link_args : ['-weak_framework', 'CoreFoundation', '-weak_framework', 'Metal', '-framework', 'MetalFX',
+                             '-weak_framework', 'Foundation', '-weak_framework', 'CoreGraphics',
+                             '-weak_framework', 'QuartzCore', '-weak_framework', 'ColorSync',
+                             '-weak_framework', 'Cocoa', '-weak_framework', 'IOKit', '-lsqlite3'],
+                native : true),
+     suite : 'host', timeout : 120)
 test('host_diag_profile', find_program('python3', native : true), args : files('diag.py'), suite : 'host')
 test('host_mutate', find_program('python3', native : true), args : files('mutate.py'), suite : 'host')
 test('host_install', find_program('python3', native : true),

@@ -362,6 +362,12 @@ jobs:
               echo "$p left out with host_tessellator"
               continue
             fi
+            # host_metal4_parts runs Metal 4 command buffers, which the runner has no GPU for: it skips here, and
+            # its breaks fail on the rented M1 (private ticket 54)
+            if [[ $test == host_metal4_parts ]]; then
+              echo "$p left out: host_metal4_parts needs Metal 4"
+              continue
+            fi
             if ! git apply "$p"; then
               missed+=("$p: doesn't apply")
               continue

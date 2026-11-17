@@ -1,0 +1,12 @@
+# off still gives its parts to the pool, which then grows without bound
+--- a/src/winemetal/unix/winemetal_unix.c
++++ b/src/winemetal/unix/winemetal_unix.c
+@@ -5917,7 +5917,7 @@
+   dispatch_release(feedback_ready);
+   // the GPU is done with the commands once the buffer's feedback came, and never had those of one not committed
+   bool done = finished || feedback.status < WMTCommandBufferStatusCommitted;
+-  MullionMetal4Parts *parts = reuse_parts && done && residency ? [[MullionMetal4Parts alloc] init] : nil;
++  MullionMetal4Parts *parts = done && residency ? [[MullionMetal4Parts alloc] init] : nil;
+   if (parts) {
+     // the next buffer's passes start as with new tables, as a render pass leaves them (MTL4CommandEncoder_endEncoding)
+     for (unsigned stage = 0; stage < Metal4BindingStageCount; stage++) {
