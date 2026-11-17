@@ -304,7 +304,8 @@ jobs:
           perl -pi -e 's/if \(\@available\(macOS 26\.4, \*\)\) \{/if (\@available(macOS 26.0, *)) {/' "$wm"
           echo '_Static_assert(sizeof(MTL4CopySparseTextureMappingOperation) != 0, "");' >>"$wm"
           [[ $(git diff --numstat -- "$wm") == $'2\t1\t'"$wm" ]] || { echo "::error::the edits of $wm didn't apply"; exit 1; }
-          obj=$(ninja -C build -t targets all | sed -n 's/^\([^:]*winemetal_unix\.c\.o\): .*/\1/p')
+          # the bridge's own object: host_metal4_parts builds the file into a test of its own too
+          obj=$(ninja -C build -t targets all | sed -n 's#^\([^:]*winemetal\.so\.p/winemetal_unix\.c\.o\): .*#\1#p')
           [[ $obj == *.o && $obj != *$'\n'* ]] || { echo "::error::no single object of winemetal_unix.c: $obj"; exit 1; }
           ninja -C build "$obj" >"$RUNNER_TEMP/unguarded.log" 2>&1 || true
           git checkout -- "$wm"
