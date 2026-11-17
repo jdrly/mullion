@@ -14,8 +14,9 @@ On 2026-11-14 SWTOR's DX12 client crashed at every switch to another Space. The 
   A `Signal` after a `Present` retires only when that command buffer completes, so every fence behind the present
   came about 1.2 s late: 1193–1273 ms at 8 of 8 switches, against 112 ms at most without a switch.
 - **What the game does with it.** The client waits on those fences, takes the late one for a hung GPU, reports
-  `DXGI_ERROR_DEVICE_HUNG` and ends in a crash. The client's time limit wasn't measured. That 1.2 s is past it is
-  inferred from the crash at every switch.
+  `DXGI_ERROR_DEVICE_HUNG` and ends in a crash. The client's time limit wasn't measured, and the crashes were on an
+  M5 Max on macOS 27.2, where no stall was timed. So either the limit is under about 1.2 s, or the stall is longer
+  on that Mac. Both are open.
 
 The log said it only as a `HITCH` with a long `encodeMs` and no GPU time. #37 added the line that names it,
 `mullion: nextDrawable blocked <ms> ms …`, at 50 ms or more, and `drawableMs` in the `HITCH` line

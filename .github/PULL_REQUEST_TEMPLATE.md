@@ -1,7 +1,8 @@
 <!--
 If the runner can't exercise this change (anything that draws, the bridge, lifetimes, generated shader code), the
 first line of this description is "Needs the Mac run", and the exact commands go in that section below. Claim none of
-their results. The change merges with its new behaviour off.
+their results. The change merges with its new behaviour off, unless the off state is the defect itself (ADR 0001's
+reasoning, scoped in ADR 0004).
 -->
 
 ## What changes
@@ -29,7 +30,7 @@ their results. The change merges with its new behaviour off.
 - [ ] The `SWTOR` workflow is green on the head commit. A PR that changes only `*.md` files and `docs/` gets no run; for it this item doesn't apply.
 - [ ] A behaviour change has a `MULLION_*` switch whose off value restores the base behaviour, and a log line; both are in `docs/swtor/README.md`.
 - [ ] Each test given as evidence, new or existing, was seen failing with a named break (a `tests/breaks` patch or a reverted line) before it passed. No skipped test is counted as passed.
-- [ ] A high-path change the runner can't exercise says "Needs the Mac run" at the top with the exact commands, claims none of them, and merges with its new behaviour off.
+- [ ] A high-path change the runner can't exercise says "Needs the Mac run" at the top with the exact commands, claims none of them, and merges with its new behaviour off, unless the off state is the defect itself (ADR 0001's reasoning, scoped in ADR 0004).
 - [ ] A change to `src/airconv` says whether generated shader code changes.
 - [ ] The independent review says `APPROVE` on the head commit with no open `Blocker` or `High`.
 

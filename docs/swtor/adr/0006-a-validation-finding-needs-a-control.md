@@ -38,23 +38,30 @@ had shown that the row was what validation reported, not that reading it was wro
 
 ## Decision
 
-- **A report from Metal's validation is a finding. It becomes a defect when a control shows it isn't validation's
-  own.** Until then nothing is fixed on its account, and ADR 0005's "a read Metal's validation calls invalid" doesn't
-  apply.
-- **The control removes what validation could be reacting to and leaves the code under suspicion as it is.** If the
-  report stays, it is a defect. If it goes and the values are right, it is validation's.
-- **For an invalid load**, one of:
-  - the same test with Direct3D 12's pipelines made without indirect command buffer support: a diagnostic patch that
-    sets `info.support_indirect_command_buffers` to false in `d3d12_pipeline_compute.cpp` and
-    `d3d12_pipeline_graphics.cpp`. It never merges, because `ExecuteIndirect` needs the support;
-  - a shader built by Apple's compiler that does the same read in the same kind of pipeline, outside Mullion.
+- **A report from Metal's validation is a finding. It becomes a defect when a control separates it from what
+  validation reports of valid code**, and the pull request names what is wrong. Until then nothing is fixed on its
+  account, and ADR 0005's "a read Metal's validation calls invalid" doesn't apply.
+- **A control changes one thing and leaves the read under suspicion as it is.** For an invalid load there are two,
+  and a result means something else in each:
+
+  | control | result | what it says |
+  |---|---|---|
+  | Apple's shader: one built by Apple's compiler does the same read in the same kind of pipeline, outside Mullion | the same report | validation's: it reports a valid read |
+  | Apple's shader | no report, while Mullion's shader gets one | something Mullion does brings the report. Change Apple's shader toward Mullion's form one step at a time, as #48 did, until a step brings it: that step is the cause, and a defect once the pull request says why it is wrong |
+  | No support: the same test with Direct3D 12's pipelines made without indirect command buffer support | the report goes and the values are right | validation's: the artefact above |
+  | No support | the report stays | not that artefact, and nothing more. Unresolved until another control separates the causes |
+
+  The second control is a diagnostic patch that sets `info.support_indirect_command_buffers` to false in
+  `d3d12_pipeline_compute.cpp` and `d3d12_pipeline_graphics.cpp`. It never merges, because `ExecuteIndirect` needs
+  the support.
+- **A result that doesn't separate the causes leaves the report unresolved**, neither a defect nor an artefact.
 - **The run without validation comes first.** A test that reads the right values without validation and fails only
   on validation's report is a candidate artefact, not a candidate defect.
 - **A pull request that fixes a validation report names its control and shows its output**, next to the test and
   break CONTRIBUTING already asks for. A fix that makes the report go away is not that control.
 - **An artefact is recorded, not worked around:** its cause in [gate.md](../gate.md), its tests in
   `tests/swtor/known-m1-validated.txt` as validation's. No code changes for it.
-- **A report without a control yet has no verdict.** It stays open under its own ticket.
+- **A report without a control yet has no verdict either.** It stays open under its own ticket.
 
 The same class, where the control is another run:
 
