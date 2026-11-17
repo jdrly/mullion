@@ -7,9 +7,9 @@
 // buffer completes and is released, and so is the function table. The next command buffer of the queue takes that
 // buffer's argument table from the pool, and its pass reads slot 3 without binding it, as a buffer's address: its 64
 // bits, never dereferenced. A new table holds 0 there; a pooled one must too, or the slot still names the released
-// function table, which the new buffer doesn't keep resident. Without validation such a slot reads the table's
-// resource ID; Metal's API validation stops the dispatch ("should have been set with setAddress:atIndex:"), and
-// accepts the slot setAddress:0 cleared.
+// function table, which the new buffer doesn't keep resident: such a slot reads the table's resource ID. Under
+// Metal's validation, which refuses any kernel that declares a slot nobody bound, the second pass runs a kernel that
+// declares no slot 3 instead, and only validation's own report can tell the tables apart.
 //
 // Three rounds of that, on, off and on again, with their controls: a kernel calls through the function table in its
 // own pass, so the binding is real; on, the second buffer has the first one's table, so the pool was taken, and the
@@ -86,6 +86,10 @@ static NSString *const kSource = @"#include <metal_stdlib>\n"
                                   "  out[0] = reinterpret_cast<ulong>(slot);\n"
                                   "  out[1] = slot != nullptr ? 1 : 0;\n"
                                   "}\n"
+                                  "kernel void quiet(device ulong *out [[buffer(0)]]) {\n"
+                                  "  out[0] = 7;\n"
+                                  "  out[1] = 7;\n"
+                                  "}\n"
                                   "kernel void bench(device uint *out [[buffer(0)]], uint i [[thread_position_in_grid]]) {\n"
                                   "  if (i == 0xffffffffu) out[0] = 1;\n"
                                   "}\n";
@@ -93,6 +97,12 @@ static NSString *const kSource = @"#include <metal_stdlib>\n"
 static id<MTLDevice> device;
 // `caller` calls through a function table at slot 3; `pso` reads slot 3's 64 bits as a buffer's address
 static id<MTLComputePipelineState> pso, caller;
+// under Metal's validation (MTL_DEBUG_LAYER), which refuses every kernel that declares a slot nobody bound: one never
+// written ("was never set"), one setAddress:0 cleared ("cannot be null") and one a function table's ID is left in
+// ("should have been set with setAddress:atIndex:"). the second pass then runs `quiet`, which declares no slot 3, and
+// what validation says of the table's slot 3 is its own report
+static id<MTLComputePipelineState> quiet;
+static bool validated;
 static id<MTLFunction> vf;
 static id<MTL4CommandQueue> queue;
 static id<MTLFence> fence;
@@ -146,7 +156,8 @@ run(bool reuse, id<MTLVisibleFunctionTable> table, bool null, unsigned slot_out)
   };
   struct wmtcmd_compute_setbuffer none = {.type = WMTComputeCommandSetBuffer, .buffer = 0, .index = 3};
   struct wmtcmd_compute_setpso pipeline = {
-      .type = WMTComputeCommandSetPSO, .pso = (obj_handle_t)(table ? caller : pso), .threadgroup_size = {1, 1, 1}
+      .type = WMTComputeCommandSetPSO, .pso = (obj_handle_t)(table ? caller : validated ? quiet : pso),
+      .threadgroup_size = {1, 1, 1}
   };
   WMT_MEMPTR_SET(pipeline.next, &output);
   WMT_MEMPTR_SET(output.next, table ? (void *)&functions : null ? (void *)&none : (void *)&dispatch);
@@ -273,9 +284,13 @@ round_of(bool reuse, unsigned round, id pooled, id *first_table, id *second_tabl
                                                  : "the second buffer has a compute table of its own");
   if (!round)
     expect([text containsString:@"mullion: metal4 parts=reused\n"], "the line says the parts were reused");
-  printf("     slot 3 in the second buffer's pass 0x%llx\n", (unsigned long long)reading(second)[0]);
-  expect(reading(second)[0] == 0 && reading(second)[1] == 0,
-         "slot 3 holds nothing in the second buffer's pass, as in a new table");
+  if (validated) {
+    expect(reading(second)[0] == 7 && reading(second)[1] == 7, "the second buffer's pass ran, slot 3 not read");
+  } else {
+    printf("     slot 3 in the second buffer's pass 0x%llx\n", (unsigned long long)reading(second)[0]);
+    expect(reading(second)[0] == 0 && reading(second)[1] == 0,
+           "slot 3 holds nothing in the second buffer's pass, as in a new table");
+  }
   release(b);
 }
 
@@ -454,7 +469,18 @@ main(int argc, char **argv) {
                                                   options:MTLPipelineOptionNone
                                                reflection:nil
                                                     error:&error];
-    if (!caller || !pso) {
+    MTLComputePipelineDescriptor *other = [[[MTLComputePipelineDescriptor alloc] init] autorelease];
+    other.computeFunction = [[library newFunctionWithName:@"quiet"] autorelease];
+    if (pso)
+      quiet = [device newComputePipelineStateWithDescriptor:other
+                                                    options:MTLPipelineOptionNone
+                                                 reflection:nil
+                                                      error:&error];
+    const char *layer = getenv("MTL_DEBUG_LAYER");
+    validated = layer && strcmp(layer, "0");
+    if (validated)
+      printf("under Metal's validation: the second passes don't read slot 3\n");
+    if (!caller || !pso || !quiet) {
       printf("pipeline: %s\n", error.description.UTF8String);
       return 1;
     }
