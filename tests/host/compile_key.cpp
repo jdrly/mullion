@@ -9,22 +9,19 @@
 #include <cstdio>
 #include <optional>
 
-// what the copied loop calls besides its two lambdas: a root signature's part and a log line. neither runs here, the
-// chains have no root signature and no unknown argument
-using UINT = unsigned;
-#define FAILED(hr) ((hr) < 0)
+// what the copied loop reads besides its two lambdas: the pipeline's root signature, whose digest names a root
+// signature argument, and a log line. neither is reached here: the chains have no root signature and no unknown
+// argument
 #define ERR(...) std::fprintf(stderr, "unknown compile argument\n")
-namespace microsoft {
-inline long
-DXBCGetRootSignature(const void *, const void **, UINT *) {
-  return -1;
-}
-} // namespace microsoft
-
 using namespace mullion;
+
+struct RootSignature {
+  Sha1Digest Digest;
+};
 
 static std::optional<Sha1Digest>
 argument_key(SM50_SHADER_COMPILATION_ARGUMENT_DATA *arguments) {
+  const RootSignature *root_signature = nullptr;
   Sha1HashState h;
   auto hash = [&](const auto &...values) { (h.update(values), ...); };
   auto bytes = [&](const void *data, size_t size) {
