@@ -934,23 +934,27 @@ private:
         continue;
       auto &inflight = inflight_cmdbuf_pool_[seq % kCommandQueueSize];
       const auto status = uint64_t(inflight.cmdbuf.status());
-      FLIGHT_IN(Gpu, "queue %p: command buffer %llu has not completed in %lld ms, status %llu", this, seq,
-             int64_t(StuckTime().count()), status);
-      char file[MAX_PATH] = "";
-      WMTFlightDumpFile("a stuck command buffer", file, sizeof(file));
       // MULLION-GPU-HUNG (mullion_device_lines.hpp): the queue goes on waiting, and the device stays
       device_lines::Hang hang;
-      SYSTEMTIME time;
-      GetLocalTime(&time);
-      hang.at = {time.wHour, time.wMinute, time.wSecond, time.wMilliseconds};
       hang.queue = ordinal_, hang.cmdbuf = seq, hang.waited_ms = StuckTime().count(), hang.status = status;
       auto &kinds = inflight.encoders;
       hang.render = kinds[size_t(EncoderType::Render)] + kinds[size_t(EncoderType::Clear)];
       hang.compute = kinds[size_t(EncoderType::Compute)] + kinds[size_t(EncoderType::ComputeParts)];
       hang.blit = kinds[size_t(EncoderType::Blit)];
       hang.present = inflight.presents;
+      // the dump and the line without the lock: the completion thread takes it for each command buffer (Watched), and
+      // a dump writes MB. what is read of the slot is read above, while the completion thread can't reset it
+      lock.unlock();
+      FLIGHT_IN(Gpu, "queue %p: command buffer %llu has not completed in %lld ms, status %llu", this, seq,
+             int64_t(StuckTime().count()), status);
+      char file[MAX_PATH] = "";
+      WMTFlightDumpFile("a stuck command buffer", file, sizeof(file));
+      SYSTEMTIME time;
+      GetLocalTime(&time);
+      hang.at = {time.wHour, time.wMinute, time.wSecond, time.wMilliseconds};
       hang.flight = file, hang.names = UserNames();
       WARN(device_lines::Hung(hang));
+      lock.lock();
       watch_changed_.wait(lock, [&] { return watch_stop_ || watched_seq_ != seq; });
     }
   }
