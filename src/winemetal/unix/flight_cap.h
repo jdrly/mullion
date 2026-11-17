@@ -31,22 +31,32 @@ enum flight_cap_verdict {
   FLIGHT_CAP_SKIP,
 };
 
+// a reason not dumped yet, that the cap still has room to remember
+static inline bool
+flight_cap_fresh(const struct flight_cap *cap, const char *reason) {
+  for (unsigned i = 0; i < cap->reasons; i++)
+    if (!strncmp(cap->seen[i], reason, kFlightReasonBytes - 1))
+      return false;
+  return cap->reasons < kFlightReasons;
+}
+
+// whether a dump of `reason` is written. a dump is counted only once it is (flight_cap_wrote): one the file couldn't
+// take uses up nothing
 static inline enum flight_cap_verdict
-flight_cap_take(struct flight_cap *cap, const char *reason) {
-  bool known = false;
-  for (unsigned i = 0; i < cap->reasons && !known; i++)
-    known = !strncmp(cap->seen[i], reason, kFlightReasonBytes - 1);
-  bool fresh = !known && cap->reasons < kFlightReasons;
-  if (fresh)
-    snprintf(cap->seen[cap->reasons++], kFlightReasonBytes, "%s", reason);
-  if (cap->written < kFlightDumpsAny || fresh) {
-    cap->written++;
+flight_cap_check(struct flight_cap *cap, const char *reason) {
+  if (cap->written < kFlightDumpsAny || flight_cap_fresh(cap, reason))
     return FLIGHT_CAP_WRITE;
-  }
   if (cap->stopped)
     return FLIGHT_CAP_SKIP;
   cap->stopped = true;
   return FLIGHT_CAP_STOP;
+}
+
+static inline void
+flight_cap_wrote(struct flight_cap *cap, const char *reason) {
+  if (flight_cap_fresh(cap, reason))
+    snprintf(cap->seen[cap->reasons++], kFlightReasonBytes, "%s", reason);
+  cap->written++;
 }
 
 // the line of the first dump left out, for stderr beside "mullion: flight record of ...": the file's name alone, as

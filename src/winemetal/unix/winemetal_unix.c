@@ -5466,7 +5466,7 @@ _WMTFlightWrite(void *obj) {
     // jdrly/mullion: a process's first dumps, then only a reason's first (flight_cap.h). the PE side holds its dump
     // lock across this call, so the cap needs none
     static struct flight_cap cap;
-    switch (flight_cap_take(&cap, (const char *)params->reason.ptr)) {
+    switch (flight_cap_check(&cap, (const char *)params->reason.ptr)) {
     case FLIGHT_CAP_WRITE:
       break;
     case FLIGHT_CAP_STOP: {
@@ -5484,6 +5484,8 @@ _WMTFlightWrite(void *obj) {
       return STATUS_SUCCESS;
     }
     written = true;
+    // jdrly/mullion: counted once the file has taken it
+    flight_cap_wrote(&cap, (const char *)params->reason.ptr);
     // stable: records a counter tick apart keep their thread's order, and the order the rings were read in otherwise
     if (mergesort(entries, params->count, sizeof(*entries), flight_order))
       perror("mullion: flight record order");
