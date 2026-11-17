@@ -443,8 +443,10 @@ public:
     keep_structure_inputs = Config::getInstance().getOption<bool>("d3d12.keepAccelerationStructureInputs", true);
     emulate_depth_bounds = Config::getInstance().getOption<bool>("d3d12.emulateDepthBounds", true);
     timestamp_queries = Config::getInstance().getOption<bool>("d3d12.timestampQueries", true);
-    immediate_markers = Config::getInstance().getOption<bool>("d3d12.immediateMarkers", false);
-    report_emulated_features = Config::getInstance().getOption<bool>("d3d12.reportEmulatedFeatures", false);
+    // jdrly/mullion: both on by default, as before upstream's 2660559, until a SWTOR session shows what they cost
+    // (docs/swtor/README.md)
+    immediate_markers = Config::getInstance().getOption<bool>("d3d12.immediateMarkers", true);
+    report_emulated_features = Config::getInstance().getOption<bool>("d3d12.reportEmulatedFeatures", true);
     
     WMTDepthStencilInfo info{};
     info.depth_compare_function = WMTCompareFunctionAlways;
@@ -690,7 +692,9 @@ public:
           // Metal faulted writing the shard and holds its queue from then on, so a pipeline looked up in it, and its
           // release, would wait for good: the shard is left as it is, with the pipelines it held, and is no longer
           // looked up. those pipelines are compiled again by the next launch
-          ERR("Metal faulted writing the pipeline archive ", path, "; its ", shard_archived_, " pipelines are not kept");
+          // jdrly/mullion: the shard's file name, not its path, which MULLION_SHADER_CACHE_PATH makes absolute
+          ERR("Metal faulted writing the pipeline archive ", path.substr(path.find_last_of('/') + 1), "; its ",
+              shard_archived_, " pipelines are not kept");
           archives_.back().handle = NULL_OBJECT_HANDLE;
           archives_.pop_back();
           archive_handles_.pop_back();
@@ -706,7 +710,8 @@ public:
       }
       took = std::chrono::steady_clock::now() - start;
       if (error)
-        ERR("Failed to write the pipeline archive ", path, ": ", error.description().getUTF8String());
+        ERR("Failed to write the pipeline archive ", path.substr(path.find_last_of('/') + 1), ": ",
+            error.description().getUTF8String());
       lock.lock();
       shard_archived_ = 0;
       if (last)
