@@ -115,9 +115,10 @@ compute_table(obj_handle_t buffer) {
 }
 
 // a command buffer of one compute pass that runs the kernel with its output at `slot_out` (16 bytes each), and the
-// function table bound at slot 3 when one is given; committed and completed
+// function table bound at slot 3 when one is given, or else no buffer bound there when `null` asks for that;
+// committed and completed
 static obj_handle_t
-run(bool reuse, id<MTLVisibleFunctionTable> table, unsigned slot_out) {
+run(bool reuse, id<MTLVisibleFunctionTable> table, bool null, unsigned slot_out) {
   struct unixcall_metal4_new p = {
       .queue = (obj_handle_t)queue, .fence = (obj_handle_t)fence, .event = (obj_handle_t)event,
       .residency = (obj_handle_t)global, .value = ++value, .bindings = kBindings, .reuse_parts = reuse
@@ -133,12 +134,14 @@ run(bool reuse, id<MTLVisibleFunctionTable> table, unsigned slot_out) {
   struct wmtcmd_compute_setbuffer output = {
       .type = WMTComputeCommandSetBuffer, .buffer = (obj_handle_t)out, .offset = slot_out * 16, .index = 0
   };
+  struct wmtcmd_compute_setbuffer none = {.type = WMTComputeCommandSetBuffer, .buffer = 0, .index = 3};
   struct wmtcmd_compute_setpso pipeline = {
       .type = WMTComputeCommandSetPSO, .pso = (obj_handle_t)pso, .threadgroup_size = {1, 1, 1}
   };
   WMT_MEMPTR_SET(pipeline.next, &output);
-  WMT_MEMPTR_SET(output.next, table ? (void *)&functions : (void *)&dispatch);
+  WMT_MEMPTR_SET(output.next, table ? (void *)&functions : null ? (void *)&none : (void *)&dispatch);
   WMT_MEMPTR_SET(functions.next, &dispatch);
+  WMT_MEMPTR_SET(none.next, &dispatch);
   struct unixcall_metal4_commands c = {.encoder = e.ret, .kind = WMTMetal4Compute};
   WMT_MEMPTR_SET(c.head, &pipeline);
   call(WMTUnixMetal4Commands, &c);
@@ -210,7 +213,7 @@ round_of(bool reuse, unsigned round, id pooled, id *first_table, id *second_tabl
   uint64_t id_bits = table.gpuResourceID._impl;
   __block obj_handle_t a = 0, b = 0;
   @autoreleasepool {
-    a = run(reuse, table, first);
+    a = run(reuse, table, false, first);
   }
   printf("     function table gpuResourceID 0x%llx, read in its own pass 0x%llx\n", (unsigned long long)id_bits,
          (unsigned long long)reading(first)[0]);
@@ -225,7 +228,9 @@ round_of(bool reuse, unsigned round, id pooled, id *first_table, id *second_tabl
   release(a);
   NSString *text = captured(^{
     @autoreleasepool {
-      b = run(reuse, nil, second);
+      // off, its table is a new one, whose slot 3 Metal's validation calls never set when the kernel runs: it is
+      // bound to no buffer, as Direct3D's null descriptor is. on, it reads the slot the first buffer left
+      b = run(reuse, nil, !reuse, second);
     }
   });
   *second_table = [compute_table(b) retain];
