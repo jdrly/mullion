@@ -4,10 +4,14 @@
 // output must be the input's color in every texel, within one unit of the 8-bit output. the inputs are cleared by the
 // same list right before the upscale, and the output is copied right after it, so a pass out of order reads or leaves
 // the bytes of the frame before. depth and exposure are R32_TYPELESS and motion vectors R16G16_TYPELESS, as games
-// create them; DLSS takes motion vectors as floats only, so normalized ones are refused rather than misread. motion
+// create them; motion vectors in other formats are read through their format, as DLSS reads its inputs ("DLSS uses
+// formatted reads so should handle most input buffer formats", DLSS Programming Guide 3.3): normalized ones with the
+// scale that makes them pixels move the image as the same motion in floats does. motion
 // vectors at the output resolution (DLSS without NVSDK_NGX_DLSS_Feature_Flags_MVLowRes) are taken too: frames of one
 // color, the second not in reset, come out that color with them, and a square that moves between two frames comes out
-// the same image whether its motion is given at the input resolution or, as the same motion, at the output's
+// the same image whether its motion is given at the input resolution or, as the same motion, at the output's.
+// motion vectors that hold the frames' jitter (NVSDK_NGX_DLSS_Feature_Flags_MVJittered) are taken as well: frames of
+// one color come out that color with them
 #include "d3d12_test.hpp"
 #include "../../src/d3d12/d3d12_interfaces.hpp"
 #include "../../src/nvngx/nvngx.hpp"
@@ -86,11 +90,12 @@ main(int argc, char **argv) {
   auto display_motion =
       texture(DXGI_FORMAT_R16G16_TYPELESS, DXGI_FORMAT_R16G16_FLOAT, out_width, out_height, target, input);
   auto exposure = texture(DXGI_FORMAT_R32_TYPELESS, DXGI_FORMAT_R32_FLOAT, 1, 1, target, input);
-  auto normalized = texture(DXGI_FORMAT_R16G16_UNORM, DXGI_FORMAT_UNKNOWN, width, height, target, input);
+  auto normalized = texture(DXGI_FORMAT_R16G16_SNORM, DXGI_FORMAT_R16G16_SNORM, width, height, target, input);
+  auto packed = texture(DXGI_FORMAT_R8G8B8A8_UNORM, DXGI_FORMAT_R8G8B8A8_UNORM, width, height, target, input);
   auto output = texture(DXGI_FORMAT_R8G8B8A8_UNORM, DXGI_FORMAT_UNKNOWN, out_width, out_height,
                         D3D12_RESOURCE_FLAG_ALLOW_UNORDERED_ACCESS, D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
   CHECK(color.resource && depth.resource && motion.resource && exposure.resource && normalized.resource &&
-                output.resource && display_motion.resource
+                packed.resource && output.resource && display_motion.resource
             ? S_OK
             : E_FAIL);
   D3D12_PLACED_SUBRESOURCE_FOOTPRINT footprint;
@@ -98,6 +103,9 @@ main(int argc, char **argv) {
   auto out_desc = output.resource->GetDesc();
   device->GetCopyableFootprints(&out_desc, 0, 1, 0, &footprint, nullptr, nullptr, &bytes);
   auto read_back = buffer(device.Get(), D3D12_HEAP_TYPE_READBACK, bytes, D3D12_RESOURCE_STATE_COPY_DEST);
+  // the input-resolution motion vectors the upscale is given, and the scale that makes their values pixels
+  Texture *given = &motion;
+  float given_scale[2] = {1, 1};
 
   // one frame upscaled by what `record` records into the list: the color is `a` in the squares of a checkerboard of
   // `square` texels and `b` between them (one color when `square` is 0), or in the one square of `moved`; the
@@ -121,13 +129,13 @@ main(int argc, char **argv) {
       const float *value, *inside;
       std::vector<D3D12_RECT> rects;
     };
-    Clear clears[] = {{&color, fb.data(), fa.data(), squares}, {&depth, half}, {&motion, zero}, {&exposure, one},
+    Clear clears[] = {{&color, fb.data(), fa.data(), squares}, {&depth, half}, {given, zero}, {&exposure, one},
                       {&display_motion, some}};
     if (moved) {
       const D3D12_RECT at{moved->x, moved->y, moved->x + moved->side, moved->y + moved->side};
       const LONG times = scale;
       clears[0].rects = {at};
-      clears[2] = {&motion, zero, moved->motion, {at}};
+      clears[2] = {given, zero, moved->motion, {at}};
       clears[4] = {&display_motion, zero, moved->given,
                    {{at.left * times, at.top * times, at.right * times, at.bottom * times}}};
     }
@@ -162,17 +170,23 @@ main(int argc, char **argv) {
   };
   // through the extension, as the NGX bridge records it
   auto frame = [&](const BYTE *a, const BYTE *b, UINT square, BOOL reset, IMTLD3D12Upscaler *&scaler,
-                   bool at_output = false, const Moved *moved = nullptr) {
+                   bool at_output = false, const Moved *moved = nullptr, const float *jitter = nullptr) {
     auto record = [&] {
       MTL_TEMPORAL_UPSCALE_D3D12_DESC desc{};
+      if (jitter) {
+        desc.MotionVectorJittered = TRUE;
+        desc.JitterOffsetX = jitter[0];
+        desc.JitterOffsetY = jitter[1];
+      }
       desc.InReset = reset;
       desc.Color = color.resource.Get();
       desc.Depth = depth.resource.Get();
-      desc.MotionVector = (at_output ? display_motion : motion).resource.Get();
+      desc.MotionVector = (at_output ? &display_motion : given)->resource.Get();
       desc.MotionVectorInDisplayRes = at_output;
       desc.ExposureTexture = exposure.resource.Get();
       desc.Output = output.resource.Get();
-      desc.MotionVectorScaleX = desc.MotionVectorScaleY = 1;
+      desc.MotionVectorScaleX = at_output ? 1 : given_scale[0];
+      desc.MotionVectorScaleY = at_output ? 1 : given_scale[1];
       desc.PreExposure = 1;
       return SUCCEEDED(ext->TemporalUpscale(&desc, &scaler));
     };
@@ -226,7 +240,7 @@ main(int argc, char **argv) {
     expect(!apart(first, reset), "%u channels of the frame in reset show the frame before", apart(first, reset));
     expect(apart(first, kept), "a frame not in reset shows nothing of the frame before: reset cannot be told apart");
   }
-  for (auto scaler : {fresh, continued})
+  for (auto scaler : {fresh, continued, upscaler})
     if (scaler)
       scaler->Destroy();
 
@@ -238,6 +252,18 @@ main(int argc, char **argv) {
   }
   if (display)
     display->Destroy();
+
+  // motion vectors that hold the frames' jitter (NVSDK_NGX_DLSS_Feature_Flags_MVJittered): nothing moves and the
+  // image is one color, so it is that color whatever jitter is taken out of the vectors
+  IMTLD3D12Upscaler *jittered = nullptr;
+  const float jitters[][2] = {{0.25f, -0.25f}, {-0.375f, 0.125f}};
+  for (UINT i = 0; i < 2; i++) {
+    step("a frame of one color with jittered motion vectors, %s", i ? "not in reset" : "in reset");
+    if (!uniform(frame(frames[0], frames[0], 0, !i, jittered, false, nullptr, jitters[i]), frames[0]))
+      return verdict();
+  }
+  if (jittered)
+    jittered->Destroy();
 
   // a light square on dark moves `by` input pixels between a frame in reset and the next. its motion at the output
   // resolution is `scale` times its motion at the input's, in every output pixel of the square: the same motion, so
@@ -266,19 +292,24 @@ main(int argc, char **argv) {
     expect(apart(at_input, other), "half the motion gives the same image: the motion vectors do not show in it");
   }
 
-  step("normalized motion vectors, which hold no float to read");
-  CHECK(allocator->Reset());
-  CHECK(list->Reset(allocator.Get(), nullptr));
-  MTL_TEMPORAL_UPSCALE_D3D12_DESC refused{};
-  refused.Color = color.resource.Get();
-  refused.Depth = depth.resource.Get();
-  refused.MotionVector = normalized.resource.Get();
-  refused.Output = output.resource.Get();
-  refused.PreExposure = 1;
-  expect(ext->TemporalUpscale(&refused, &upscaler) == E_INVALIDARG, "normalized motion vectors were taken");
-  CHECK(list->Close());
-  if (upscaler)
-    upscaler->Destroy();
+  // the same motion as signed normalized values in units of the input's size, which the scale makes pixels
+  step("the same motion given as normalized values");
+  given = &normalized;
+  given_scale[0] = float(width), given_scale[1] = float(height);
+  auto normal = moving(false, {x + by, y, side, {there / width}});
+  if (expect(!at_input.empty() && !normal.empty(), "no image"))
+    expect(!apart(at_input, normal), "%u channels differ between the motion given as floats and as normalized values",
+           apart(at_input, normal));
+  // and a frame of one color with motion vectors of four 8-bit normalized channels, as Marvel's Spider-Man 2 gives
+  // them (dttdrv/mullion#204)
+  step("a frame of one color with motion vectors of four 8-bit normalized channels");
+  given = &packed;
+  IMTLD3D12Upscaler *bytewise = nullptr;
+  uniform(frame(frames[0], frames[0], 0, TRUE, bytewise), frames[0]);
+  if (bytewise)
+    bytewise->Destroy();
+  given = &motion;
+  given_scale[0] = given_scale[1] = 1;
 
   // DLSS through Mullion's NGX core (src/nvngx/nvngx_d3d12.cpp), called as a game's NGX library calls it, where the
   // build has it: resources set as resources or, as Streamline sets them, as plain pointers, and DLSS's defaults for
