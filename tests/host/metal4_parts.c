@@ -3,16 +3,19 @@
 // built into this program), on the machine's GPU and without Wine.
 //
 // A compute pass binds a visible function table at buffer slot 3 of its argument table, which only
-// WMTComputeCommandSetVisibleFunctionTable writes, and nothing at slots 1 and 2. Its command buffer completes and is
-// released, and so is the function table. The next command buffer of the queue takes that buffer's argument table
-// from the pool, and its pass reads slot 3 without binding it. A new table holds 0 there; a pooled one must too, or
-// the slot still names the released function table, which the new buffer doesn't keep resident. The kernel reads
-// the slot's 64 bits and never calls through them.
+// WMTComputeCommandSetVisibleFunctionTable writes, and nothing at slots 1 and 2, and calls through it. Its command
+// buffer completes and is released, and so is the function table. The next command buffer of the queue takes that
+// buffer's argument table from the pool, and its pass reads slot 3 without binding it, as a buffer's address: its 64
+// bits, never dereferenced. A new table holds 0 there; a pooled one must too, or the slot still names the released
+// function table, which the new buffer doesn't keep resident. Without validation such a slot reads the table's
+// resource ID; Metal's API validation stops the dispatch ("should have been set with setAddress:atIndex:"), and
+// accepts the slot setAddress:0 cleared.
 //
-// Three rounds of that, on, off and on again, with their controls: the kernel sees a function table bound in its own
-// pass, so the reading is real; on, the second buffer has the first one's table, so the pool was taken, and the line
-// says so the first time; off, no buffer has a table from the pool (which the first round left parts in) and none
-// leaves its own there, so the third round takes the first one's. Exit 77 (skipped) where the machine has no Metal 4.
+// Three rounds of that, on, off and on again, with their controls: a kernel calls through the function table in its
+// own pass, so the binding is real; on, the second buffer has the first one's table, so the pool was taken, and the
+// line says so the first time; off, no buffer has a table from the pool (which the first round left parts in) and
+// none leaves its own there, so the third round takes the first one's. Exit 77 (skipped) where the machine has no
+// Metal 4.
 #import <Foundation/Foundation.h>
 #import <Metal/Metal.h>
 #include <objc/runtime.h>
@@ -73,6 +76,11 @@ expect(bool ok, const char *what) {
 static NSString *const kSource = @"#include <metal_stdlib>\n"
                                   "using namespace metal;\n"
                                   "[[visible]] int vf(int x) { return x + 1; }\n"
+                                  "kernel void call(device ulong *out [[buffer(0)]],\n"
+                                  "                 visible_function_table<int(int)> functions [[buffer(3)]]) {\n"
+                                  "  out[0] = ulong(functions[0](41));\n"
+                                  "  out[1] = 1;\n"
+                                  "}\n"
                                   "kernel void probe(device ulong *out [[buffer(0)]], device ulong *slot [[buffer(3)]]) {\n"
                                   "  out[0] = reinterpret_cast<ulong>(slot);\n"
                                   "  out[1] = slot != nullptr ? 1 : 0;\n"
@@ -82,7 +90,8 @@ static NSString *const kSource = @"#include <metal_stdlib>\n"
                                   "}\n";
 
 static id<MTLDevice> device;
-static id<MTLComputePipelineState> pso;
+// `caller` calls through a function table at slot 3; `pso` reads slot 3's 64 bits as a buffer's address
+static id<MTLComputePipelineState> pso, caller;
 static id<MTLFunction> vf;
 static id<MTL4CommandQueue> queue;
 static id<MTLFence> fence;
@@ -98,8 +107,8 @@ static id<MTLVisibleFunctionTable>
 new_function_table(void) {
   MTLVisibleFunctionTableDescriptor *desc = [[[MTLVisibleFunctionTableDescriptor alloc] init] autorelease];
   desc.functionCount = 1;
-  id<MTLVisibleFunctionTable> table = [pso newVisibleFunctionTableWithDescriptor:desc];
-  [table setFunction:[pso functionHandleWithFunction:vf] atIndex:0];
+  id<MTLVisibleFunctionTable> table = [caller newVisibleFunctionTableWithDescriptor:desc];
+  [table setFunction:[caller functionHandleWithFunction:vf] atIndex:0];
   return table;
 }
 
@@ -111,12 +120,12 @@ compute_table(obj_handle_t buffer) {
   if (!ivar)
     return nil;
   id *tables = (id *)((char *)object + ivar_getOffset(ivar));
-  return tables[3]; // Metal4ComputeBinding
+  return tables[4]; // Metal4ComputeBinding, after the vertex, fragment, object and mesh stages
 }
 
-// a command buffer of one compute pass that runs the kernel with its output at `slot_out` (16 bytes each), and the
-// function table bound at slot 3 when one is given, or else no buffer bound there when `null` asks for that;
-// committed and completed
+// a command buffer of one compute pass with its output at `slot_out` (16 bytes each): with a function table, `caller`
+// with the table bound at slot 3; without, `pso`, with no buffer bound there when `null` asks for that. Committed and
+// completed
 static obj_handle_t
 run(bool reuse, id<MTLVisibleFunctionTable> table, bool null, unsigned slot_out) {
   struct unixcall_metal4_new p = {
@@ -136,7 +145,7 @@ run(bool reuse, id<MTLVisibleFunctionTable> table, bool null, unsigned slot_out)
   };
   struct wmtcmd_compute_setbuffer none = {.type = WMTComputeCommandSetBuffer, .buffer = 0, .index = 3};
   struct wmtcmd_compute_setpso pipeline = {
-      .type = WMTComputeCommandSetPSO, .pso = (obj_handle_t)pso, .threadgroup_size = {1, 1, 1}
+      .type = WMTComputeCommandSetPSO, .pso = (obj_handle_t)(table ? caller : pso), .threadgroup_size = {1, 1, 1}
   };
   WMT_MEMPTR_SET(pipeline.next, &output);
   WMT_MEMPTR_SET(output.next, table ? (void *)&functions : null ? (void *)&none : (void *)&dispatch);
@@ -215,9 +224,9 @@ round_of(bool reuse, unsigned round, id pooled, id *first_table, id *second_tabl
   @autoreleasepool {
     a = run(reuse, table, false, first);
   }
-  printf("     function table gpuResourceID 0x%llx, read in its own pass 0x%llx\n", (unsigned long long)id_bits,
-         (unsigned long long)reading(first)[0]);
-  expect(reading(first)[1] == 1, "the kernel sees the function table bound in its own pass");
+  printf("     function table gpuResourceID 0x%llx; vf(41) through it in its own pass: %lld\n",
+         (unsigned long long)id_bits, (long long)reading(first)[0]);
+  expect(reading(first)[0] == 42 && reading(first)[1] == 1, "a kernel calls through the function table in its own pass");
   // held, so that no other table can get its address
   id held = *first_table = [compute_table(a) retain];
   expect(held != nil, "the first buffer has a compute table");
@@ -407,12 +416,19 @@ main(int argc, char **argv) {
     }
     vf = [library newFunctionWithName:@"vf"];
     MTLComputePipelineDescriptor *desc = [[[MTLComputePipelineDescriptor alloc] init] autorelease];
-    desc.computeFunction = [[library newFunctionWithName:@"probe"] autorelease];
+    desc.computeFunction = [[library newFunctionWithName:@"call"] autorelease];
     MTLLinkedFunctions *linked = [[[MTLLinkedFunctions alloc] init] autorelease];
     linked.functions = @[ vf ];
     desc.linkedFunctions = linked;
-    pso = [device newComputePipelineStateWithDescriptor:desc options:MTLPipelineOptionNone reflection:nil error:&error];
-    if (!pso) {
+    caller = [device newComputePipelineStateWithDescriptor:desc options:MTLPipelineOptionNone reflection:nil error:&error];
+    MTLComputePipelineDescriptor *reader = [[[MTLComputePipelineDescriptor alloc] init] autorelease];
+    reader.computeFunction = [[library newFunctionWithName:@"probe"] autorelease];
+    if (caller)
+      pso = [device newComputePipelineStateWithDescriptor:reader
+                                                  options:MTLPipelineOptionNone
+                                               reflection:nil
+                                                    error:&error];
+    if (!caller || !pso) {
       printf("pipeline: %s\n", error.description.UTF8String);
       return 1;
     }
