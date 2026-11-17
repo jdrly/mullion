@@ -23,6 +23,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <unistd.h>
+#include <signal.h>
 #include <time.h>
 #include <mach/mach.h>
 #include <mach/mach_time.h>
@@ -193,23 +194,48 @@ reading(unsigned slot_out) {
   return (const uint64_t *)[out contents] + 2 * slot_out;
 }
 
-// stderr into a file while `block` runs, then the file's text, also written to stderr
+// stderr into a file while `block` runs, then the file's text, also written to stderr. An abort meanwhile (Metal's
+// validation ends a process so) writes the file to stderr first, so that its report isn't lost
+static int captured_fd = -1, captured_saved = -1;
+
+static void
+captured_abort(int signal) {
+  char text[4096];
+  ssize_t n;
+  lseek(captured_fd, 0, SEEK_SET);
+  while ((n = read(captured_fd, text, sizeof(text))) > 0)
+    write(captured_saved, text, n);
+  dup2(captured_saved, 2);
+  sigaction(SIGABRT, &(struct sigaction){.sa_handler = SIG_DFL}, NULL);
+  raise(signal);
+}
+
 static NSString *
 captured(void (^block)(void)) {
   char path[] = "/tmp/metal4_parts.XXXXXX";
   int fd = mkstemp(path);
+  unlink(path);
   fflush(stderr);
   int saved = dup(2);
+  captured_fd = fd, captured_saved = saved;
+  struct sigaction old;
+  sigaction(SIGABRT, &(struct sigaction){.sa_handler = captured_abort}, &old);
   dup2(fd, 2);
   block();
   fflush(stderr);
   dup2(saved, 2);
+  sigaction(SIGABRT, &old, NULL);
+  NSMutableData *data = [NSMutableData data];
+  char text[4096];
+  ssize_t n;
+  lseek(fd, 0, SEEK_SET);
+  while ((n = read(fd, text, sizeof(text))) > 0)
+    [data appendBytes:text length:n];
   close(saved);
   close(fd);
-  NSString *text = [NSString stringWithContentsOfFile:@(path) encoding:NSUTF8StringEncoding error:nil];
-  unlink(path);
-  fputs(text.UTF8String ?: "", stderr);
-  return text ?: @"";
+  NSString *string = [[[NSString alloc] initWithData:data encoding:NSUTF8StringEncoding] autorelease];
+  fputs(string.UTF8String ?: "", stderr);
+  return string ?: @"";
 }
 
 // one round: the first buffer binds a function table and is released with it, then the second reads the slot.
