@@ -39,6 +39,7 @@
 #include "mullion_hitch.hpp"
 #include "mullion_stats.hpp"
 #include "mullion_memory.hpp"
+#include "mullion_present_pacing.hpp"
 #include <bit>
 #include <cfloat>
 #include <cstdlib>
@@ -139,6 +140,10 @@ static sw::Switch<unsigned> kHitchMs{"MULLION_HITCH_MS", hitch::kDefaultMs, Posi
 static sw::Switch<unsigned> kMemstats{"MULLION_MEMSTATS", 0, memory::Period};
 const unsigned memory::seconds = kMemstats();
 
+// MULLION_SYNC_INTERVAL: "0" to "4" paces every Direct3D 12 present of a swap chain by that interval, whatever the
+// game passes; unset, the game's (src/mullion/mullion_present_pacing.hpp). Read once per swap chain
+static sw::Switch<std::string> kSyncInterval{"MULLION_SYNC_INTERVAL", present_pacing::kUnset, present_pacing::Grammar};
+
 // the bridge's memory sampler writes its samples here: every MULLION_MEMSTATS seconds, or every 30 s for the pressure
 // line alone. Started at the first Present; never freed, since the sampler's thread writes it until the process ends
 static WMTMemorySample *
@@ -192,6 +197,9 @@ class MTLD3D12SwapChain final : public MTLDXGISubObject<IMTLDXGISwapChain, MTLD3
   HUDState hud;
   double init_refresh_rate_ = DBL_MAX;
   int preferred_max_frame_rate = 0;
+  // MULLION_SYNC_INTERVAL's interval, kNotForced for the game's, and the pacing line's limit
+  int sync_forced_ = present_pacing::kNotForced;
+  present_pacing::Limiter pacing_said_;
   ModeSetGuard modeset_guard_;
   mullion::mutex mutex_;
 
@@ -280,6 +288,10 @@ public:
     fullscreen_desc_.Windowed = TRUE;
 
     preferred_max_frame_rate = Config::getInstance().getOption<int>("d3d12.preferredMaxFrameRate", 0);
+    sync_forced_ = present_pacing::Forced(kSyncInterval());
+    static std::atomic_bool said_sync;
+    if (!present_pacing::Taken(sw::processRegistry().requested(kSyncInterval.name())) && !said_sync.exchange(true))
+      Logger::warn("Mullion: MULLION_SYNC_INTERVAL is not 0 to 4; presents keep the game's interval");
     wsi::WsiMode current_mode;
     if (wsi::getCurrentDisplayMode(monitor_, &current_mode) && current_mode.refreshRate.denominator != 0 &&
         current_mode.refreshRate.numerator != 0) {
@@ -357,6 +369,26 @@ public:
       text += (text.empty() ? "" : "\n") + line;
     // one message: its lines stay together
     Logger::warn(text);
+  }
+
+  // MULLION_SYNC_INTERVAL: the pacing line at the swap chain's first present and when a field changes, at most once a
+  // second (mullion_present_pacing.hpp). Otherwise a compare of the fields
+  void
+  PacingLine(UINT game, const present_pacing::Pacing &pacing) {
+    present_pacing::Fields fields{pacing.interval, game, sync_forced_, init_refresh_rate_, preferred_max_frame_rate,
+                                  pacing.after};
+    auto now = [] {
+      return uint64_t(std::chrono::duration_cast<std::chrono::nanoseconds>(
+                          std::chrono::steady_clock::now().time_since_epoch()).count());
+    };
+    uint64_t changes = 0;
+    if (!pacing_said_.Present(fields, now, changes))
+      return;
+    SYSTEMTIME local{};
+    GetLocalTime(&local);
+    Logger::info(
+        present_pacing::Line(fields, {local.wHour, local.wMinute, local.wSecond, local.wMilliseconds}, changes)
+    );
   }
 
   // a sample the bridge's memory sampler wrote since the last: its lines (mullion_memory.hpp), from the Present that
@@ -1018,10 +1050,10 @@ public:
     if (settings_.Update(desc_, fullscreen_desc_.Windowed, hWnd, *presenter))
       ApplyLayerProps();
 
-    double vsync_duration = std::max(
-        SyncInterval * 1.0 / (preferred_max_frame_rate ? preferred_max_frame_rate : init_refresh_rate_),
-        preferred_max_frame_rate ? 1.0 / preferred_max_frame_rate : 0
-    );
+    // MULLION_SYNC_INTERVAL: the checks above take the game's interval, the pacing the forced one
+    auto pacing = present_pacing::Pace(SyncInterval, sync_forced_, init_refresh_rate_, preferred_max_frame_rate);
+    double vsync_duration = pacing.after;
+    PacingLine(SyncInterval, pacing);
 
     auto &backbuffer = backbuffers_[current_buffer_];
     // the frame presented last is the buffer before this one, which the frame shown keeps where it is not new
