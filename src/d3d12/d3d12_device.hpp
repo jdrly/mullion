@@ -809,6 +809,7 @@ public:
     auto archives = PipelineArchives();
     // MULLION_STATS: each pipeline Metal compiles, not found in the archive, and its time
     if (archives.empty()) {
+      archive_draw::Missed(); // jdrly/mullion: no archive opened after all
       if (stats::on)
         stats::counters.pipelines.fetch_add(1, std::memory_order_relaxed);
       hitch::Timed timed(hitch::counters.pipelines, hitch::counters.pipeline_ns);
@@ -822,6 +823,7 @@ public:
     info.fail_on_binary_archive_miss = false;
     info.keep_for_binary_archive = true;
     error = {};
+    archive_draw::Missed(); // jdrly/mullion: ARCHIVEDRAW's missed, for a pipeline made at its first draw
     if (stats::on)
       stats::counters.pipelines.fetch_add(1, std::memory_order_relaxed);
     auto made = [&] {
@@ -848,6 +850,8 @@ public:
   Defer(std::shared_ptr<DeferredPipeline> pipeline, const Sha1Digest &key) {
     if (!InArchive(key))
       DeferredPipeline::Queue(std::move(pipeline));
+    else
+      pipeline->at_draw = true; // jdrly/mullion: ARCHIVEDRAW
   }
   // pipelines are looked up under it shared, and the archive is written under it whole
   mullion::shared_mutex archive_lock;

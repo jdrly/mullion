@@ -56,6 +56,13 @@ namespace mullion {
 // cache keys on it
 static sw::Switch<bool> kGuardStaticRanges{"MULLION_D3D12_GUARD_STATIC_RANGES", false, sw::exactlyOne};
 
+// jdrly/mullion: ARCHIVEDRAW after STATS (docs/swtor/README.md): the pipelines made at their first draw from the
+// archive in the second (mullion_archive_draw.hpp)
+static stats::SectionRegistrar kArchiveDrawSection{"ARCHIVEDRAW", [](double, uint64_t) {
+  static archive_draw::Last last;
+  return archive_draw::Section(archive_draw::counters, last);
+}};
+
 // jdrly/mullion: the words shaders count their checks in, and the names the CPU gives them, in one order
 static_assert(ranges::kShaderChecks == SM50_CHECK_KINDS && SM50_CHECK_STATIC_RANGE == 0 && SM50_CHECK_ROOT_VIEW == 1 &&
               SM50_CHECK_DESCRIPTOR_INDEX == 2);

@@ -1,0 +1,14 @@
+# MULLION_STATS off counts the pipelines made at a draw too
+--- a/src/mullion/mullion_archive_draw.hpp
++++ b/src/mullion/mullion_archive_draw.hpp
+@@ -43,10 +43,6 @@
+ template <typename Make>
+ void
+ Made(bool on, Make &&make, Counters &to = counters) {
+-  if (!on) {
+-    make();
+-    return;
+-  }
+   auto before = misses_here;
+   auto start = std::chrono::steady_clock::now();
+   make();
