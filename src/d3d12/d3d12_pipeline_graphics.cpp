@@ -23,6 +23,7 @@
 #include "mullion_shader_cache.hpp"
 #include "tessellation_limits.hpp"
 #include "util_env.hpp"
+#include "util_switch.hpp"
 #include "com/com_object.hpp"
 #include "com/com_pointer.hpp"
 #include "sha1/sha1_util.hpp"
@@ -40,6 +41,12 @@
 #include <variant>
 
 namespace mullion {
+
+// jdrly/mullion: MULLION_D3D12_NATIVE_TESSELLATION=1: a tessellation pipeline that qualifies draws through Metal's
+// tessellator (Metal 3) or the compute tessellator (Metal 4), upstream's c951e38 and 0aa66a0. Off, every tessellated
+// draw takes the mesh pipeline, as before upstream batch 4 (private ticket 58, docs/swtor/README.md). Read at each
+// tessellation pipeline's creation
+static sw::Switch<bool> kNativeTessellation{"MULLION_D3D12_NATIVE_TESSELLATION", false, sw::exactlyOne};
 
 constexpr WMTCompareFunction kCompareFunctionMap[] = {
     WMTCompareFunctionNever, // padding 0
@@ -2245,7 +2252,8 @@ public:
       // with Metal 4, a pipeline whose depth bounds the pixel shader tests keeps the mesh pipeline too: after a native
       // draw that wrote depth, the mesh draw that follows it finds the samples in the bounds again, in a compute pass,
       // which would end the native draw's pass before its record says that the mesh draw follows (both drew)
-      bool native = !(compute && depth_bounds_emulated) && !geometry && !conservative && !clips &&
+      bool native = kNativeTessellation() && // jdrly/mullion: the switch, off by default
+                    !(compute && depth_bounds_emulated) && !geometry && !conservative && !clips &&
                     !ref_ds.CullDistances && !ref_vs.UAVSlotMask && !ref_hs.UAVSlotMask &&
                     (domain == microsoft::D3D11_SB_TESSELLATOR_DOMAIN_TRI ||
                      domain == microsoft::D3D11_SB_TESSELLATOR_DOMAIN_QUAD) &&
@@ -2282,8 +2290,20 @@ public:
             }
         );
         pso_tess.native = pso_tess.compute = false;
-        if (!patch_func || !hull_func)
-          return FAIL(E_INVALIDARG);
+        // jdrly/mullion: a tessellator whose functions don't convert leaves the pipeline the mesh pipeline, as one Metal
+        // doesn't make does below, where upstream failed the pipeline; the conversion's MULLION-SHADER line names it
+        if (!patch_func || !hull_func) {
+          static std::atomic_bool said;
+          if (!said.exchange(true, std::memory_order_relaxed))
+            Logger::warn(str::format("MULLION-NATIVE-TESSELLATION mesh pipeline=", name));
+          native = patch_varying = false;
+        }
+      }
+      if (native) {
+        // jdrly/mullion: the switch acting, once a process
+        static std::atomic_bool said;
+        if (!said.exchange(true, std::memory_order_relaxed))
+          Logger::info(str::format("MULLION-NATIVE-TESSELLATION on tessellator=", compute ? "compute" : "metal"));
         WMT::InitializeComputePipelineInfo(hull_info);
         hull_info.compute_function = hull_func.handle;
         hull_info.tgsize_is_multiple_of_sgwidth = true;
