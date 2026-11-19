@@ -4,6 +4,11 @@
 // the files of other versions, those named before versions had their own among them, before it reads any. it then
 // opens only its own version's files, and finds its pipeline in them. the files of the other versions here are
 // copies of this version's own, which Metal would read as well as the originals.
+// jdrly/mullion: the fork names the files by the cache's identity, not by AIRCONV_VERSION
+// (pipelines_<metal>_<16 hex digits of the tag>_<n>.metallib, docs/swtor/caches.md, ADR 0003), which holds it. the
+// other versions' copies are another identity's and upstream's two namings. both devices are of one process, whose
+// shader cache prepared its folder once, at the first (WMTCachePrepare): the second device's removal is the one
+// that finds the copies
 #include "d3d12_test.hpp"
 #include "../../src/airconv/airconv_public.h"
 #include "../../src/winemetal/winemetal.h"
@@ -100,15 +105,22 @@ main(int argc, char **argv) {
     snprintf(name, sizeof(name), "pipelines_%u_%s%u.metallib", metal, version, shard);
     return std::string(name);
   };
+  std::string identity;
   for (auto &name : own) {
-    unsigned metal, version, shard;
-    char end;
-    if (!expect(sscanf(name.c_str(), "pipelines_%u_v%u_%u.metalli%c", &metal, &version, &shard, &end) == 4 && end == 'b',
-                "%s names no converter version", name.c_str()) ||
-        !expect(version == AIRCONV_VERSION, "%s is of version %u, want %u", name.c_str(), version, AIRCONV_VERSION))
+    unsigned metal, shard;
+    char tag[17] = {}, end;
+    if (!expect(sscanf(name.c_str(), "pipelines_%u_%16[0-9a-f]_%u.metalli%c", &metal, tag, &shard, &end) == 4 &&
+                    strlen(tag) == 16 && end == 'b',
+                "%s names no identity", name.c_str()) ||
+        !expect(identity.empty() || identity == tag, "%s is of identity %s, the others of %s", name.c_str(), tag,
+                identity.c_str()))
       continue;
-    for (auto other : {named(metal, "", shard), named(metal, ("v" + std::to_string(version + 1) + "_").c_str(), shard),
-                       named(metal, ("v" + std::to_string(version - 1) + "_").c_str(), shard)})
+    identity = tag;
+    // another identity: the tag with its last digit changed
+    std::string other_tag = tag;
+    other_tag.back() = other_tag.back() == '0' ? '1' : '0';
+    for (auto other : {named(metal, "", shard), named(metal, (other_tag + "_").c_str(), shard),
+                       named(metal, ("v" + std::to_string(AIRCONV_VERSION) + "_").c_str(), shard)})
       if (CopyFileA((std::string(directory) + "\\" + name).c_str(), (std::string(directory) + "\\" + other).c_str(), TRUE))
         others.push_back(other);
   }
