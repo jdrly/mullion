@@ -122,16 +122,16 @@ main() {
     Fields fields{pacing.interval, 0, 1, 60.0, 0, pacing.after};
     auto line = Line(fields, {9, 5, 7, 42}, 0);
     check(line == "Mullion: present pacing interval=1 game=0 forced=1 refreshHz=60.0 capFps=0 afterMs=16.7 "
-                  "at=09:05:07.042",
+                  "timerFps=0 pace=duration periodMs=0.0 displaySync=0 at=09:05:07.042",
           "the line of forced 1 at 60 Hz: " + line);
     line = Line(Game(2), {23, 59, 59, 999}, 7);
     check(line == "Mullion: present pacing interval=2 game=2 forced=no refreshHz=60.0 capFps=0 afterMs=33.3 "
-                  "at=23:59:59.999 changes=7",
+                  "timerFps=0 pace=duration periodMs=0.0 displaySync=0 at=23:59:59.999 changes=7",
           "the line of the game's 2 with changes: " + line);
     Fields unknown{0, 0, kNotForced, DBL_MAX, 144, Pace(0, kNotForced, DBL_MAX, 144).after};
     line = Line(unknown, {0, 0, 0, 0}, 0);
     check(line == "Mullion: present pacing interval=0 game=0 forced=no refreshHz=unknown capFps=144 afterMs=6.9 "
-                  "at=00:00:00.000",
+                  "timerFps=0 pace=duration periodMs=0.0 displaySync=0 at=00:00:00.000",
           "the line of an unknown rate under a cap: " + line);
   }
 

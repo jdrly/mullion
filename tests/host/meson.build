@@ -76,6 +76,10 @@ test('host_present_frames', executable('host_present_frames', 'present_frames.cp
 # jdrly/mullion: MULLION_SYNC_INTERVAL's pacing, its grammar and the pacing line (src/mullion/mullion_present_pacing.hpp)
 test('host_present_pacing', executable('host_present_pacing', 'present_pacing.cpp',
                                        override_options : ['cpp_std=c++20'], native : true), suite : 'host')
+# jdrly/mullion: MULLION_PACE, MULLION_FPS_CAP and MULLION_DISPLAY_SYNC: the plan, the deadlines, the sleep, the
+# grammars and the pacing line's new fields (src/mullion/mullion_present_pacing.hpp, private ticket 49)
+test('host_present_wait', executable('host_present_wait', 'present_wait.cpp',
+                                     override_options : ['cpp_std=c++20'], native : true), suite : 'host')
 # jdrly/mullion: the bridge's texture descriptor with and without Metal's lossless compression
 # (src/winemetal/unix/texture_compression.h), and a texture made each way where the machine has a Metal device
 test('host_texture_compression', executable('host_texture_compression', 'texture_compression.c',

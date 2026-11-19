@@ -144,6 +144,35 @@ const unsigned memory::seconds = kMemstats();
 // game passes; unset, the game's (src/mullion/mullion_present_pacing.hpp). Read once per swap chain
 static sw::Switch<std::string> kSyncInterval{"MULLION_SYNC_INTERVAL", present_pacing::kUnset, present_pacing::Grammar};
 
+// MULLION_PACE: "wait" paces a Direct3D 12 swap chain's presents on the game's thread, which waits before each present
+// for the frame's deadline, and gives Metal no minimum duration; "duration" (the default) hands the pacing to Metal's
+// minimum duration, as before (src/mullion/mullion_present_pacing.hpp, private ticket 49). Read once per swap chain
+static sw::Switch<std::string> kPace{"MULLION_PACE", present_pacing::kPaceDuration, present_pacing::PaceGrammar};
+// MULLION_FPS_CAP: 20 to 1000, a deadline per frame on the game's thread, 1 / cap after the one before, on either path;
+// it takes over from d3d12.preferredMaxFrameRate. 0 or unset: none. Read once per swap chain
+static sw::Switch<unsigned> kFpsCap{"MULLION_FPS_CAP", 0, present_pacing::CapGrammar};
+// MULLION_DISPLAY_SYNC=1: the layer's display sync on where the presenter's thread takes the drawables
+// (MULLION_PRESENT_THREAD=1), so that a present waiting for the display holds up no command buffer; ignored, with a
+// line, elsewhere. Read once per swap chain
+static sw::Switch<bool> kDisplaySync{"MULLION_DISPLAY_SYNC", false, sw::exactlyOne};
+
+// the system's sleep for `ns` (NtDelayExecution, in 100 ns), as d9mt's frame cap sleeps
+static void
+SleepNs(uint64_t ns) {
+  using Delay = LONG(WINAPI *)(BOOLEAN, LARGE_INTEGER *);
+  static const Delay delay = [] {
+    HMODULE ntdll = GetModuleHandleW(L"ntdll.dll");
+    return ntdll ? reinterpret_cast<Delay>(GetProcAddress(ntdll, "NtDelayExecution")) : nullptr;
+  }();
+  if (!delay) {
+    Sleep(DWORD(ns / 1'000'000));
+    return;
+  }
+  LARGE_INTEGER relative;
+  relative.QuadPart = -int64_t((ns + 99) / 100);
+  delay(FALSE, &relative);
+}
+
 // the bridge's memory sampler writes its samples here: every MULLION_MEMSTATS seconds, or every 30 s for the pressure
 // line alone. Started at the first Present; never freed, since the sampler's thread writes it until the process ends
 static WMTMemorySample *
@@ -200,6 +229,13 @@ class MTLD3D12SwapChain final : public MTLDXGISubObject<IMTLDXGISwapChain, MTLD3
   // MULLION_SYNC_INTERVAL's interval, kNotForced for the game's, and the pacing line's limit
   int sync_forced_ = present_pacing::kNotForced;
   present_pacing::Limiter pacing_said_;
+  // MULLION_FPS_CAP's cap (0 for none), MULLION_PACE=wait, MULLION_DISPLAY_SYNC where it applies, and the game's
+  // thread's deadlines and sleep
+  unsigned timer_fps_ = 0;
+  bool pace_wait_ = false;
+  bool display_sync_ = false;
+  present_pacing::Cadence cadence_;
+  present_pacing::Sleeper sleeper_;
   ModeSetGuard modeset_guard_;
   mullion::mutex mutex_;
 
@@ -292,6 +328,22 @@ public:
     static std::atomic_bool said_sync;
     if (!present_pacing::Taken(sw::processRegistry().requested(kSyncInterval.name())) && !said_sync.exchange(true))
       Logger::warn("Mullion: MULLION_SYNC_INTERVAL is not 0 to 4; presents keep the game's interval");
+    // MULLION_PACE, MULLION_FPS_CAP and MULLION_DISPLAY_SYNC: a value neither takes warns once per process, without
+    // the value; display sync says once per process whether it applied
+    timer_fps_ = kFpsCap();
+    pace_wait_ = kPace() == present_pacing::kPaceWait;
+    static std::atomic_bool said_pace, said_cap, said_synced, said_unsynced;
+    if (!present_pacing::PaceTaken(sw::processRegistry().requested(kPace.name())) && !said_pace.exchange(true))
+      Logger::warn("Mullion: MULLION_PACE is not duration or wait; presents keep Metal's minimum duration");
+    if (!present_pacing::CapTaken(sw::processRegistry().requested(kFpsCap.name())) && !said_cap.exchange(true))
+      Logger::warn("Mullion: MULLION_FPS_CAP is not 0 or 20 to 1000; no cap");
+    if (kDisplaySync()) {
+      display_sync_ = presenter->syncToDisplay();
+      if (display_sync_ && !said_synced.exchange(true))
+        Logger::info("Mullion: display sync=1");
+      if (!display_sync_ && !said_unsynced.exchange(true))
+        Logger::warn("Mullion: MULLION_DISPLAY_SYNC=1 ignored: the present thread is off");
+    }
     wsi::WsiMode current_mode;
     if (wsi::getCurrentDisplayMode(monitor_, &current_mode) && current_mode.refreshRate.denominator != 0 &&
         current_mode.refreshRate.numerator != 0) {
@@ -374,9 +426,9 @@ public:
   // MULLION_SYNC_INTERVAL: the pacing line at the swap chain's first present and when a field changes, at most once a
   // second (mullion_present_pacing.hpp). Otherwise a compare of the fields
   void
-  PacingLine(UINT game, const present_pacing::Pacing &pacing) {
+  PacingLine(UINT game, const present_pacing::Pacing &pacing, const present_pacing::Plan &plan) {
     present_pacing::Fields fields{pacing.interval, game, sync_forced_, init_refresh_rate_, preferred_max_frame_rate,
-                                  pacing.after};
+                                  plan.after, timer_fps_, pace_wait_, plan.period_ns, display_sync_};
     auto now = [] {
       return uint64_t(std::chrono::duration_cast<std::chrono::nanoseconds>(
                           std::chrono::steady_clock::now().time_since_epoch()).count());
@@ -389,6 +441,15 @@ public:
     Logger::info(
         present_pacing::Line(fields, {local.wHour, local.wMinute, local.wSecond, local.wMilliseconds}, changes)
     );
+  }
+
+  // MULLION_PACE=wait and MULLION_FPS_CAP: the game's thread waits for the frame's deadline, `period_ns` after the one
+  // before (mullion_present_pacing.hpp). With no period: no clock read, nothing waited for
+  void
+  WaitForDeadline(uint64_t period_ns) {
+    uint64_t now = period_ns ? hitch::SteadyNs() : 0;
+    if (uint64_t until = cadence_.Next(now, period_ns))
+      sleeper_.SleepUntil(now, until, hitch::SteadyNs, SleepNs);
   }
 
   // a sample the bridge's memory sampler wrote since the last: its lines (mullion_memory.hpp), from the Present that
@@ -1050,10 +1111,13 @@ public:
     if (settings_.Update(desc_, fullscreen_desc_.Windowed, hWnd, *presenter))
       ApplyLayerProps();
 
-    // MULLION_SYNC_INTERVAL: the checks above take the game's interval, the pacing the forced one
-    auto pacing = present_pacing::Pace(SyncInterval, sync_forced_, init_refresh_rate_, preferred_max_frame_rate);
-    double vsync_duration = pacing.after;
-    PacingLine(SyncInterval, pacing);
+    // MULLION_SYNC_INTERVAL: the checks above take the game's interval, the pacing the forced one. MULLION_FPS_CAP takes
+    // over from d3d12.preferredMaxFrameRate, and MULLION_PACE says whether Metal or the game's thread paces
+    auto pacing = present_pacing::Pace(SyncInterval, sync_forced_, init_refresh_rate_,
+                                       present_pacing::CapInEffect(preferred_max_frame_rate, timer_fps_));
+    auto plan = present_pacing::Planned(pacing, timer_fps_, pace_wait_);
+    double vsync_duration = plan.after;
+    PacingLine(SyncInterval, pacing, plan);
 
     auto &backbuffer = backbuffers_[current_buffer_];
     // the frame presented last is the buffer before this one, which the frame shown keeps where it is not new
@@ -1070,6 +1134,8 @@ public:
       presenter->changeGammaRamp(static_cast<MTLDXGIOutput *>(target_.ptr())->GetGammaRamp());
     // MULLION_PRESENT_THREAD: the game, not the queue, waits for the presenter's thread to keep up
     presenter->throttle();
+    // MULLION_PACE=wait, MULLION_FPS_CAP: then the frame's deadline, in the HITCH line's present time
+    WaitForDeadline(plan.period_ns);
     if (present_queues_.empty()) {
       hr = queue_->Present(
           this, this->presenter.ptr(), backbuffer.ptr(), eye, present_semaphore_, vsync_duration, dump_id_,

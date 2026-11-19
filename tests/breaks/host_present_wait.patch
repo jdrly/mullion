@@ -1,0 +1,20 @@
+# the deadlines catch up: a late frame keeps them, and the frames after it come early
+diff --git a/src/mullion/mullion_present_pacing.hpp b/src/mullion/mullion_present_pacing.hpp
+--- a/src/mullion/mullion_present_pacing.hpp
++++ b/src/mullion/mullion_present_pacing.hpp
+@@ -214,10 +214,14 @@
+       period_ = period, deadline_ = 0;
+     if (!period)
+       return 0;
+-    if (!deadline_ || now >= deadline_) {
++    if (!deadline_ || now >= deadline_ + period) {
+       deadline_ = now + period;
+       return 0;
+     }
++    if (now >= deadline_) {
++      deadline_ += period;
++      return 0;
++    }
+     uint64_t until = deadline_;
+     deadline_ += period;
+     return until;
