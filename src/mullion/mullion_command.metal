@@ -24,6 +24,7 @@
 #include <metal_stdlib>
 #include "../airconv/airconv_ray.h"
 #include "mullion_command_constants.hpp"
+#include "mullion_tessellation_fit.hpp"
 
 using namespace metal;
 using namespace mullion;
@@ -1735,6 +1736,7 @@ static tess_counts tessellation_counts(device const uint *heap, TessellationDraw
 ) {
   threadgroup uint sums[32][3];
   threadgroup uint carry[3];
+  threadgroup uint unfit; // jdrly/mullion: the first draw that doesn't fit (tessellation_first_unfit)
   if (thread_index < 3)
     carry[thread_index] = 0;
   device uint *counts = heap + pass.counts;
@@ -1768,11 +1770,15 @@ static tess_counts tessellation_counts(device const uint *heap, TessellationDraw
 
   // the draws: those whose points and indices end within the arena
   device TessellationDraw *draws = (device TessellationDraw *)(heap + pass.draws);
+  // jdrly/mullion: and every draw before them too, as thread 0 reads below: past a wrap of the 32-bit sums a draw's own
+  // ends may land inside the arena again (mullion_tessellation_fit.hpp)
+  if (thread_index == 0)
+    unfit = tessellation_first_unfit(counts, draws, pass.draw_count, pass.point_room, pass.index_room);
+  threadgroup_barrier(mem_flags::mem_threadgroup);
   for (uint d = thread_index; d < pass.draw_count; d += threads) {
     TessellationDraw draw = draws[d];
     device const uint *start = counts + 3 * draw.first, *end = counts + 3 * (draw.first + draw.patches);
-    // triangles against the room's whole ones: three times a pass's triangles may not fit in 32 bits
-    bool fits = end[1] <= pass.point_room && end[2] <= pass.index_room / 3;
+    bool fits = d < unfit;
     device uint *arguments = heap + draw.arguments;
     arguments[0] = fits ? 3 * (end[2] - start[2]) : 0;
     arguments[1] = 1;
@@ -1784,14 +1790,7 @@ static tess_counts tessellation_counts(device const uint *heap, TessellationDraw
   }
   if (thread_index == 0) {
     // the frames of the patches before the first draw that does not fit
-    uint fit = pass.patches;
-    for (uint d = 0; d < pass.draw_count; d++) {
-      device const uint *end = counts + 3 * (draws[d].first + draws[d].patches);
-      if (end[1] > pass.point_room || end[2] > pass.index_room / 3) {
-        fit = draws[d].first;
-        break;
-      }
-    }
+    uint fit = unfit < pass.draw_count ? draws[unfit].first : pass.patches;
     pass.frames = counts[3 * fit];
     pass.emit_groups[0] = (pass.frames + kTessellationThreads - 1) / kTessellationThreads;
     pass.emit_groups[1] = 1;

@@ -124,6 +124,9 @@ test('host_window_lines', executable('host_window_lines', 'window_lines.cpp', ov
 # a command allocator's Reset with lists in flight: its MULLION-RESET-IN-FLIGHT line and its RESETINFLIGHT section
 test('host_reset_in_flight', executable('host_reset_in_flight', 'reset_in_flight.cpp',
                                         override_options : ['cpp_std=c++20'], native : true), suite : 'host')
+# jdrly/mullion: which draws the compute tessellator draws, when its 32-bit sums wrap (private ticket 58)
+test('host_tessellation_fit', executable('host_tessellation_fit', 'tessellation_fit.cpp',
+                                         override_options : ['cpp_std=c++20'], native : true), suite : 'host')
 test('host_rc_self_move', executable('host_rc_self_move', 'rc.cpp',
                                     override_options : ['cpp_std=c++20'], native : true), suite : 'host')
 test('host_denorm', executable('host_denorm', 'denorm.cpp', include_directories : include_directories('metal'),
