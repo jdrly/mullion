@@ -135,8 +135,19 @@ test('host_tessellator',
                 cpp_args : ['-w'], override_options : ['cpp_std=c++20'], native : true),
      suite : 'host', timeout : 300)
 # the converter's own functions, built for the host as the bridge links them
+test('host_readerio_frame', executable('host_readerio_frame', 'readerio_frame.cpp',
+     include_directories : llvm_include_path_darwin, dependencies : airconv_dep_darwin,
+     native : true), suite : 'host')
 test('host_ray_dispatchers',
      executable('host_ray_dispatchers', 'ray_dispatchers.cpp', dependencies : airconv_dep_darwin,
+                cpp_args : ['-w'], override_options : ['cpp_std=c++20'], native : true),
+     suite : 'host', timeout : 120)
+test('host_parse_shared',
+     executable('host_parse_shared', 'parse_shared.cpp', dependencies : airconv_dep_darwin,
+                cpp_args : ['-w'], override_options : ['cpp_std=c++20'], native : true),
+     suite : 'host', timeout : 120)
+test('host_coherent_version',
+     executable('host_coherent_version', 'coherent_version.cpp', dependencies : [airconv_dep_darwin, dxbc_parser_native_dep],
                 cpp_args : ['-w'], override_options : ['cpp_std=c++20'], native : true),
      suite : 'host', timeout : 120)
 # which DXIL operations shaders use, for tests/coverage.py; it reads DXIL with the LLVM the converter is built with
@@ -171,6 +182,11 @@ test('host_metal4_parts',
                              '-weak_framework', 'QuartzCore', '-weak_framework', 'ColorSync',
                              '-weak_framework', 'Cocoa', '-weak_framework', 'IOKit', '-lsqlite3'],
                 native : true),
+     suite : 'host', timeout : 120)
+# converted texture reads and atomics through Apple's verifier, which xcrun finds beside Metal's compiler
+test('host_texel_forms',
+     executable('host_texel_forms', 'texel_forms.cpp', dependencies : [airconv_dep_darwin, dxbc_parser_native_dep],
+                cpp_args : ['-w'], override_options : ['cpp_std=c++20'], native : true),
      suite : 'host', timeout : 120)
 test('host_diag_profile', find_program('python3', native : true), args : files('diag.py'), suite : 'host')
 test('host_mutate', find_program('python3', native : true), args : files('mutate.py'), suite : 'host')

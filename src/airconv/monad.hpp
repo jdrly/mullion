@@ -2,8 +2,11 @@
 #include "llvm/Support/Error.h"
 #include <coroutine>
 #include <functional>
+#include <memory>
+#include <optional>
 #include <type_traits>
 #include <utility>
+#include <vector>
 
 template <typename T, typename G>
 concept MoveAndInvocable =
@@ -42,7 +45,7 @@ template <typename Env, typename V> class ReaderIO {
 
 public:
   template <std::invocable<Env> T> ReaderIO(T &&ff) {
-    ops.push_back(new ErasureFunction<T>(std::forward<T>(ff)));
+    ops.push_back(std::make_unique<ErasureFunction<T>>(std::forward<T>(ff)));
   }
   ~ReaderIO() {
     destroy();
@@ -50,7 +53,6 @@ public:
 
   void destroy() {
     while (!ops.empty()) {
-      delete ops.back();
       ops.pop_back();
     }
   }
@@ -60,18 +62,11 @@ public:
       struct environment_cast<Env, Env2> cast;
       return castable.build(cast.cast(e));
     };
-    ops.push_back(new ErasureFunction<decltype(f)>(std::move(f)));
+    ops.push_back(std::make_unique<ErasureFunction<decltype(f)>>(std::move(f)));
   }
 
-  ReaderIO(ReaderIO &&other) {
-    ops = std::move(other.ops);
-    other.ops = {};
-  };
-  ReaderIO &operator=(ReaderIO &&move_assign) {
-    ops = std::move(move_assign.ops);
-    move_assign.ops = {};
-    return *this;
-  };
+  ReaderIO(ReaderIO &&other) = default;
+  ReaderIO &operator=(ReaderIO &&move_assign) = default;
   ReaderIO(const ReaderIO &copy) = delete;
   ReaderIO &operator=(const ReaderIO &copy_assign) = delete;
 
@@ -87,7 +82,7 @@ public:
       i++;
       if (i == ops.size()) {
         destroy();
-        return ret.get();
+        return ret;
       }
     }
     __builtin_unreachable();
@@ -95,22 +90,23 @@ public:
 
   struct promise_type {
     Env *to_be_filled = nullptr;
-    llvm::Expected<V> *return_value_ = nullptr;
+    std::optional<llvm::Expected<V>> return_value_;
     ReaderIO<Env, V> get_return_object() {
-      return ReaderIO<Env, V>([this](Env ctx) -> llvm::Expected<V> {
-        this->to_be_filled =
-          &ctx; // I'm sure to_be_filled is only accessed within the scope?
-        auto h = std::coroutine_handle<promise_type>::from_promise(*this);
+      using Handle = std::coroutine_handle<promise_type>;
+      auto destroy_frame = [](promise_type *p) { Handle::from_promise(*p).destroy(); };
+      std::unique_ptr<promise_type, decltype(destroy_frame)> frame(this);
+      return ReaderIO<Env, V>([frame = std::move(frame)](Env ctx) mutable -> llvm::Expected<V> {
+        auto owner = std::move(frame);
+        auto &promise = *owner;
+        promise.to_be_filled = &ctx;
+        auto h = Handle::from_promise(promise);
         h.resume();
-        assert(return_value_ && "no returnvalue");
+        assert(promise.return_value_ && "no returnvalue");
+        auto r = std::move(*promise.return_value_);
         assert(
-          (h.done() == bool(*return_value_)) &&
+          (h.done() == bool(r)) &&
           "unexpected suspension of coroutine"
         );
-        auto r = std::move(*return_value_);
-        delete return_value_;
-        return_value_ = nullptr;
-        h.destroy(); // should I destroy?
         return r;
       });
     };
@@ -123,11 +119,10 @@ public:
       llvm::Expected<ResumeVal> val;
       bool await_ready() noexcept { return bool(val); }
       void await_suspend(const std::coroutine_handle<promise_type> &h) {
-        h.promise().return_value_ = new llvm::Expected<V>(val.takeError());
+        h.promise().return_value_.emplace(val.takeError());
       }
-      constexpr ResumeVal await_resume() const noexcept {
-        return val.get(); // this function will be not called again?
-        // thus val is not used anymore
+      ResumeVal await_resume() {
+        return std::forward<ResumeVal>(val.get());
       }
     };
     template <std::move_constructible S>
@@ -144,20 +139,20 @@ public:
     };
 
     void return_value(V value) {
-      return_value_ = new llvm::Expected<V>(value);
+      return_value_.emplace(std::forward<V>(value));
     };
   };
 
   ReaderIO &concat(ReaderIO&& b) {
-    for(auto f :b.ops) {
-      ops.push_back(f);
+    for(auto &f : b.ops) {
+      ops.push_back(std::move(f));
     }
-    b.ops = {};
+    b.ops.clear();
     return *this;
   };
 
 private:
-  std::vector<BaseFunction *> ops;
+  std::vector<std::unique_ptr<BaseFunction>> ops;
 };
 
 /* bind */

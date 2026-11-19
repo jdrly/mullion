@@ -116,13 +116,13 @@ public:
           auto device = self->device_;
           if (!(self->pso = device->Archived(info, error, [&](auto &info, auto &error) {
                   return device->GetMTLDevice().newComputePipelineState(info, error);
-                })))
+                }, self->library_key)))
             self->Failed(shader_lines::Step::Pipeline, {}, error.description().getUTF8String());
         });
-        DeferredPipeline::Queue(deferred);
+        device_->Defer(deferred, library_key);
       } else if (!(pso = device_->Archived(info, err, [&](auto &info, auto &error) {
                      return metal.newComputePipelineState(info, error);
-                   }))) {
+                   }, library_key))) {
         Failed(shader_lines::Step::Pipeline, {&pDesc->CS, 1}, err.description().getUTF8String());
         return E_FAIL;
       }
