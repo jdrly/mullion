@@ -2,11 +2,13 @@
 # family native
 --- a/src/d3d12/d3d12_device.hpp
 +++ b/src/d3d12/d3d12_device.hpp
-@@ -779,6 +779,5 @@
+@@ -779,8 +779,5 @@
    // or not (macOS 27.3)
    void
    Defer(std::shared_ptr<DeferredPipeline> pipeline, const Sha1Digest &key) {
 -    if (!InArchive(key))
 -      DeferredPipeline::Queue(std::move(pipeline));
+-    else
+-      pipeline->at_draw = true; // jdrly/mullion: ARCHIVEDRAW
 +    DeferredPipeline::Queue(std::move(pipeline));
    }
