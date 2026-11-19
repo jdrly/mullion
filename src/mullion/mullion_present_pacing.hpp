@@ -201,31 +201,39 @@ Planned(const Pacing &pacing, unsigned timer_fps, bool wait) {
   return {0, std::max(paced_ns, timer_ns)};
 }
 
-// a swap chain's deadlines, one per frame, each `period` after the one before. A frame at or past its deadline doesn't
-// wait, and the next deadline is a period after it: a late frame moves the deadlines, and the frames after it don't
-// catch up (d9mt's Cadence keeps its grid for a frame late by less than a period; the ticket asks for no catch-up)
+// a swap chain's deadlines: each frame's is its own period after the time the frame before it presented, which is that
+// frame's deadline, or later when it came or woke late. So a late frame moves the deadlines and the frames after it
+// don't catch up (d9mt's Cadence keeps its grid for a frame late by less than a period; the ticket asks for no
+// catch-up), and a period that changes from one frame to the next (a game alternating its intervals under a cap)
+// still waits, counted from the frame before
 class Cadence {
 public:
-  // a present at `now` (steady ns) paced every `period` ns: the deadline to wait for, or 0 for none. The first present,
-  // and the first after the period changed, wait for nothing and start the deadlines
+  // a present at `now` (steady ns) paced by `period` ns: the deadline to wait for, or 0 for none. The first present, and
+  // the first after one with no period, wait for nothing and start the deadlines. After a wait, Woke gives the time
   uint64_t
   Next(uint64_t now, uint64_t period) {
-    if (period != period_)
-      period_ = period, deadline_ = 0;
-    if (!period)
-      return 0;
-    if (!deadline_ || now >= deadline_) {
-      deadline_ = now + period;
+    if (!period) {
+      started_ = false;
       return 0;
     }
-    uint64_t until = deadline_;
-    deadline_ += period;
-    return until;
+    if (!started_ || now >= shown_ + period) {
+      started_ = true, shown_ = now;
+      return 0;
+    }
+    shown_ += period;
+    return shown_;
+  }
+
+  // the wait for Next's deadline ended at `at`: a wake past the deadline moves the deadlines after it
+  void
+  Woke(uint64_t at) {
+    shown_ = std::max(shown_, at);
   }
 
 private:
-  uint64_t period_ = 0;
-  uint64_t deadline_ = 0;
+  // a paced present went on, and when
+  bool started_ = false;
+  uint64_t shown_ = 0;
 };
 
 // d9mt's Sleeper (d3d9_frame_cap.h): sleeps to a deadline with the system's sleep in halves, down to a last piece of at

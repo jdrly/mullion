@@ -449,7 +449,7 @@ public:
   WaitForDeadline(uint64_t period_ns) {
     uint64_t now = period_ns ? hitch::SteadyNs() : 0;
     if (uint64_t until = cadence_.Next(now, period_ns))
-      sleeper_.SleepUntil(now, until, hitch::SteadyNs, SleepNs);
+      cadence_.Woke(sleeper_.SleepUntil(now, until, hitch::SteadyNs, SleepNs));
   }
 
   // a sample the bridge's memory sampler wrote since the last: its lines (mullion_memory.hpp), from the Present that

@@ -3,9 +3,10 @@
 // comes from the interval alone (d3d12.preferredMaxFrameRate is ignored) and the game's thread waits for the cap's
 // frame; with MULLION_PACE=wait, Metal gets no duration and the game's thread waits for the longer of the interval's
 // refreshes (or preferredMaxFrameRate's frame) and the cap's frame; a rate above the display's isn't held to it, and an
-// unknown refresh rate waits for nothing. The deadlines: even, a period apart; a late frame moves them and the frames
-// after it don't catch up; a changed period starts them again. The sleep: never before the deadline, and with a
-// system sleep that oversleeps by half, within the spin of it once it has seen that. The switches' grammars, the
+// unknown refresh rate waits for nothing. The deadlines: even, a period apart; a late frame, or a late wake, moves
+// them and the frames after it don't catch up; a period that changes from frame to frame still waits, counted from
+// the frame before. The sleep: never before the deadline, and with a system sleep that oversleeps by half, within the
+// spin of it once it has seen that, alone and with the deadlines. The switches' grammars, the
 // values the session header prints, and the pacing line's new fields
 #include "../../src/mullion/mullion_present_pacing.hpp"
 #include "../../src/util/util_switch.hpp"
@@ -52,6 +53,7 @@ Run(Cadence &cadence, uint64_t period, const std::vector<uint64_t> &work, uint64
     if (uint64_t until = cadence.Next(now, period)) {
       check(until > now, "a deadline is never in the past");
       now = until;
+      cadence.Woke(now);
     }
     presents.push_back(now);
   }
@@ -144,13 +146,67 @@ main() {
     check(exact.Next(period + ms, period) == 2 * period, "and the next deadline is a period after it");
   }
 
-  // a changed period starts the deadlines again, and no period waits for nothing
+  // a period that changes from frame to frame (a game alternating intervals 0 and 2 under a cap of 40 at 60 Hz: 25 and
+  // 33.3 ms) still waits, each frame its own period after the one before
   {
     Cadence cadence;
-    check(cadence.Next(0, 25 * ms) == 0 && cadence.Next(ms, 25 * ms) == 25 * ms, "deadlines at 25 ms");
-    check(cadence.Next(2 * ms, 10 * ms) == 0, "a new period: the first present waits for nothing");
-    check(cadence.Next(3 * ms, 10 * ms) == 12 * ms, "then a period after it");
-    check(cadence.Next(4 * ms, 0) == 0 && cadence.Next(5 * ms, 0) == 0, "no period: no wait");
+    uint64_t now = 1000 * ms, last = 0;
+    for (int frame = 0; frame < 8; frame++) {
+      uint64_t period = frame % 2 ? 33'333'333 : 25 * ms;
+      now += 2 * ms; // the game's own work
+      uint64_t until = cadence.Next(now, period);
+      if (frame) {
+        check(until == last + period, "alternating periods: frame " + std::to_string(frame) + " waits until " +
+                                          std::to_string(until) + ", a period after the one before");
+        now = until;
+      }
+      cadence.Woke(now);
+      last = now;
+    }
+    check(cadence.Next(now + ms, 0) == 0 && cadence.Next(now + 2 * ms, 0) == 0, "no period: no wait");
+    check(cadence.Next(now + 3 * ms, 25 * ms) == 0, "a period after none: the first present waits for nothing");
+    check(cadence.Next(now + 4 * ms, 25 * ms) == now + 28 * ms, "then a period after it");
+  }
+
+  // a wake past the deadline moves the deadlines after it: the next frame isn't early
+  {
+    Cadence cadence;
+    constexpr uint64_t period = 25 * ms;
+    check(cadence.Next(1000 * ms, period) == 0, "the first present");
+    uint64_t until = cadence.Next(1001 * ms, period);
+    check(until == 1025 * ms, "waits until 1025 ms");
+    cadence.Woke(1030 * ms); // woke 5 ms late
+    check(cadence.Next(1031 * ms, period) == 1055 * ms,
+          "after a wake 5 ms late, the next deadline is a period after the wake, not 1050 ms");
+    // a wake on time moves nothing
+    cadence.Woke(1055 * ms);
+    check(cadence.Next(1056 * ms, period) == 1080 * ms, "after a wake on time, a period after the deadline");
+  }
+
+  // the cadence and the sleep together, with a system sleep that oversleeps by half: every frame a period or more
+  // after the one before, and never more than the spin's step over it once the sleep has seen the oversleep
+  {
+    uint64_t clock = 1000 * ms;
+    auto read = [&] { return clock += 1000; };
+    auto sleep = [&](uint64_t ns) { clock += ns + ns / 2; };
+    Cadence cadence;
+    Sleeper sleeper;
+    constexpr uint64_t period = 25 * ms;
+    uint64_t last = 0;
+    for (int frame = 0; frame < 40; frame++) {
+      clock += 3 * ms;
+      uint64_t now = read();
+      if (uint64_t until = cadence.Next(now, period))
+        cadence.Woke(now = sleeper.SleepUntil(now, until, read, sleep));
+      if (frame) {
+        check(now - last >= period, "frame " + std::to_string(frame) + " came " + std::to_string(now - last) +
+                                        " ns after the one before: never early");
+        if (frame >= 4)
+          check(now - last <= period + 2000, "frame " + std::to_string(frame) + " came " +
+                                                 std::to_string(now - last) + " ns after the one before");
+      }
+      last = now;
+    }
   }
 
   // the sleep, against a clock that a system sleep moves by 1.5 times what it was asked for (Wine on macOS: about

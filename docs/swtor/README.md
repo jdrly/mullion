@@ -609,9 +609,11 @@ minimum duration comes from the interval alone. On `wait`, the game's thread wai
 isn't held to the display's rate: a cap of 40 on a 60 Hz display presents every 25 ms, and the display shows the
 frames for one or two refreshes each.
 
-The deadlines (`Cadence`): the first present waits for nothing. A frame that comes before its deadline waits for it,
-and the next deadline is a period after it. A frame at or past its deadline presents at once, and the next deadline
-is a period after that frame. So a late frame moves the deadlines, and the frames after it don't catch up. The wait
+The deadlines (`Cadence`): the first present waits for nothing. Each frame's deadline is its period after the time
+the frame before it went on: that frame's deadline, or later when it came late or its wait woke late. A frame at or
+past its deadline presents at once. So a late frame moves the deadlines and the frames after it don't catch up, and a
+period that changes from frame to frame (a game alternating its intervals under a cap) still waits, counted from the
+frame before. The wait
 (`Sleeper`, d9mt's): the system's sleep (`NtDelayExecution`) in halves down to a last piece of at most 1 ms, then a
 spin. The spin lasts as long as the last piece recently overslept, between 200 µs and 4 ms, because macOS coalesces
 timers and Wine's sleep wakes late. The wait counts in the `HITCH` line's `present` time and in the profile's
@@ -633,10 +635,12 @@ On `duration` with a game faster than its pace, the minimum duration keeps each 
 The two waiting drawables fill up and `nextDrawable` blocks the presenter's thread. The frames behind it reach the
 throttle's two, and the game waits there. A frame then waits behind about two drawables and a frame, about three
 refreshes from `Present` to the screen. The 48.70 ms above is 2.9 refreshes at 60 Hz, which fits that queue. So the
-latency is likely the queue more than compositing alone; the HUD's Present Delay wasn't measured apart from it.
+latency may be the queue more than compositing alone. That is a hypothesis: the throttle's 2 (with its 100 ms
+timeout) and the pool's 3 are limits, not what Jan's run held, and nothing measured them apart.
 Uncapped, nothing holds a drawable, so nothing queues. On `wait` the game presents at most once a period: while a
 frame's GPU work and its copy take less than the period, no drawable waits and the throttle never binds. Its depth of
-2 then adds nothing; the Present Delay of the M5 Max check says whether that holds.
+2 then adds nothing, unless `nextDrawable` itself blocks; the Present Delay of the M5 Max check says whether that
+holds.
 
 The arithmetic, the deadlines, the sleep and the pacing line's limit are in
 [`mullion_present_pacing.hpp`](../../src/mullion/mullion_present_pacing.hpp), which `host_present_pacing` and
@@ -647,6 +651,11 @@ The refresh rate is the one read when the swap chain was made, so a window moved
 the old pacing; fixing that is not this switch's change. Entering full screen with a display mode change sets it to
 that mode's rate, and leaving such a full screen makes it `unknown`, after which, without a cap, no interval paces anything: the code
 at `8b3fb93` does the same, and the line's `refreshHz=unknown` shows it. On `wait` an unknown rate waits for nothing too.
+
+On `wait` the deadlines are a timer at that rate, with no phase against the display's refreshes: without display sync
+a frame goes on when its deadline comes, mid-refresh or not. `wait` with `MULLION_DISPLAY_SYNC=1` is the pairing that
+latches each frame to a refresh. Pacing from the display's own timing (`CADisplayLink`, or the drawables'
+`presentedTime`) is a follow-up if the timer falls short on the M5 Max (the dispatcher's decision, 2026-11-20).
 
 Needs the Mac: that a forced interval of 1 holds a real swap chain at the display's rate through the presenter's
 thread is a check on a Mac. Whether `MULLION_PACE=wait` keeps the window on the direct path, at what Present Delay

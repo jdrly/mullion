@@ -10,4 +10,4 @@ diff --git a/src/mullion/mullion_present_pacing.hpp b/src/mullion/mullion_presen
 +  return {0, timer_ns};
  }
  
- // a swap chain's deadlines, one per frame, each `period` after the one before. A frame at or past its deadline doesn't
+ // a swap chain's deadlines: each frame's is its own period after the time the frame before it presented, which is that

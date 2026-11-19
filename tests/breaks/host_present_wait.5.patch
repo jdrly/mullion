@@ -2,7 +2,7 @@
 diff --git a/src/mullion/mullion_present_pacing.hpp b/src/mullion/mullion_present_pacing.hpp
 --- a/src/mullion/mullion_present_pacing.hpp
 +++ b/src/mullion/mullion_present_pacing.hpp
-@@ -265,8 +265,6 @@
+@@ -273,8 +273,6 @@
          late_ns_ = late > late_ns_ ? late : late_ns_ - (late_ns_ - late) / 64;
        }
      }
