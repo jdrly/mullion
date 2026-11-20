@@ -4,9 +4,9 @@
 @@ -52,7 +52,7 @@
    make();
    auto ns = std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::steady_clock::now() - start).count();
-   to.made.fetch_add(1, std::memory_order_relaxed);
+   // `made` last, released: a window that sees it sees its miss and its time (Section)
 -  if (misses_here != before)
 +  if (misses_here)
      to.missed.fetch_add(1, std::memory_order_relaxed);
    to.ns.fetch_add(uint64_t(ns), std::memory_order_relaxed);
- }
+   to.made.fetch_add(1, std::memory_order_release);

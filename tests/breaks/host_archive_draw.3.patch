@@ -1,0 +1,17 @@
+# a second without a pipeline takes the misses and times counted before their pipeline, which no section then says
+--- a/src/mullion/mullion_archive_draw.hpp
++++ b/src/mullion/mullion_archive_draw.hpp
+@@ -69,11 +69,11 @@
+ inline std::string
+ Section(Counters &from, Last &last) {
+   auto made = from.made.load(std::memory_order_acquire);
+-  if (made == last.made)
+-    return {};
+   auto missed = from.missed.load(std::memory_order_relaxed), ns = from.ns.load(std::memory_order_relaxed);
+   auto window = made - std::exchange(last.made, made), window_missed = missed - std::exchange(last.missed, missed),
+        window_ns = ns - std::exchange(last.ns, ns);
++  if (!window)
++    return {};
+   char text[96];
+   std::snprintf(text, sizeof(text), "made=%llu missed=%llu ms=%.1f", (unsigned long long)window,
+                 (unsigned long long)window_missed, double(window_ns) / 1e6);

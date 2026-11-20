@@ -1,7 +1,8 @@
 // jdrly/mullion: contract: a pipeline made at its first draw from the archive (src/mullion/mullion_archive_draw.hpp,
 // private ticket 58) counts once in ARCHIVEDRAW's `made`, and in `missed` too when a lookup of its own missed, not when
 // another thread's did; nothing is counted with MULLION_STATS off; the section has the fields and order of
-// docs/swtor/README.md § Log lines, says only the second's pipelines, and nothing for a second without one.
+// docs/swtor/README.md § Log lines, says only the second's pipelines, and nothing for a second without one, which
+// leaves a miss or a time already counted for the second that counts its pipeline.
 #include "../../src/mullion/mullion_archive_draw.hpp"
 #include <thread>
 
@@ -41,6 +42,14 @@ main() {
   archive_draw::Made(true, [] {}, counters);
   text = archive_draw::Section(counters, last);
   check(text.rfind("made=1 missed=0 ms=", 0) == 0, "a later second says only its own: " + text);
+
+  // a miss and a time counted before their pipeline's `made` (another thread's make, between a window's reads) wait
+  // for the window that sees the pipeline
+  counters.missed.fetch_add(1), counters.ns.fetch_add(2000000);
+  check(archive_draw::Section(counters, last).empty(), "a second whose pipeline isn't counted yet has no section");
+  counters.made.fetch_add(1);
+  text = archive_draw::Section(counters, last);
+  check(text == "made=1 missed=1 ms=2.0", "the next second has that pipeline, its miss and its time: " + text);
 
   if (failures)
     return 1;

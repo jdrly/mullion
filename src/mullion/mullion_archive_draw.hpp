@@ -51,10 +51,11 @@ Made(bool on, Make &&make, Counters &to = counters) {
   auto start = std::chrono::steady_clock::now();
   make();
   auto ns = std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::steady_clock::now() - start).count();
-  to.made.fetch_add(1, std::memory_order_relaxed);
+  // `made` last, released: a window that sees it sees its miss and its time (Section)
   if (misses_here != before)
     to.missed.fetch_add(1, std::memory_order_relaxed);
   to.ns.fetch_add(uint64_t(ns), std::memory_order_relaxed);
+  to.made.fetch_add(1, std::memory_order_release);
 }
 
 // what was counted at the window before
@@ -62,15 +63,17 @@ struct Last {
   uint64_t made = 0, missed = 0, ns = 0;
 };
 
-// ARCHIVEDRAW's text for the second that ends: what was made since `last`; "" for a second without one
+// ARCHIVEDRAW's text for the second that ends: what was made since `last`; "" for a second without one. `made` is read
+// first: a miss or a time counted before its `made` is visible stays for the window that sees it, as a second without
+// a pipeline leaves `last` as it was
 inline std::string
 Section(Counters &from, Last &last) {
-  auto made = from.made.load(std::memory_order_relaxed), missed = from.missed.load(std::memory_order_relaxed),
-       ns = from.ns.load(std::memory_order_relaxed);
+  auto made = from.made.load(std::memory_order_acquire);
+  if (made == last.made)
+    return {};
+  auto missed = from.missed.load(std::memory_order_relaxed), ns = from.ns.load(std::memory_order_relaxed);
   auto window = made - std::exchange(last.made, made), window_missed = missed - std::exchange(last.missed, missed),
        window_ns = ns - std::exchange(last.ns, ns);
-  if (!window)
-    return {};
   char text[96];
   std::snprintf(text, sizeof(text), "made=%llu missed=%llu ms=%.1f", (unsigned long long)window,
                 (unsigned long long)window_missed, double(window_ns) / 1e6);
