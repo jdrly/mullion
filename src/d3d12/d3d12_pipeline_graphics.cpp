@@ -1277,6 +1277,18 @@ public:
   ~MTLD3D12GraphicsPipelineStateImpl() {
     if (deferred)
       deferred->Cancel();
+    // jdrly/mullion: the native tessellator's Metal pipelines (the hull kernel, the patch pipeline and its variants)
+    // sit in recorded commands as handles until a queue's thread encodes them: they end after the work in flight, as
+    // ADR 0002 has every new owner of a Metal object do (private ticket 58). The mesh pipeline's are the gap ADR 0002
+    // lists for pipelines
+    if (hull || pso_patches) {
+      std::lock_guard<mullion::mutex> lock(render_targets_mutex_);
+      decltype(pipeline_descriptors_)::node_type patch_variants;
+      if (pso_patches)
+        patch_variants = pipeline_descriptors_.extract(pso_patches.handle);
+      EndAfterWorkInFlight(device_, [hull = std::move(hull), patches = std::move(pso_patches),
+                                     variants = std::move(patch_variants)] {});
+    }
   }
 
   // made when first drawn
@@ -2290,9 +2302,13 @@ public:
             }
         );
         pso_tess.native = pso_tess.compute = false;
+        // jdrly/mullion: its pixel shader for the compute tessellator's patch varying, made here (upstream made it
+        // after InitializePSO, which the mesh pipeline's call above has already given blend_mask_)
+        if (patch_func && hull_func && patch_varying)
+          patch_ps = pixel_shader_(false, false, false, blend_mask_, false, false, true);
         // jdrly/mullion: a tessellator whose functions don't convert leaves the pipeline the mesh pipeline, as one Metal
         // doesn't make does below, where upstream failed the pipeline; the conversion's MULLION-SHADER line names it
-        if (!patch_func || !hull_func) {
+        if (!patch_func || !hull_func || (patch_varying && !patch_ps)) {
           static std::atomic_bool said;
           if (!said.exchange(true, std::memory_order_relaxed))
             Logger::warn(str::format("MULLION-NATIVE-TESSELLATION mesh pipeline=", name));
@@ -2313,11 +2329,8 @@ public:
           return E_FAIL;
         info.vertex_function = patch_func.handle;
         info.fragment_function = ps_func.handle;
-        if (patch_varying) {
-          if (!(patch_ps = pixel_shader_(false, false, false, blend_mask_, false, false, true)))
-            return FAIL(E_INVALIDARG);
+        if (patch_varying)
           info.fragment_function = patch_ps;
-        }
         info.input_primitive_topology = WMTPrimitiveTopologyClassTriangle;
         if (!compute) {
           info.tessellation_partition_mode = WMTTessellationPartitionModeInteger;
