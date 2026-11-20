@@ -1,10 +1,12 @@
 // jdrly/mullion: contract: a pipeline made at its first draw from the archive (src/mullion/mullion_archive_draw.hpp,
 // private ticket 58) counts once in ARCHIVEDRAW's `made`, and in `missed` too when a lookup of its own missed, not when
 // another thread's did; nothing is counted with MULLION_STATS off; the section has the fields and order of
-// docs/swtor/README.md § Log lines, says only the second's pipelines, and nothing for a second without one, which
-// leaves a miss or a time already counted for the second that counts its pipeline.
+// docs/swtor/README.md § Log lines, says only the second's pipelines, and nothing for a second without one; a window
+// holds whole pipelines, their misses and times with them, while others are being made.
 #include "../../src/mullion/mullion_archive_draw.hpp"
+#include <atomic>
 #include <thread>
+#include <vector>
 
 using namespace mullion;
 
@@ -43,13 +45,38 @@ main() {
   text = archive_draw::Section(counters, last);
   check(text.rfind("made=1 missed=0 ms=", 0) == 0, "a later second says only its own: " + text);
 
-  // a miss and a time counted before their pipeline's `made` (another thread's make, between a window's reads) wait
-  // for the window that sees the pipeline
-  counters.missed.fetch_add(1), counters.ns.fetch_add(2000000);
-  check(archive_draw::Section(counters, last).empty(), "a second whose pipeline isn't counted yet has no section");
-  counters.made.fetch_add(1);
-  text = archive_draw::Section(counters, last);
-  check(text == "made=1 missed=1 ms=2.0", "the next second has that pipeline, its miss and its time: " + text);
+  // pipelines made on four threads while the windows are taken: each window holds whole pipelines, never more
+  // misses than pipelines, and the windows add up to what was made
+  {
+    archive_draw::Counters many;
+    archive_draw::Last seen;
+    std::atomic<bool> done{false};
+    uint64_t made = 0, missed = 0;
+    bool whole = true;
+    std::thread windows([&] {
+      auto take = [&] {
+        auto window = archive_draw::Section(many, seen);
+        unsigned long long m = 0, x = 0;
+        if (!window.empty() && std::sscanf(window.c_str(), "made=%llu missed=%llu", &m, &x) == 2)
+          made += m, missed += x, whole = whole && x <= m;
+      };
+      while (!done)
+        take();
+      take();
+    });
+    std::vector<std::thread> makers;
+    for (int t = 0; t < 4; t++)
+      makers.emplace_back([&] {
+        for (int i = 0; i < 20000; i++)
+          archive_draw::Made(true, [&] { if (i % 2) archive_draw::Missed(); }, many);
+      });
+    for (auto &maker : makers)
+      maker.join();
+    done = true;
+    windows.join();
+    check(whole, "no window has more misses than pipelines");
+    check(made == 80000 && missed == 40000, "the windows add up to the 80000 pipelines and their 40000 misses");
+  }
 
   if (failures)
     return 1;

@@ -17,13 +17,23 @@
 #include <chrono>
 #include <cstdint>
 #include <cstdio>
+#include <mutex>
 #include <string>
 #include <utility>
 
 namespace mullion::archive_draw {
 
+// the three counts move together, under one lock, so that a window holds whole pipelines: a make takes it once, after
+// a pipeline's whole make, and a STATS window once a second
 struct Counters {
-  std::atomic<uint64_t> made{0}, missed{0}, ns{0};
+  std::mutex lock;
+  uint64_t made = 0, missed = 0, ns = 0;
+
+  void
+  Add(bool miss, uint64_t time) {
+    std::lock_guard guard(lock);
+    made++, missed += miss, ns += time;
+  }
 };
 
 // this DLL's
@@ -51,11 +61,7 @@ Made(bool on, Make &&make, Counters &to = counters) {
   auto start = std::chrono::steady_clock::now();
   make();
   auto ns = std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::steady_clock::now() - start).count();
-  // `made` last, released: a window that sees it sees its miss and its time (Section)
-  if (misses_here != before)
-    to.missed.fetch_add(1, std::memory_order_relaxed);
-  to.ns.fetch_add(uint64_t(ns), std::memory_order_relaxed);
-  to.made.fetch_add(1, std::memory_order_release);
+  to.Add(misses_here != before, uint64_t(ns));
 }
 
 // what was counted at the window before
@@ -63,15 +69,16 @@ struct Last {
   uint64_t made = 0, missed = 0, ns = 0;
 };
 
-// ARCHIVEDRAW's text for the second that ends: what was made since `last`; "" for a second without one. `made` is read
-// first: a miss or a time counted before its `made` is visible stays for the window that sees it, as a second without
-// a pipeline leaves `last` as it was
+// ARCHIVEDRAW's text for the second that ends: what was made since `last`; "" for a second without one
 inline std::string
 Section(Counters &from, Last &last) {
-  auto made = from.made.load(std::memory_order_acquire);
+  uint64_t made, missed, ns;
+  {
+    std::lock_guard guard(from.lock);
+    made = from.made, missed = from.missed, ns = from.ns;
+  }
   if (made == last.made)
     return {};
-  auto missed = from.missed.load(std::memory_order_relaxed), ns = from.ns.load(std::memory_order_relaxed);
   auto window = made - std::exchange(last.made, made), window_missed = missed - std::exchange(last.missed, missed),
        window_ns = ns - std::exchange(last.ns, ns);
   char text[96];
