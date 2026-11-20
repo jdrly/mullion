@@ -1751,17 +1751,19 @@ static tess_counts tessellation_counts(device const uint *heap, TessellationDraw
         sums[simd][k] = before[k] + own[k];
     }
     threadgroup_barrier(mem_flags::mem_threadgroup);
+    // jdrly/mullion: the carry and the sums before a patch stop at the word's largest value instead of wrapping
+    // (tessellation_sum, mullion_tessellation_fit.hpp); a group's own sums are a group's counts, far below it
     for (uint k = 0; k < 3; k++) {
       uint at = carry[k];
       for (uint s = 0; s < simd; s++)
-        at += sums[s][k];
+        at = tessellation_sum(at, sums[s][k]);
       if (patch < pass.patches)
-        counts[3 * patch + k] = at + before[k];
+        counts[3 * patch + k] = tessellation_sum(at, before[k]);
     }
     threadgroup_barrier(mem_flags::mem_threadgroup);
     if (thread_index < 3)
       for (uint s = 0; s < simds; s++)
-        carry[thread_index] += sums[s][thread_index];
+        carry[thread_index] = tessellation_sum(carry[thread_index], sums[s][thread_index]);
   }
   threadgroup_barrier(mem_flags::mem_threadgroup | mem_flags::mem_device);
   if (thread_index < 3)
@@ -1770,8 +1772,7 @@ static tess_counts tessellation_counts(device const uint *heap, TessellationDraw
 
   // the draws: those whose points and indices end within the arena
   device TessellationDraw *draws = (device TessellationDraw *)(heap + pass.draws);
-  // jdrly/mullion: and every draw before them too, as thread 0 reads below: past a wrap of the 32-bit sums a draw's own
-  // ends may land inside the arena again (mullion_tessellation_fit.hpp)
+  // jdrly/mullion: and every draw before them too, as thread 0 reads below (mullion_tessellation_fit.hpp)
   if (thread_index == 0)
     unfit = tessellation_first_unfit(counts, draws, pass.draw_count, pass.point_room, pass.index_room);
   threadgroup_barrier(mem_flags::mem_threadgroup);

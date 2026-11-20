@@ -1,7 +1,8 @@
 // jdrly/mullion: contract: the compute tessellator draws a pass's draws only before the first whose points or whole
 // triangles end past the arena (src/mullion/mullion_tessellation_fit.hpp, private ticket 58), so that every draw it
-// draws ends inside the arena in exact arithmetic, also when the scan's 32-bit sums wrap past 2^32 points and a later
-// draw's ends land inside the arena again.
+// draws ends inside the arena in exact arithmetic, also in a pass of more than 2^32 points, where 32-bit sums that
+// wrapped would land inside the arena again: at a later draw's ends, or at the ends of the draw the wrap is in. The
+// sums are made as tessellation_scan makes them, with tessellation_sum.
 #include "../../src/mullion/mullion_tessellation_fit.hpp"
 #include <cstdio>
 #include <string>
@@ -21,10 +22,11 @@ struct Draw {
   uint32_t first, patches;
 };
 
-// a pass as the scan leaves it: each patch's frames, points and triangles made exclusive 32-bit sums, the totals after
-// them (tessellation_scan); `exact` the same sums in 64 bits
+// a pass as the scan leaves it: each patch's frames, points and triangles made exclusive 32-bit sums with
+// tessellation_sum, the totals after them (tessellation_scan); `wrapped` the same sums wrapping, as upstream's scan made
+// them; `exact` the same sums in 64 bits
 struct Pass {
-  std::vector<uint32_t> counts;
+  std::vector<uint32_t> counts, wrapped;
   std::vector<uint64_t> exact;
   std::vector<Draw> draws;
 
@@ -34,19 +36,19 @@ struct Pass {
     draws.push_back({uint32_t(counts.size() / 3), patches});
     for (uint32_t i = 0; i < patches; i++)
       for (uint32_t c : {1u, points, triangles})
-        counts.push_back(c), exact.push_back(c);
+        counts.push_back(c), wrapped.push_back(c), exact.push_back(c);
   }
   void
   scan() {
-    uint32_t sum[3] = {};
+    uint32_t sum[3] = {}, wrap[3] = {};
     uint64_t sum64[3] = {};
     for (size_t i = 0; i < counts.size(); i++) {
       auto own = counts[i];
-      counts[i] = sum[i % 3], exact[i] = sum64[i % 3];
-      sum[i % 3] += own, sum64[i % 3] += own;
+      counts[i] = sum[i % 3], wrapped[i] = wrap[i % 3], exact[i] = sum64[i % 3];
+      sum[i % 3] = tessellation_sum(sum[i % 3], own), wrap[i % 3] += own, sum64[i % 3] += own;
     }
     for (int k = 0; k < 3; k++)
-      counts.push_back(sum[k]), exact.push_back(sum64[k]);
+      counts.push_back(sum[k]), wrapped.push_back(wrap[k]), exact.push_back(sum64[k]);
   }
 };
 
@@ -95,12 +97,28 @@ main() {
     pass.add(4, 1000, 1500);
     pass.scan();
     uint64_t end = 3 * uint64_t(pass.draws[2].first + pass.draws[2].patches);
-    check(pass.counts[end + 1] <= point_room && pass.exact[end + 1] > point_room,
+    check(pass.wrapped[end + 1] <= point_room && pass.exact[end + 1] > point_room,
           "the third draw's wrapped points end inside the arena (the case)");
     auto unfit = tessellation_first_unfit(pass.counts.data(), pass.draws.data(), pass.draws.size(), point_room,
                                           index_room);
     check(unfit == 1, "after a wrap of the sums, no draw after the one past the arena is drawn");
     admits(pass, unfit, point_room, index_room, "wrapped");
+  }
+
+  // the wrap inside one draw: its points pass 2^32 and its ends, wrapped, both land inside the arena again
+  {
+    Pass pass;
+    pass.add(4, 1000, 1500);
+    pass.add((1 << 20) + 4, 4096, 4096); // 2^32 + 16384 points and triangles
+    pass.scan();
+    uint64_t end = 3 * uint64_t(pass.draws[1].first + pass.draws[1].patches);
+    check(pass.wrapped[end + 1] <= point_room && pass.wrapped[end + 2] <= index_room / 3 &&
+              pass.exact[end + 1] > point_room,
+          "the second draw's wrapped ends land inside the arena (the case)");
+    auto unfit = tessellation_first_unfit(pass.counts.data(), pass.draws.data(), pass.draws.size(), point_room,
+                                          index_room);
+    check(unfit == 1, "a draw whose own points run past 2^32 isn't drawn");
+    admits(pass, unfit, point_room, index_room, "wrapped inside a draw");
   }
 
   if (failures)
