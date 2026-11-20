@@ -89,7 +89,9 @@ follow-up.
       behaviour, and a log line when it acts (once, or on each change of state, never per draw). Both are in
       [docs/swtor/README.md](../docs/swtor/README.md), updated in the same pull request. A fix that only removes
       undefined behaviour, or makes code do what its own comment and callers say, needs no switch
-      ([ADR 0001](../docs/swtor/adr/0001-switches.md)).
+      ([ADR 0001](../docs/swtor/adr/0001-switches.md)). The rule is for the fork's own changes: an upstream batch
+      takes upstream's commits as written, and adds a switch only where its batch note decides one, with the reason
+      ([upstream.md § 3](../docs/swtor/upstream.md#3-read-it-before-merging)).
 - [ ] **A test is evidence only after its control failed.** For every test it gives as evidence, new or existing, the
       pull request names the break, a patch in `tests/breaks/` or a reverted line, and shows the test failing with
       it. A test only ever seen passing proves
