@@ -559,9 +559,13 @@ main(int argc, char **argv) {
             "pixel linkage converts the mesh shader and reuses amplification"
         );
       // the mesh pipeline's two, and the two of the tessellator its patches take: a hull function is converted for
-      // its domain shader's outputs wherever it runs
+      // its domain shader's outputs wherever it runs. jdrly/mullion: the tessellator's only with
+      // MULLION_D3D12_NATIVE_TESSELLATION=1, off by default (private ticket 58)
+      const char *native_tessellation = getenv("MULLION_D3D12_NATIVE_TESSELLATION");
+      unsigned hull_conversions = native_tessellation && !strcmp(native_tessellation, "1") ? 4 : 2;
       if (!strcmp(argv[2], "cold") && store_exists() && kind == 2 && variant == 22)
-        expect(conversions - made_before == 4, "domain output size must also distinguish the hull conversions");
+        expect(conversions - made_before == hull_conversions,
+               "domain output size must also distinguish the hull conversions");
       if (disabled)
         expect(
             conversions - made_before >= (kind == 1 || tessellation || kind == 4 ? 3u : 2u),
