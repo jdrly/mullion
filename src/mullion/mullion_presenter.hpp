@@ -131,6 +131,17 @@ public:
       unsigned *encoder_count = nullptr, uint64_t *drawable_ns = nullptr, Deferred *deferred = nullptr
   );
 
+  // MULLION_DISPLAY_SYNC=1 (d3d12_swapchain.cpp), before the first present: the layer's display sync on, for a
+  // presenter whose drawables its own thread takes (threaded()), where a present that waits for the display holds up
+  // no command buffer and no fence. false, and nothing changed, otherwise
+  bool
+  syncToDisplay() {
+    if (!threaded())
+      return false;
+    layer_props_.display_sync_enabled = true;
+    return true;
+  }
+
   // the game's thread, before a Direct3D 12 Present that defers: waits while the presenter's thread is two frames
   // behind, for 100 ms at most. With the drawable off the commit thread nothing else paces a swap chain without a
   // frame-latency waitable object

@@ -1,0 +1,13 @@
+# the wait path still hands Metal its minimum duration
+diff --git a/src/mullion/mullion_present_pacing.hpp b/src/mullion/mullion_present_pacing.hpp
+--- a/src/mullion/mullion_present_pacing.hpp
++++ b/src/mullion/mullion_present_pacing.hpp
+@@ -198,7 +198,7 @@
+   if (!wait)
+     return {pacing.after, timer_ns};
+   uint64_t paced_ns = pacing.after > 0 ? uint64_t(pacing.after * 1e9 + 0.5) : 0;
+-  return {0, std::max(paced_ns, timer_ns)};
++  return {pacing.after, std::max(paced_ns, timer_ns)};
+ }
+ 
+ // a swap chain's deadlines: each frame's is its own period after the time the frame before it presented, which is that

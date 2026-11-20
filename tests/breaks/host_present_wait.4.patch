@@ -1,0 +1,13 @@
+# the cap's grammar takes 19, below d9mt's floor
+diff --git a/src/mullion/mullion_present_pacing.hpp b/src/mullion/mullion_present_pacing.hpp
+--- a/src/mullion/mullion_present_pacing.hpp
++++ b/src/mullion/mullion_present_pacing.hpp
+@@ -158,7 +158,7 @@
+ }
+ 
+ // MULLION_FPS_CAP: 0 for none, else 20 to 1000 frames a second (d9mt's D9MT_FPS_CAP)
+-constexpr unsigned kCapMin = 20, kCapMax = 1000;
++constexpr unsigned kCapMin = 19, kCapMax = 1000;
+ 
+ // MULLION_FPS_CAP's grammar: "0" and "20" to "1000" in at most four digits; unset, empty or anything else the fallback
+ inline unsigned

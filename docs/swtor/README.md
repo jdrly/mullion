@@ -35,7 +35,10 @@ are set.
 |---|---|---|---|
 | `MULLION_LAYER_WAIT` | `1` | `1`: a present that changes its layer (size, pixel format, scale, colour space) waits for the main thread to set the change, as upstream does. `0`: it goes on, the main thread sets the change later in the order asked (`src/winemetal/unix/layer.c`), and the present draws to the size of the drawable it got. Read once per swap chain. | `1` is upstream's behaviour |
 | `MULLION_PRESENT_THREAD` | `1` | `1`: a Direct3D 12 present draws its frame into a texture of the presenter's own on the queue's command buffer, which commits without a drawable; once it completes, the presenter's thread takes the drawable, copies the frame into it and presents it ([§ The presenter's thread](#the-presenters-thread)). A `nextDrawable` that blocks then holds up no command buffer and no fence; frames the thread can't show in time are dropped, newest kept. `0`: the queue's commit thread takes the drawable and presents in the frame's own command buffer, as before. Read once per swap chain; Direct3D 11 isn't affected. Default on, unlike other behaviour changes: its off value is the defect, a ~1.2 s stall of every fence at each switch away from the window's Space, which SWTOR's DX12 client turns into a crash | The drawable on the commit thread, and the stall at a Space switch (an A/B, or a way out) |
-| `MULLION_SYNC_INTERVAL` | unset | `0` to `4`: every Direct3D 12 `Present` and `Present1` of a swap chain is paced by that interval, whatever the game passes: shown for at least `interval / rate`, the rate `d3d12.preferredMaxFrameRate` when set and the display's refresh rate otherwise, as the game's interval is today ([§ Present pacing](#present-pacing)). The game's call is still checked with the interval and flags it passed, and returns what it did: a present with the tearing flag and a forced interval above 0 is paced by the forced interval. Unset or empty: the game's interval. Anything else is unset, with one `warn` line per process (`Mullion: MULLION_SYNC_INTERVAL is not 0 to 4; presents keep the game's interval`, without the value). The session header prints `unset` for those. Read once per swap chain. The layer's display sync stays off. Direct3D 11 isn't affected. For SWTOR on Mac's Vsync setting on the DirectX 12 client | Unset: the game's interval, the duration `PresentFrame` computed at `8b3fb93` |
+| `MULLION_SYNC_INTERVAL` | unset | `0` to `4`: every Direct3D 12 `Present` and `Present1` of a swap chain is paced by that interval, whatever the game passes: shown for at least `interval / rate`, the rate `d3d12.preferredMaxFrameRate` when set and the display's refresh rate otherwise, as the game's interval is today ([§ Present pacing](#present-pacing)). The game's call is still checked with the interval and flags it passed, and returns what it did: a present with the tearing flag and a forced interval above 0 is paced by the forced interval. Unset or empty: the game's interval. Anything else is unset, with one `warn` line per process (`Mullion: MULLION_SYNC_INTERVAL is not 0 to 4; presents keep the game's interval`, without the value). The session header prints `unset` for those. Read once per swap chain. The layer's display sync stays off unless `MULLION_DISPLAY_SYNC=1`. With `MULLION_PACE=wait` the same time is waited for on the game's thread instead of handed to Metal. Direct3D 11 isn't affected. For SWTOR on Mac's Vsync setting on the DirectX 12 client | Unset: the game's interval, the duration `PresentFrame` computed at `8b3fb93` |
+| `MULLION_PACE` | `duration` | Where a Direct3D 12 swap chain's pacing happens ([§ Present pacing](#present-pacing)). `duration`: Metal's minimum duration, `presentDrawableAfterMinimumDuration(interval / rate)`, as before. `wait`: before each present, after the presenter's thread's two-frame wait, the game's thread waits for the frame's deadline, the same time after the one before, and the frame goes to Metal with no minimum duration, a plain `presentDrawable`. That covers the game's interval, `MULLION_SYNC_INTERVAL` and `d3d12.preferredMaxFrameRate` alike. Anything else is `duration`, with one `warn` line per process (`Mullion: MULLION_PACE is not duration or wait; presents keep Metal's minimum duration`, without the value). Read once per swap chain. Direct3D 11 isn't affected. Default `duration` until the M5 Max check of private ticket 49 shows `wait` keeps the window on Metal's direct path; the flip is a follow-up | `duration`: the code at `1505f87` |
+| `MULLION_FPS_CAP` | unset | `20` to `1000`: a frame-rate cap by timer, d9mt's `D9MT_FPS_CAP`. Before each Direct3D 12 present the game's thread waits for the frame's deadline, `1 / cap` after the one before; a frame that is late moves the deadline, and the frames after it don't catch up. On either `MULLION_PACE`. It takes over from `d3d12.preferredMaxFrameRate`, which then paces nothing, so on the `duration` path Metal's minimum duration comes from the interval alone. With `MULLION_PACE=wait` and an interval, the longer of the two waits. Unset, empty or `0`: none. Anything else is none, with one `warn` line per process (`Mullion: MULLION_FPS_CAP is not 0 or 20 to 1000; no cap`, without the value). Read once per swap chain. Direct3D 11 isn't affected. For SWTOR on Mac's Frame Rate Limit on the DirectX 12 client, which offers 40 and 45: rates a 60 Hz display's minimum duration can't give | Unset: no wait, the code at `1505f87` |
+| `MULLION_DISPLAY_SYNC` | off (`1` turns it on) | The Direct3D 12 layer's `displaySyncEnabled` on, so Metal shows each present at a refresh of the display: no tearing, and a present that waits for the display. Only where the presenter's thread takes the drawables (`MULLION_PRESENT_THREAD=1` and a window with a layer), so the wait holds up no command buffer and no fence. Elsewhere it is ignored, with one `warn` line per process (`Mullion: MULLION_DISPLAY_SYNC=1 ignored: the present thread is off`). Where it applies, one `info` line per process, `Mullion: display sync=1`. Read once per swap chain. Direct3D 11 isn't affected. For the A/B of private ticket 49: whether `MULLION_PACE=wait` tears without it | Off: display sync off, as before |
 | `MULLION_SESSION_HEADER` | off (`1` turns it on) | Writes the session header (below) at the first `D3D12CreateDevice` that reaches a Mullion adapter, a probe without `ppDevice` included, before the feature level is asked (upstream's `57acac4` asks it of a device not built yet), with one read-only bridge call for what the Windows side can't read. Off until the Mac run shows the header right on an M1 and an M5 Max; SWTOR on Mac's DX12 dev build turns it on | No header and no bridge call for it |
 | `MULLION_STATS` | off (`1` turns it on) | Writes a `STATS` line (below) each second of presenting, and counts what it reports. Read once, when `d3d12core.dll` loads. SWTOR on Mac's DX12 dev build turns it on | No line, and nothing counted: each place that counts tests one flag (below). The bridge still keeps `mainWaitMaxMs`' longest wait, one compare-and-swap for each layer change the main thread applies, which nothing reads |
 | `MULLION_HITCH_MS` | `50` | With `MULLION_STATS=1`, a frame (Present to Present) this many ms long or longer gets a `HITCH` line, and its `COMPILE` line is at `warn`. Whole ms, 1 to 60000; anything else is 50. Read once, at the first Present counted | Nothing to restore: it only moves a threshold, and `MULLION_STATS` off writes no `HITCH` |
@@ -74,9 +77,10 @@ removed with `DXGI_ERROR_DEVICE_HUNG`. A release build doesn't have it.
 | `mullion: a row-major transform on a GPU without them (Apple9), not transposed` | Never, unless a caller hands the bridge an acceleration structure geometry with a row-major transform on a GPU before Apple9 (M1-M2), which Direct3D 12's builds don't: they build from column-major copies (`d3d12_command_list.cpp`). The bridge then ends the process, as Metal's validation would (private ticket 40) | The process's stderr (`wine.log` in the app): the bridge writes it | Me: a Mullion bug, a build path that skipped the transposition |
 | `Mullion: layer wait=0` | The first swap chain made with `MULLION_LAYER_WAIT=0`, once per process | `d3d12.log` (Wine's output, `wine.log` in the app), at `info` | Me: the session's presents didn't wait for the main thread |
 | `Mullion: present thread=0` | The first swap chain made with `MULLION_PRESENT_THREAD=0`, once per process | `d3d12.log` (Wine's output, `wine.log` in the app), at `info` | Me: the session's presents took their drawables on the commit thread |
+| `Mullion: display sync=1` | The first swap chain whose layer `MULLION_DISPLAY_SYNC=1` turned display sync on, once per process | `d3d12.log` (`wine.log`), at `info` | Me: the session's presents waited for the display |
 | `Mullion: present thread=1` | The first Direct3D 12 present that takes its drawable on a presenter's thread, once per process | The same | Me: the session presented through the presenter's thread |
 | `Mullion: present dropped=<n> since=<ms> drawableMs=<ms> at=<HH:MM:SS.mmm>` | With `MULLION_PRESENT_THREAD=1`, when frames were dropped: those the presenter's thread didn't show because a newer one completed first, or that had no drawable. At most once a second: the frames dropped since `since` ms before the line (from the start of the wait the first of them was lost in), and the longest wait for a drawable among them, in whole ms ([§ The presenter's thread](#the-presenters-thread)) | `d3d12.log` (`wine.log`), at `info` | Me: what a Space switch cost in frames |
-| `Mullion: present pacing interval=<n> game=<n> forced=<n\|no> refreshHz=<x.x\|unknown> capFps=<n> afterMs=<x.x> at=<HH:MM:SS.mmm> [changes=<n>]` | Always, at a Direct3D 12 swap chain's first present and at a present whose fields differ from the one before, at most once a second per swap chain. `interval` the one in effect, `game` the one the game passed, `forced` `MULLION_SYNC_INTERVAL`'s, `refreshHz` the display's refresh rate as the swap chain read it (`unknown` when it wasn't read), which paces only without a cap, `capFps` `d3d12.preferredMaxFrameRate` (`0` for none), which paces in its place when set, `afterMs` the least time each frame is shown. A change within a second of the last line is held; the first present a second after that line writes it with `changes=`, the changes it stands for ([§ Present pacing](#present-pacing)) | `d3d12.log` (`wine.log`), at `info` | Me: which interval and pacing a session presented with |
+| `Mullion: present pacing interval=<n> game=<n> forced=<n\|no> refreshHz=<x.x\|unknown> capFps=<n> afterMs=<x.x> timerFps=<n> pace=<duration\|wait> periodMs=<x.x> displaySync=<0\|1> at=<HH:MM:SS.mmm> [changes=<n>]` | Always, at a Direct3D 12 swap chain's first present and at a present whose fields differ from the one before, at most once a second per swap chain. `interval` the one in effect, `game` the one the game passed, `forced` `MULLION_SYNC_INTERVAL`'s, `refreshHz` the display's refresh rate as the swap chain read it (`unknown` when it wasn't read), which paces only without a cap, `capFps` `d3d12.preferredMaxFrameRate` (`0` for none), which paces in its place when set, `afterMs` the minimum duration handed to Metal (`0.0` with `pace=wait`), `timerFps` `MULLION_FPS_CAP` (`0` for none; while it is set, `capFps` paces nothing), `pace` `MULLION_PACE`, `periodMs` the least time the game's thread keeps between two presents' deadlines (`0.0` for no wait), `displaySync` whether the layer's display sync is on. A change within a second of the last line is held; the first present a second after that line writes it with `changes=`, the changes it stands for ([§ Present pacing](#present-pacing)) | `d3d12.log` (`wine.log`), at `info` | Me: which interval and pacing a session presented with |
 | `mullion: layer mainThreadWaitMs=<N> applied=no` | A change to a layer has waited 1 s, 5 s and 30 s without the main thread applying one: once at each, with either value of `MULLION_LAYER_WAIT`. `<N>`: ms since the main thread last applied a change, or was sent one with none waiting | The process's stderr (`wine.log` in the app), not `MULLION_LOG_PATH`: the bridge's watch thread writes it | Me, on a freeze: the main thread stopped answering |
 | `mullion: layer mainThreadWaitMs=<N> applied=yes` | The main thread applies a change after an `applied=no` line | The same, from the main thread | The same |
 | `MtlPresenter: <HH:MM:SS.mmm> visibility 0x<before> -> 0x<now> visible= activeSpace= miniaturized= active= why= [[n earlier lines suppressed]]` | Always, each time the game window's visibility changes: hidden, shown, another Space, the Dock ([§ The window lines](#the-window-lines)). At most 30 lines in 10 s with the line below | The process's stderr (`wine.log` in the app): the bridge writes it from the main thread, as the change happens | The app's session report, which reads d9mt's line of that name for its hidden seconds and its `--mark`; me, on a freeze after Cmd-Tab or a Space switch |
@@ -584,20 +588,78 @@ costs, are checks on a Mac.
 
 ### Present pacing
 
-Mullion paces a Direct3D 12 present itself: the layer's display sync is off, and each frame goes to the screen with
-`presentDrawableAfterMinimumDuration(interval / rate)`, through the presenter's thread or the queue's commit thread
-alike. The interval is the game's, or `MULLION_SYNC_INTERVAL`'s when set; the rate is `d3d12.preferredMaxFrameRate`
-when set, and never less than one of its frames, else the display's refresh rate. The arithmetic and the pacing
-line's limit are in [`mullion_present_pacing.hpp`](../../src/mullion/mullion_present_pacing.hpp), which
-`host_present_pacing` tests. The Mac check presents with [`tests/swtor/present_pace.c`](../../tests/swtor/present_pace.c), a loop built and run by hand.
+A Direct3D 12 present is paced by a time: `interval / rate`, where the interval is the game's, or
+`MULLION_SYNC_INTERVAL`'s when set, and the rate is `d3d12.preferredMaxFrameRate` when set (never less than one of
+its frames), else the display's refresh rate. `MULLION_PACE` says who keeps that time:
+
+- **`duration`** (the default): Metal. The layer's display sync is off, and each frame goes to the screen with
+  `presentDrawableAfterMinimumDuration(interval / rate)`, through the presenter's thread or the queue's commit thread
+  alike.
+- **`wait`**: the game's thread. Before each present, after the presenter's thread's two-frame wait
+  ([§ The presenter's thread](#the-presenters-thread)), `Present` waits for the frame's deadline. The deadline is that
+  time after the one before. The frame then goes to Metal with no minimum duration, a plain `presentDrawable`. On
+  SWTOR's DX12 client, an M5 Max on macOS 27.2.1 and a 60 Hz display, the minimum-duration present took a window that
+  is otherwise on the direct path onto the composited one. Present Delay was 48.70 ms with `d3d12.preferredMaxFrameRate=60`,
+  against 5.67 ms uncapped (Jan, 2026-11-19, the Metal HUD; private ticket 49). Whether `wait` keeps it direct
+  is the M5 Max check below.
+
+`MULLION_FPS_CAP=<20-1000>` is a deadline of its own, `1 / cap` after the one before, on either path, d9mt's
+`D9MT_FPS_CAP`. It takes over from `d3d12.preferredMaxFrameRate`, which then paces nothing: on `duration`, Metal's
+minimum duration comes from the interval alone. On `wait`, the game's thread waits for the longer of the two. The cap
+isn't held to the display's rate: a cap of 40 on a 60 Hz display presents every 25 ms, and the display shows the
+frames for one or two refreshes each.
+
+The deadlines (`Cadence`): the first present waits for nothing. Each frame's deadline is its period after the time
+the frame before it went on: that frame's deadline, or later when it came late or its wait woke late. A frame at or
+past its deadline presents at once. So a late frame moves the deadlines and the frames after it don't catch up, and a
+period that changes from frame to frame (a game alternating its intervals under a cap) still waits, counted from the
+frame before. The wait
+(`Sleeper`, d9mt's): the system's sleep (`NtDelayExecution`) in halves down to a last piece of at most 1 ms, then a
+spin. The spin lasts as long as the last piece recently overslept, between 200 µs and 4 ms, because macOS coalesces
+timers and Wine's sleep wakes late. The wait counts in the `HITCH` line's `present` time and in the profile's
+`present` span.
+
+`MULLION_DISPLAY_SYNC=1` turns the layer's display sync on, so Metal shows each present at a refresh: no tearing, at
+the cost of a present that waits for the display. It applies only where the presenter's thread takes the drawables,
+so that wait holds up no command buffer and no fence. Elsewhere it is ignored, with a line.
+
+What a frame can wait behind, read in the code at `1505f87`:
+
+| Where | How deep | What it binds |
+|---|---|---|
+| The frame-latency semaphore | 1 at the swap chain's creation (`kSwapchainLatency`), up to 16 by `SetMaximumFrameLatency` | Released when the present's command buffer completes. It holds back only a game that waits on `GetFrameLatencyWaitableObject` |
+| The presenter's thread (`MULLION_PRESENT_THREAD=1`) | 2 frames | The game's `Present` waits while two frames are drawn and neither shown nor dropped, 100 ms at most. "Shown" means copied into a drawable and handed to Metal, not on the screen |
+| The layer's drawables | 3 (Mullion leaves `maximumDrawableCount` at its default) | One on screen and up to two waiting for it. The presenter's thread (or, with `0`, the commit thread) blocks in `nextDrawable` while none is free |
+
+On `duration` with a game faster than its pace, the minimum duration keeps each drawable on screen for its time.
+The two waiting drawables fill up and `nextDrawable` blocks the presenter's thread. The frames behind it reach the
+throttle's two, and the game waits there. A frame then waits behind about two drawables and a frame, about three
+refreshes from `Present` to the screen. The 48.70 ms above is 2.9 refreshes at 60 Hz, which fits that queue. So the
+latency may be the queue more than compositing alone. That is a hypothesis: the throttle's 2 (with its 100 ms
+timeout) and the pool's 3 are limits, not what Jan's run held, and nothing measured them apart.
+Uncapped, no minimum duration holds a drawable on screen, though a frame can still wait for a free one. On `wait` the game presents at most once a period: while a
+frame's GPU work and its copy take less than the period, no drawable waits and the throttle never binds. Its depth of
+2 then adds nothing, unless `nextDrawable` itself blocks; the Present Delay of the M5 Max check says whether that
+holds.
+
+The arithmetic, the deadlines, the sleep and the pacing line's limit are in
+[`mullion_present_pacing.hpp`](../../src/mullion/mullion_present_pacing.hpp), which `host_present_pacing` and
+`host_present_wait` test. The M1 check of `MULLION_SYNC_INTERVAL` presented with
+[`tests/swtor/present_pace.c`](../../tests/swtor/present_pace.c), a loop built and run by hand.
 
 The refresh rate is the one read when the swap chain was made, so a window moved to a display with another rate keeps
 the old pacing; fixing that is not this switch's change. Entering full screen with a display mode change sets it to
 that mode's rate, and leaving such a full screen makes it `unknown`, after which, without a cap, no interval paces anything: the code
-at `8b3fb93` does the same, and the line's `refreshHz=unknown` shows it.
+at `8b3fb93` does the same, and the line's `refreshHz=unknown` shows it. On `wait` an unknown rate waits for nothing too.
+
+On `wait` the deadlines are a timer at that rate, with no phase against the display's refreshes: without display sync
+a frame goes on when its deadline comes, mid-refresh or not. `wait` with `MULLION_DISPLAY_SYNC=1` is the pairing that
+latches each frame to a refresh. Pacing from the display's own timing (`CADisplayLink`, or the drawables'
+`presentedTime`) is a follow-up if the timer falls short on the M5 Max (the dispatcher's decision, 2026-11-20).
 
 Needs the Mac: that a forced interval of 1 holds a real swap chain at the display's rate through the presenter's
-thread is a check on a Mac.
+thread is a check on a Mac. Whether `MULLION_PACE=wait` keeps the window on the direct path, at what Present Delay
+and with or without tearing, is the M5 Max check of private ticket 49. Until it passes, `duration` stays the default.
 
 ### Ranges
 

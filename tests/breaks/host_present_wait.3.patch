@@ -1,0 +1,13 @@
+# MULLION_FPS_CAP leaves d3d12.preferredMaxFrameRate in Metal's duration
+diff --git a/src/mullion/mullion_present_pacing.hpp b/src/mullion/mullion_present_pacing.hpp
+--- a/src/mullion/mullion_present_pacing.hpp
++++ b/src/mullion/mullion_present_pacing.hpp
+@@ -179,7 +179,7 @@
+ // Metal's duration (on the duration path) comes from the interval alone
+ inline int
+ CapInEffect(int preferred_fps, unsigned timer_fps) {
+-  return timer_fps ? 0 : preferred_fps;
++  return preferred_fps;
+ }
+ 
+ // how a present is paced
