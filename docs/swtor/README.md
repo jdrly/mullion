@@ -637,7 +637,7 @@ throttle's two, and the game waits there. A frame then waits behind about two dr
 refreshes from `Present` to the screen. The 48.70 ms above is 2.9 refreshes at 60 Hz, which fits that queue. So the
 latency may be the queue more than compositing alone. That is a hypothesis: the throttle's 2 (with its 100 ms
 timeout) and the pool's 3 are limits, not what Jan's run held, and nothing measured them apart.
-Uncapped, nothing holds a drawable, so nothing queues. On `wait` the game presents at most once a period: while a
+Uncapped, no minimum duration holds a drawable on screen, though a frame can still wait for a free one. On `wait` the game presents at most once a period: while a
 frame's GPU work and its copy take less than the period, no drawable waits and the throttle never binds. Its depth of
 2 then adds nothing, unless `nextDrawable` itself blocks; the Present Delay of the M5 Max check says whether that
 holds.
