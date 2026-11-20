@@ -1,0 +1,21 @@
+# a period that changes starts the deadlines again: a game alternating intervals never waits
+diff --git a/src/mullion/mullion_present_pacing.hpp b/src/mullion/mullion_present_pacing.hpp
+--- a/src/mullion/mullion_present_pacing.hpp
++++ b/src/mullion/mullion_present_pacing.hpp
+@@ -212,6 +212,8 @@
+   // the first after one with no period, wait for nothing and start the deadlines. After a wait, Woke gives the time
+   uint64_t
+   Next(uint64_t now, uint64_t period) {
++    if (period != period_)
++      period_ = period, started_ = false;
+     if (!period) {
+       started_ = false;
+       return 0;
+@@ -234,6 +236,7 @@
+   // a paced present went on, and when
+   bool started_ = false;
+   uint64_t shown_ = 0;
++  uint64_t period_ = 0;
+ };
+ 
+ // d9mt's Sleeper (d3d9_frame_cap.h): sleeps to a deadline with the system's sleep in halves, down to a last piece of at
