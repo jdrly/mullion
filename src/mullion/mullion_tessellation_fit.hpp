@@ -23,6 +23,20 @@ tessellation_sum(uint32_t a, uint32_t b) {
   return sum < a ? 0xffffffffu : sum;
 }
 
+// the threads of tessellation_scan's one threadgroup: as many as its pipeline takes (`most`, its
+// maxTotalThreadsPerThreadgroup: 704 on an M1), whole SIMD groups of `width` (its threadExecutionWidth), at most the 32
+// groups its sums have room for, and at most 1024. upstream dispatched 1024 whatever the pipeline took, which Metal
+// forbids (private ticket 58)
+inline uint32_t
+tessellation_scan_threads(uint32_t most, uint32_t width) {
+  if (!width)
+    return most < 1024 ? most : 1024;
+  uint32_t threads = most / width * width;
+  if (threads > 32 * width)
+    threads = 32 * width;
+  return threads < 1024 ? threads : 1024;
+}
+
 // the first of `draw_count` draws (each with `first` and `patches`) whose points (counts[3 * patch + 1]) or triangles
 // (counts[3 * patch + 2]), the scan's exclusive sums at its patch after its last, end past `point_room` points or
 // `index_room` indices; `draw_count` when every one fits

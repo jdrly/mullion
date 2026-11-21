@@ -2,7 +2,8 @@
 // triangles end past the arena (src/mullion/mullion_tessellation_fit.hpp, private ticket 58), so that every draw it
 // draws ends inside the arena in exact arithmetic, also in a pass of more than 2^32 points, where 32-bit sums that
 // wrapped would land inside the arena again: at a later draw's ends, or at the ends of the draw the wrap is in. The
-// sums are made as tessellation_scan makes them, with tessellation_sum.
+// sums are made as tessellation_scan makes them, with tessellation_sum. And the scan's threadgroup is one its pipeline
+// takes (tessellation_scan_threads).
 #include "../../src/mullion/mullion_tessellation_fit.hpp"
 #include <cstdio>
 #include <string>
@@ -120,6 +121,13 @@ main() {
     check(unfit == 1, "a draw whose own points run past 2^32 isn't drawn");
     admits(pass, unfit, point_room, index_room, "wrapped inside a draw");
   }
+
+  // the scan's one threadgroup: the threads its pipeline takes, in whole SIMD groups, at most 32 of them and 1024
+  check(tessellation_scan_threads(704, 32) == 704, "an M1's 704 threads, not 1024");
+  check(tessellation_scan_threads(1024, 32) == 1024, "1024 where the pipeline takes them");
+  check(tessellation_scan_threads(2048, 32) == 1024, "never more than 1024");
+  check(tessellation_scan_threads(700, 32) == 672, "whole SIMD groups: 700 threads give 21 groups of 32");
+  check(tessellation_scan_threads(1024, 16) == 512, "no more than the 32 groups the sums have room for");
 
   if (failures)
     return 1;

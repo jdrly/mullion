@@ -9,4 +9,4 @@
 +  return sum;
  }
  
- // the first of `draw_count` draws (each with `first` and `patches`) whose points (counts[3 * patch + 1]) or triangles
+ // the threads of tessellation_scan's one threadgroup: as many as its pipeline takes (`most`, its

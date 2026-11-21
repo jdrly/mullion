@@ -19,6 +19,7 @@
 #include "d3d12_command_allocator.hpp"
 #include "com/com_pointer.hpp"
 #include "mullion_diag.hpp"
+#include "mullion_tessellation_fit.hpp"
 #include <map>
 #include <bit>
 
@@ -1182,7 +1183,10 @@ MTLD3D12CommandAllocatorImpl::FinishTessellation(RenderEncoderData *Render) {
   count.type = WMTComputeCommandDispatchThreads;
   count.size = {batch->patches, 1, 1};
   barrier();
-  kernel("tessellation_scan", 1024);
+  // jdrly/mullion: the threads its pipeline takes, where upstream asked for 1024 (mullion_tessellation_fit.hpp)
+  auto scan_pipeline = device_->GetLib().ComputePipeline("tessellation_scan");
+  kernel("tessellation_scan", tessellation_scan_threads(uint32_t(scan_pipeline.maxTotalThreadsPerThreadgroup()),
+                                                        uint32_t(scan_pipeline.threadExecutionWidth())));
   auto &scan = EncodeBeforeRender<wmtcmd_compute_dispatch>();
   scan.type = WMTComputeCommandDispatch;
   scan.size = {1, 1, 1};
