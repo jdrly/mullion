@@ -53,7 +53,8 @@ samples counted), or what it holds alive together.
 - **Why it has to be decided before the run.** ciq's ask (`--mem`) and its guard watch the job's resident memory and
   the swap. Memory Metal gives the GPU is wired: neither sees it. At upstream batch 4 (private ticket 58, macOS
   26.7.3) the machine stopped answering twice, and the watchdog reset it, killing every job on the shared queue:
-  - in `d3d12_raster_samples_dxbc`, whose 16x targets made 4-6 GB of footprint under validation on macOS 27.0 (§ 1);
+  - in `d3d12_raster_samples_dxbc` (its 16x targets; under validation on macOS 27.0 its process's footprint was 4-6 GB,
+    § 1, which isn't a measure of its GPU allocations);
   - in `d3d12_statistics_heap_dxil`, at its 4 GiB query heap (`count 48806446, result bytes 4294967248`).
 
   Neither job's resident memory passed 1.4 GB, and neither run swapped before the reset.
@@ -68,19 +69,21 @@ samples counted), or what it holds alive together.
 
   | test | what it asks for |
   |---|---|
-  | `d3d12_raster_samples` | 16x multisampled targets: 4-6 GB of footprint (§ 1); it reset the machine on macOS 26.7.3 |
+  | `d3d12_raster_samples` | 16x multisampled targets, of a size not established; it reset the machine on macOS 26.7.3, which is the reason |
   | `d3d12_statistics_heap` | a query heap of 4 GiB at its last step; it reset the machine on macOS 26.7.3 |
   | `d3d12_tessellation_large_draw` | 1.25 GB of hull outputs in one draw (its own comment) |
 
   They run on a Mac with more memory: the M5 Max part of the gate.
 - **A new test** is checked against the budget when it enters the gate's lists: in a batch, by the batch note's reader;
   for a fork test, by its pull request.
-  - Its largest allocation is read from its source: heap and buffer sizes, a texture's size times its samples, a query
-    heap's count times its result's size, what a draw makes on the GPU (hull outputs, stream output).
-  - A test whose size depends on the device, or can't be told from the source, runs once on a Mac with more memory
-    first, its process's peak footprint read (`footprint`, or `DIAG MEM`'s `footprintPeakMiB` with `MULLION_MEMSTATS=1`
-    when it presents).
-  - Over 1 GiB, it goes into the table above in the same pull request.
+  - Its **peak live total** is read from its source: every heap, buffer and texture it holds alive at once (a texture's
+    size times its samples, a query heap's count times its result's size), and what a draw makes on the GPU (hull
+    outputs, stream output), summed at the step where most are alive. Two resources of 768 MiB held together are
+    over the budget.
+  - A test whose total can't be established from the source stays on a Mac with more memory, in the table above. A
+    process footprint read there (`footprint`, `DIAG MEM`'s `footprintPeakMiB`) can flag a test as expensive; it doesn't
+    measure its GPU allocations, so it doesn't clear one.
+  - Over 1 GiB, or not established, it goes into the table above in the same pull request.
 
 ## 2. The first run: efee691 on the M1, 2026-11-14/15
 
