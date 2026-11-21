@@ -60,8 +60,9 @@ samples counted), or what it holds alive together.
   Neither job's resident memory passed 1.4 GB, and neither run swapped before the reset.
 - **Why 1 GiB.** Metal's working set on this M1 is 5461 MiB (`recommendedMaxWorkingSetSize`, the session header's
   `workingSet=`). What it leaves holds macOS, Wine and the test's own copies (a readback is the size of what it reads).
-  1 GiB is a margin chosen under a fifth of the working set, not a measured limit: no test between 1 and 4 GiB has run
-  here. The tests that reset the machine asked for 4 GiB or more.
+  1 GiB is a margin chosen under a fifth of the working set, not a measured limit: no test known to ask for between 1 and 4
+  GiB has run here. Of the two that reset the machine, `d3d12_statistics_heap` asked for 4 GiB at once; `d3d12_raster_samples`' size
+  isn't established.
 - **What it counts.** What the test itself asks for, without validation. Validation's instrumentation adds its own:
   under it `d3d12_raster` and `d3d12_format_blend` reach 4-6 GB too, and get no verdict on 8 GB (§ 1), where without it
   they pass, also on macOS 26.7.3.
