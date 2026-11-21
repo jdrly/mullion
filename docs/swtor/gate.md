@@ -44,6 +44,44 @@ gate.zsh control <slice> <patch> <tests…>                          # faults.py
   and assertions on, no strip. llvm-mingw and the Wine are swtor.yml's, SHA-256 checked. A Homebrew GCC MinGW on the
   machine's `PATH` must not build the DLLs: `gate.zsh` puts llvm-mingw's prefixed tools first and checks it.
 
+## 1a. What an 8 GB Mac runs
+
+The rented M1 has 8 GB, shared by macOS, Wine, the test and the GPU. On such a Mac the gate leaves out, **before the
+run**, every test that asks Metal for more than **1 GiB of GPU memory at once**: one heap, buffer or texture (its
+samples counted), or what it holds alive together.
+
+- **Why it has to be decided before the run.** ciq's ask (`--mem`) and its guard watch the job's resident memory and
+  the swap. Memory Metal gives the GPU is wired: neither sees it. At upstream batch 4 (private ticket 58, macOS
+  26.7.3) the machine stopped answering twice, and the watchdog reset it, killing every job on the shared queue:
+  - in `d3d12_raster_samples_dxbc`, whose 16x targets made 4-6 GB of footprint under validation on macOS 27.0 (§ 1);
+  - in `d3d12_statistics_heap_dxil`, at its 4 GiB query heap (`count 48806446, result bytes 4294967248`).
+
+  Neither job's resident memory passed 1.4 GB, and neither run swapped before the reset.
+- **Why 1 GiB.** Metal's working set on this M1 is 5461 MiB (`recommendedMaxWorkingSetSize`, the session header's
+  `workingSet=`). What it leaves holds macOS, Wine and the test's own copies (a readback is the size of what it reads).
+  1 GiB is a margin chosen under a fifth of the working set, not a measured limit: no test between 1 and 4 GiB has run
+  here. The tests that reset the machine asked for 4 GiB or more.
+- **What it counts.** What the test itself asks for, without validation. Validation's instrumentation adds its own:
+  under it `d3d12_raster` and `d3d12_format_blend` reach 4-6 GB too, and get no verdict on 8 GB (§ 1), where without it
+  they pass, also on macOS 26.7.3.
+- **Left out today**, both front ends:
+
+  | test | what it asks for |
+  |---|---|
+  | `d3d12_raster_samples` | 16x multisampled targets: 4-6 GB of footprint (§ 1); it reset the machine on macOS 26.7.3 |
+  | `d3d12_statistics_heap` | a query heap of 4 GiB at its last step; it reset the machine on macOS 26.7.3 |
+  | `d3d12_tessellation_large_draw` | 1.25 GB of hull outputs in one draw (its own comment) |
+
+  They run on a Mac with more memory: the M5 Max part of the gate.
+- **A new test** is checked against the budget when it enters the gate's lists: in a batch, by the batch note's reader;
+  for a fork test, by its pull request.
+  - Its largest allocation is read from its source: heap and buffer sizes, a texture's size times its samples, a query
+    heap's count times its result's size, what a draw makes on the GPU (hull outputs, stream output).
+  - A test whose size depends on the device, or can't be told from the source, runs once on a Mac with more memory
+    first, its process's peak footprint read (`footprint`, or `DIAG MEM`'s `footprintPeakMiB` with `MULLION_MEMSTATS=1`
+    when it presents).
+  - Over 1 GiB, it goes into the table above in the same pull request.
+
 ## 2. The first run: efee691 on the M1, 2026-11-14/15
 
 `jdrly/mullion` efee691 (`swtor-on-mac` after upstream batch 2), Apple M1 (Apple7), macOS 27.0 (26A428), Xcode 27.0,
