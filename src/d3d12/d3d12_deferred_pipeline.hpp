@@ -1,5 +1,6 @@
 #pragma once
 
+#include "mullion_archive_draw.hpp"
 #include "mullion_hitch.hpp"
 #include "mullion_stats.hpp"
 #include "thread.hpp"
@@ -49,11 +50,19 @@ public:
     if (state_ == State::Queued) {
       state_ = State::Running;
       lock.unlock();
-      Make();
+      // jdrly/mullion: one the archive holds, never queued (MTLD3D12Device::Defer), counts in ARCHIVEDRAW
+      if (at_draw)
+        archive_draw::Made(stats::on, [this] { Make(); });
+      else
+        Make();
       return;
     }
     made_.wait(lock, [&] { return state_ == State::Done; });
   }
+
+  // jdrly/mullion: made at its first draw because the archive holds it (MTLD3D12Device::Defer), set before any thread
+  // can wait for it
+  bool at_draw = false;
 
   // the pipeline it makes goes: a compile that has not begun is dropped, and one under way finished
   void

@@ -50,7 +50,10 @@ workspace. It stays there: it reviews someone else's code by name, and the fork 
   lifetimes, anything that hands the GPU an address or a length, the shader cache);
 - for each commit: what it changes, whether the shader code the converter generates changes, whether it touches a
   line the fork changed, and a verdict: **take**, **take with a fork switch** whose default is the old behaviour, or
-  **leave out** by reverting it inside the batch;
+  **leave out** by reverting it inside the batch. Upstream's commits are taken as written: the Definition of Done's
+  switch rule ([CONTRIBUTING](../../.github/CONTRIBUTING.md#definition-of-done)) is for the fork's own changes, and a
+  batch adds a switch to upstream's code only where its note decides one, with the reason (the DX12 dispatcher's
+  decision of 2026-11-20, private ticket 58);
 - upstream's merge commits that carry changes of their own: `git show --remerge-diff $m` prints nothing for a clean
   one;
 - the `tests/breaks` patches the batch stops from applying (§ 5);

@@ -56,6 +56,13 @@ namespace mullion {
 // cache keys on it
 static sw::Switch<bool> kGuardStaticRanges{"MULLION_D3D12_GUARD_STATIC_RANGES", false, sw::exactlyOne};
 
+// jdrly/mullion: ARCHIVEDRAW after STATS (docs/swtor/README.md): the pipelines made at their first draw from the
+// archive in the second (mullion_archive_draw.hpp)
+static stats::SectionRegistrar kArchiveDrawSection{"ARCHIVEDRAW", [](double, uint64_t) {
+  static archive_draw::Last last;
+  return archive_draw::Section(archive_draw::counters, last);
+}};
+
 // jdrly/mullion: the words shaders count their checks in, and the names the CPU gives them, in one order
 static_assert(ranges::kShaderChecks == SM50_CHECK_KINDS && SM50_CHECK_STATIC_RANGE == 0 && SM50_CHECK_ROOT_VIEW == 1 &&
               SM50_CHECK_DESCRIPTOR_INDEX == 2);
@@ -367,9 +374,14 @@ class MTLD3D12DeviceImpl : public MTLD3D12Object<ComObject<MTLD3D12Device, ID3DD
   std::string archive_path_;
   mullion::mutex archive_mutex_;
   mullion::condition_variable archive_changed_;
-  // the pipelines to add to the archive, oldest first, and how many its last shard has
-  std::deque<WMT::Reference<WMT::Object>> archive_adds_;
+  // the pipelines to add to the archive, oldest first, with the keys of the D3D12 pipelines they are made for, and how
+  // many its last shard has
+  std::deque<std::pair<WMT::Reference<WMT::Object>, Sha1Digest>> archive_adds_;
   uint32_t shard_archived_ = 0;
+  // the archive opened on a compile thread once a pipeline is left to its first draw (InArchive), which would open it
+  // otherwise: its files take seconds to open
+  std::once_flag archive_ahead_;
+  std::shared_ptr<DeferredPipeline> archive_opener_;
   bool archive_closing_ = false;
   mullion::thread archive_writer_;
   mullion::mutex depth_stencil_lock_;
@@ -402,6 +414,8 @@ public:
     // what its shaders' checks counted since the last STATS line, before its lock table goes
     for (auto &line : ranges::shader_check_words.remove(&shader_checks_, ranges::counts))
       WARN(line);
+    if (archive_opener_)
+      archive_opener_->Cancel();
     if (archive_writer_.joinable()) {
       {
         std::lock_guard lock(archive_mutex_);
@@ -614,21 +628,27 @@ public:
     return str::format(archive_path_, shard, ".metallib");
   }
 
+  // the program's archive is beside its shader cache, but not in a process that may be captured: Metal captures no
+  // mesh pipeline made with a binary archive ("Capturing Mesh Shaders with Binary Archives is not supported")
+  static bool
+  ArchiveKept() {
+    return !ShaderCacheDirectory().empty() && env::getEnvVar("MTL_CAPTURE_ENABLED") != "1";
+  }
+
   std::span<const obj_handle_t>
   PipelineArchives() override {
     std::call_once(archive_opened_, [this] {
-      auto directory = ShaderCacheDirectory();
-      // Metal captures no mesh pipeline made with a binary archive ("Capturing Mesh Shaders with Binary Archives is
-      // not supported"): a process that may be captured makes its pipelines without one
-      if (env::getEnvVar("MTL_CAPTURE_ENABLED") == "1")
-        return;
       WMT::Reference<WMT::Error> error;
       WMT::Reference<WMT::BinaryArchive> added;
-      if (directory.empty() || !(added = GetMTLDevice().newBinaryArchive(nullptr, error)))
+      if (!ArchiveKept() || !(added = GetMTLDevice().newBinaryArchive(nullptr, error)))
         return;
       // the cache has removed other identities' shards (WMTCachePrepare) before this reads its own
       ShaderCache::getInstance(WMTMetalVersion(metal_version_));
-      archive_path_ = directory + ShaderCacheArchivePrefix(uint32_t(metal_version_));
+      // a converter version finds none of the pipelines another one archived, and every shard is read and held at
+      // start: the shards of the others go before any is read, as the shader store's do (CacheWriter_alloc_init)
+      auto pipelines = str::format(ShaderCacheDirectory(), "pipelines_", uint32_t(metal_version_), "_");
+      archive_path_ = ShaderCacheDirectory() + ShaderCacheArchivePrefix(uint32_t(metal_version_));
+      WMTRemoveOtherVersions(pipelines.c_str(), archive_path_.c_str());
       // shards are read in order up to the first one Metal cannot read (none yet, or a damaged one), where this
       // launch's shards start
       while (archives_.size() + 1 < kMaxArchives)
@@ -645,12 +665,33 @@ public:
   }
 
   void
-  ArchivePipeline(WMT::Object pipeline) override {
+  ArchivePipeline(WMT::Object pipeline, const Sha1Digest &key) override {
     {
       std::lock_guard lock(archive_mutex_);
-      archive_adds_.emplace_back(pipeline);
+      archive_adds_.emplace_back(pipeline, key);
     }
     archive_changed_.notify_one();
+  }
+
+  // a D3D12 pipeline's key, with what of the device's its Metal pipelines are made by beside its description
+  Sha1Digest
+  ArchiveKey(const Sha1Digest &key) {
+    Sha1HashState h;
+    h.update(key);
+    h.update(uint32_t(shader_flags_));
+    h.update(UsesMetal4());
+    return h.final();
+  }
+
+  bool
+  InArchive(const Sha1Digest &key) override {
+    if (!ArchiveKept() || !ShaderCache::getInstance(WMTMetalVersion(metal_version_)).isArchived(ArchiveKey(key)))
+      return false;
+    std::call_once(archive_ahead_, [this] {
+      archive_opener_ = std::make_shared<DeferredPipeline>([this] { PipelineArchives(); });
+      DeferredPipeline::Queue(archive_opener_);
+    });
+    return true;
   }
 
   // adds the pipelines to the last shard, one at a time, and writes it once additions stop for as long as its last
@@ -662,15 +703,18 @@ public:
     env::setThreadName("mullion-archive-thread");
     std::unique_lock lock(archive_mutex_);
     std::chrono::steady_clock::duration took{};
+    // the D3D12 pipelines of the last shard's pipelines, recorded once it is written
+    std::vector<Sha1Digest> keys;
     for (;;) {
       archive_changed_.wait(lock, [&] { return archive_closing_ || !archive_adds_.empty(); });
       while (!archive_adds_.empty() && shard_archived_ < kPipelinesPerArchive) {
-        auto pipeline = std::move(archive_adds_.front());
+        auto [pipeline, key] = std::move(archive_adds_.front());
         archive_adds_.pop_front();
         lock.unlock();
         // every shard was lost to a fault in Metal and no new one could be made: the pipelines are not kept
         if (!archives_.empty())
           archives_.back().add(pipeline);
+        keys.push_back(key);
         pipeline = nullptr;
         lock.lock();
         shard_archived_++;
@@ -698,6 +742,10 @@ public:
           archives_.back().handle = NULL_OBJECT_HANDLE;
           archives_.pop_back();
           archive_handles_.pop_back();
+        } else {
+          auto &cache = ShaderCache::getInstance(WMTMetalVersion(metal_version_));
+          for (auto &key : keys)
+            cache.setArchived(ArchiveKey(key));
         }
         // the next pipelines go to a new shard: Metal fails to write an archive again once it holds a pipeline whose
         // vertex function it held before (macOS 27.3: "expecting 'fragment' stage in pipeline no. '1'")
@@ -708,6 +756,7 @@ public:
             archives_.push_back(std::move(next));
           }
       }
+      keys.clear();
       took = std::chrono::steady_clock::now() - start;
       if (error)
         ERR("Failed to write the pipeline archive ", path.substr(path.find_last_of('/') + 1), ": ",

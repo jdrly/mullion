@@ -89,7 +89,9 @@ follow-up.
       behaviour, and a log line when it acts (once, or on each change of state, never per draw). Both are in
       [docs/swtor/README.md](../docs/swtor/README.md), updated in the same pull request. A fix that only removes
       undefined behaviour, or makes code do what its own comment and callers say, needs no switch
-      ([ADR 0001](../docs/swtor/adr/0001-switches.md)).
+      ([ADR 0001](../docs/swtor/adr/0001-switches.md)). The rule is for the fork's own changes: an upstream batch
+      takes upstream's commits as written, and adds a switch only where its batch note decides one, with the reason
+      ([upstream.md § 3](../docs/swtor/upstream.md#3-read-it-before-merging)).
 - [ ] **A test is evidence only after its control failed.** For every test it gives as evidence, new or existing, the
       pull request names the break, a patch in `tests/breaks/` or a reverted line, and shows the test failing with
       it. A test only ever seen passing proves
@@ -98,7 +100,10 @@ follow-up.
       top of the pull request, with the exact commands to run. It claims none of their results, and it merges with
       its new behaviour off, unless the off state is the defect itself (ADR 0001's reasoning, scoped in
       [ADR 0004](../docs/swtor/adr/0004-the-drawable-is-taken-off-the-commit-path.md)). A fix that needs no switch
-      (above) has no off: it merges on, and still says "Needs the Mac run".
+      (above) has no off: it merges on, and still says "Needs the Mac run". An upstream batch's commits taken as
+      written (above) don't merge with their behaviour off either, but the batch keeps the rest of this item: it says
+      "Needs the Mac run", and its gate runs on a Mac before it merges
+      ([upstream.md § 7](../docs/swtor/upstream.md#7-the-gate)).
 - [ ] **Generated code.** A change to `src/airconv` says whether the shader code it generates changes. Any change
       to the converter's inputs gives a new codegen id, so players convert every shader again once, and the next
       build's notes say so ([caches.md](../docs/swtor/caches.md)).

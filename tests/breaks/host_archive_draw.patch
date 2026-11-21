@@ -1,0 +1,12 @@
+# a pipeline made at a draw counts as missed when any lookup of its thread ever missed, not its own
+--- a/src/mullion/mullion_archive_draw.hpp
++++ b/src/mullion/mullion_archive_draw.hpp
+@@ -61,7 +61,7 @@
+   auto start = std::chrono::steady_clock::now();
+   make();
+   auto ns = std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::steady_clock::now() - start).count();
+-  to.Add(misses_here != before, uint64_t(ns));
++  to.Add(misses_here != 0, uint64_t(ns));
+ }
+ 
+ // what was counted at the window before

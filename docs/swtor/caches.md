@@ -53,8 +53,20 @@ Once per process, Metal version and DLL, at the first pipeline (or just before t
    journals and locks, the single file of the fork's builds before upstream batch 3 (`shaders_<metal>.db`) among them,
    and counts their `cache_*` tables and their bytes. Upstream's writer would remove the same files when it opens, not
    counting them; it finds none left.
-3. The driver writes one line: `Mullion: cacheOpen shaders= codegen= build= entries= sizeMiB= droppedTables=
+4. The driver writes one line: `Mullion: cacheOpen shaders= codegen= build= entries= sizeMiB= droppedTables=
    droppedShards= droppedMiB=` (docs/swtor/README.md § Log lines).
+
+When a device opens the archive, after the cache has opened, upstream's `WMTRemoveOtherVersions` (`fc2f2df`, batch 4)
+removes the files of this Metal version named `pipelines_<metal>_*` but not with this identity's prefix, uncounted:
+upstream names the files by `AIRCONV_VERSION` (`pipelines_<metal>_v<version>_<n>.metallib`), the fork by its tag,
+which holds it. After step 2 it finds only what step 2 leaves: files of other identities that don't end in `.metallib`
+(a `.metallib.new` a write left), and shards another identity's process wrote since this one opened its cache.
+
+Since upstream batch 4 (`055ab02`) the store also records which pipelines the archive holds, as rows of this identity's
+table, written once a shard is written. A pipeline so recorded isn't compiled ahead on the compile threads: its first
+draw makes it from the archive, on the thread that records the draw, and the `ARCHIVEDRAW` section after `STATS` counts
+those (docs/swtor/README.md). A record the archive doesn't honour (an unreadable shard, a pipeline Metal didn't add)
+makes that draw compile it there.
 
 An old identity's file is removed whole, so the cache shrinks to the new identity's entries. A process that still has
 the old file open (an older build running beside the new one) keeps it until it ends.

@@ -1,0 +1,12 @@
+# a draw past the arena doesn't stop the draws after it from being drawn
+--- a/src/mullion/mullion_tessellation_fit.hpp
++++ b/src/mullion/mullion_tessellation_fit.hpp
+@@ -26,7 +26,7 @@
+     uint32_t end = 3 * (draws[d].first + draws[d].patches);
+     // triangles against the room's whole ones: three times a pass's triangles may not fit in 32 bits
+     if (counts[end + 1] > point_room || counts[end + 2] > index_room / 3)
+-      return d;
++      continue;
+   }
+   return draw_count;
+ }

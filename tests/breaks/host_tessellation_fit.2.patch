@@ -1,0 +1,12 @@
+# the scan's sums wrap past the word's largest value, as upstream's did
+--- a/src/mullion/mullion_tessellation_fit.hpp
++++ b/src/mullion/mullion_tessellation_fit.hpp
+@@ -20,7 +20,7 @@
+ inline uint32_t
+ tessellation_sum(uint32_t a, uint32_t b) {
+   uint32_t sum = a + b;
+-  return sum < a ? 0xffffffffu : sum;
++  return sum;
+ }
+ 
+ // the threads of tessellation_scan's one threadgroup: as many as its pipeline takes (`most`, its

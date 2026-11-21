@@ -24,6 +24,7 @@
 #include <metal_stdlib>
 #include "../airconv/airconv_ray.h"
 #include "mullion_command_constants.hpp"
+#include "mullion_tessellation_fit.hpp"
 
 using namespace metal;
 using namespace mullion;
@@ -1667,4 +1668,177 @@ struct DepthBounds {
     kept |= uint(z >= bounds.range.x && z <= bounds.range.y) << s;
   }
   samples[pos.y * bounds.pitch + pos.x] = kept;
+}
+
+// the compute tessellator (TessellationPass): the library the domain stages link, here for the work before a pass
+#include "../airconv/shaders/air_tessellation.metal"
+
+static uint tessellation_draw(device const TessellationDraw *draws, uint count, uint patch) {
+  // the last draw whose patches start at or before `patch`
+  uint low = 0, high = count;
+  while (high - low > 1) {
+    uint middle = (low + high) / 2;
+    if (draws[middle].first <= patch)
+      low = middle;
+    else
+      high = middle;
+  }
+  return low;
+}
+
+// the pass's patch `patch` of `draw`, made from its factors; false if they cull it
+static bool tessellation_patch(device const uint *heap, TessellationDraw draw, uint patch, thread tri_patch &made) {
+  device const float *f = (device const float *)(heap + draw.factors) + 4 * (patch - draw.first);
+  return make_patch(made, partitioning(draw.kind >> 1 & 3), f[0], f[1], f[2], f[3]);
+}
+
+static bool tessellation_patch(device const uint *heap, TessellationDraw draw, uint patch, thread quad_patch &made) {
+  device const float *f = (device const float *)(heap + draw.factors) + 6 * (patch - draw.first);
+  return make_patch(made, partitioning(draw.kind >> 1 & 3), f[0], f[1], f[2], f[3], f[4], f[5]);
+}
+
+template <typename Patch>
+static tess_counts tessellation_counts(device const uint *heap, TessellationDraw draw, uint patch) {
+  Patch made;
+  return tessellation_patch(heap, draw, patch, made) ? counts(made) : tess_counts{0, 0, 0};
+}
+
+// each patch's frames, points and triangles
+[[kernel]] void tessellation_count(
+    device uint *heap [[buffer(0)]],
+    device const TessellationPass &pass [[buffer(1)]],
+    uint patch [[thread_position_in_grid]]
+) {
+  if (patch >= pass.patches)
+    return;
+  device const TessellationDraw *draws = (device const TessellationDraw *)(heap + pass.draws);
+  TessellationDraw draw = draws[tessellation_draw(draws, pass.draw_count, patch)];
+  tess_counts c = draw.kind & 1 ? tessellation_counts<quad_patch>(heap, draw, patch)
+                                      : tessellation_counts<tri_patch>(heap, draw, patch);
+  device uint *out = heap + pass.counts + 3 * patch;
+  out[0] = c.frames;
+  out[1] = c.points;
+  out[2] = c.triangles;
+}
+
+// one threadgroup: the counts' exclusive sums, in the patches' order (D3D's primitive order holds), and the totals
+// after them; then each draw's arguments. a draw is drawn here if the arena has room for it and every draw before it,
+// else by its mesh draw
+[[kernel]] void tessellation_scan(
+    device uint *heap [[buffer(0)]],
+    device TessellationPass &pass [[buffer(1)]],
+    uint thread_index [[thread_position_in_threadgroup]],
+    uint threads [[threads_per_threadgroup]],
+    uint lane [[thread_index_in_simdgroup]],
+    uint width [[threads_per_simdgroup]],
+    uint simd [[simdgroup_index_in_threadgroup]],
+    uint simds [[simdgroups_per_threadgroup]]
+) {
+  threadgroup uint sums[32][3];
+  threadgroup uint carry[3];
+  threadgroup uint unfit; // jdrly/mullion: the first draw that doesn't fit (tessellation_first_unfit)
+  if (thread_index < 3)
+    carry[thread_index] = 0;
+  device uint *counts = heap + pass.counts;
+  for (uint first = 0; first < pass.patches; first += threads) {
+    threadgroup_barrier(mem_flags::mem_threadgroup);
+    uint patch = first + thread_index;
+    uint own[3], before[3];
+    for (uint k = 0; k < 3; k++) {
+      own[k] = patch < pass.patches ? counts[3 * patch + k] : 0;
+      before[k] = simd_prefix_exclusive_sum(own[k]);
+      if (lane == width - 1)
+        sums[simd][k] = before[k] + own[k];
+    }
+    threadgroup_barrier(mem_flags::mem_threadgroup);
+    // jdrly/mullion: the carry and the sums before a patch stop at the word's largest value instead of wrapping
+    // (tessellation_sum, mullion_tessellation_fit.hpp); a group's own sums are a group's counts, far below it
+    for (uint k = 0; k < 3; k++) {
+      uint at = carry[k];
+      for (uint s = 0; s < simd; s++)
+        at = tessellation_sum(at, sums[s][k]);
+      if (patch < pass.patches)
+        counts[3 * patch + k] = tessellation_sum(at, before[k]);
+    }
+    threadgroup_barrier(mem_flags::mem_threadgroup);
+    if (thread_index < 3)
+      for (uint s = 0; s < simds; s++)
+        carry[thread_index] = tessellation_sum(carry[thread_index], sums[s][thread_index]);
+  }
+  threadgroup_barrier(mem_flags::mem_threadgroup | mem_flags::mem_device);
+  if (thread_index < 3)
+    counts[3 * pass.patches + thread_index] = carry[thread_index];
+  threadgroup_barrier(mem_flags::mem_device);
+
+  // the draws: those whose points and indices end within the arena
+  device TessellationDraw *draws = (device TessellationDraw *)(heap + pass.draws);
+  // jdrly/mullion: and every draw before them too, as thread 0 reads below (mullion_tessellation_fit.hpp)
+  if (thread_index == 0)
+    unfit = tessellation_first_unfit(counts, draws, pass.draw_count, pass.point_room, pass.index_room);
+  threadgroup_barrier(mem_flags::mem_threadgroup);
+  for (uint d = thread_index; d < pass.draw_count; d += threads) {
+    TessellationDraw draw = draws[d];
+    device const uint *start = counts + 3 * draw.first, *end = counts + 3 * (draw.first + draw.patches);
+    bool fits = d < unfit;
+    device uint *arguments = heap + draw.arguments;
+    arguments[0] = fits ? 3 * (end[2] - start[2]) : 0;
+    arguments[1] = 1;
+    arguments[2] = 3 * start[2];
+    arguments[3] = 0;
+    arguments[4] = 0;
+    if (draw.fallback)
+      heap[draw.fallback] = fits ? 0 : heap[draw.source];
+  }
+  if (thread_index == 0) {
+    // the frames of the patches before the first draw that does not fit
+    uint fit = unfit < pass.draw_count ? draws[unfit].first : pass.patches;
+    pass.frames = counts[3 * fit];
+    pass.emit_groups[0] = (pass.frames + kTessellationThreads - 1) / kTessellationThreads;
+    pass.emit_groups[1] = 1;
+    pass.emit_groups[2] = 1;
+    pass.need_points = counts[3 * pass.patches + 1];
+    pass.need_indices = 3 * min(counts[3 * pass.patches + 2], 0xffffffffu / 3);
+  }
+}
+
+template <typename Patch>
+static void tessellation_emit_frame(
+    device uint *heap, device const TessellationPass &pass, TessellationDraw draw, uint patch, int frame
+) {
+  Patch made;
+  if (!tessellation_patch(heap, draw, patch, made))
+    return;
+  device const uint *at = heap + pass.counts + 3 * patch;
+  // points numbered from the heap's start, where the pass's vertex functions read them
+  emit_frame(
+      made, frame, patch - draw.first, (device tess_point *)heap, heap + pass.indices + 3 * at[2],
+      pass.points / 3 + at[1], draw.kind >> 3 & 1 ? 3 : 0
+  );
+}
+
+// a thread a frame, of the patches the arena has room for (the dispatch rounds up past them): its points and triangles
+[[kernel]] void tessellation_emit(
+    device uint *heap [[buffer(0)]],
+    device const TessellationPass &pass [[buffer(1)]],
+    uint frame [[thread_position_in_grid]]
+) {
+  device const uint *counts = heap + pass.counts;
+  // the last patch whose frames start at or before this one (patches without frames start where the next does)
+  uint low = 0, high = pass.patches;
+  if (frame >= pass.frames)
+    return;
+  while (high - low > 1) {
+    uint middle = (low + high) / 2;
+    if (counts[3 * middle] <= frame)
+      low = middle;
+    else
+      high = middle;
+  }
+  device const TessellationDraw *draws = (device const TessellationDraw *)(heap + pass.draws);
+  TessellationDraw draw = draws[tessellation_draw(draws, pass.draw_count, low)];
+  int own = frame - counts[3 * low];
+  if (draw.kind & 1)
+    tessellation_emit_frame<quad_patch>(heap, pass, draw, low, own);
+  else
+    tessellation_emit_frame<tri_patch>(heap, pass, draw, low, own);
 }
