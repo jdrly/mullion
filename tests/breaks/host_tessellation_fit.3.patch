@@ -1,13 +1,11 @@
 # the scan's threadgroup is 1024 threads whatever its pipeline takes, as upstream's
 --- a/src/mullion/mullion_tessellation_fit.hpp
 +++ b/src/mullion/mullion_tessellation_fit.hpp
-@@ -29,8 +29,7 @@
+@@ -29,6 +29,7 @@
  // forbids (private ticket 58)
  inline uint32_t
  tessellation_scan_threads(uint32_t most, uint32_t width) {
--  if (!width)
--    return most < 1024 ? most : 1024;
 +  return 1024;
-   uint32_t threads = most / width * width;
-   if (threads > 32 * width)
-     threads = 32 * width;
+   uint32_t threads = most < 1024 ? most : 1024;
+   if (!width)
+     return threads;

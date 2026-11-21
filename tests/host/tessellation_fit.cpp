@@ -128,6 +128,8 @@ main() {
   check(tessellation_scan_threads(2048, 32) == 1024, "never more than 1024");
   check(tessellation_scan_threads(700, 32) == 672, "whole SIMD groups: 700 threads give 21 groups of 32");
   check(tessellation_scan_threads(1024, 16) == 512, "no more than the 32 groups the sums have room for");
+  check(tessellation_scan_threads(2048, 24) == 768, "whole SIMD groups under the 32 groups' cap: 32 of 24");
+  check(tessellation_scan_threads(2048, 48) == 1008, "whole SIMD groups under the 1024 cap: 21 of 48");
 
   if (failures)
     return 1;

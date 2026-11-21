@@ -29,12 +29,13 @@ tessellation_sum(uint32_t a, uint32_t b) {
 // forbids (private ticket 58)
 inline uint32_t
 tessellation_scan_threads(uint32_t most, uint32_t width) {
+  uint32_t threads = most < 1024 ? most : 1024;
   if (!width)
-    return most < 1024 ? most : 1024;
-  uint32_t threads = most / width * width;
+    return threads;
   if (threads > 32 * width)
     threads = 32 * width;
-  return threads < 1024 ? threads : 1024;
+  // whole groups last, so that no cap leaves a part of one
+  return threads / width * width;
 }
 
 // the first of `draw_count` draws (each with `first` and `patches`) whose points (counts[3 * patch + 1]) or triangles
